@@ -250,41 +250,42 @@ function doAction(): void {
 // The engine's move() breaks a disguise, and both the immediate input path and
 // the idle move(0,0) sender can race the transform POST (firing before the next
 // poll reflects the new state and instantly untransforming). So we suppress
-// moves around a transform until a poll confirms the server applied the change.
+// moves around a transform.
 //
-// Suppression is bounded two ways so input can never be permanently disabled:
-//  - a hard deadline (suppressMoveUntil): moves resume after it no matter what;
-//  - releasing on request failure: if the transform POST is rejected (stunned,
-//    carrying, out of range) or errors, we clear the pending state immediately.
-let suppressMoveUntil = 0; // performance.now() hard deadline
+// Suppression is released on exactly two concrete signals so input can NEVER be
+// permanently disabled, and (crucially) is kept active as long as a slow-but-
+// successful transform is still applying:
+//  1. The transform POST is rejected (stunned/carrying/out-of-range) or errors
+//     -> no state change will happen, so release immediately.
+//  2. A poll observes the requested state (transform/untransform applied).
+// Because a move is re-sent every poll tick once woke, and a slow transform POST
+// that HAS succeeded will show up in the next poll, this both stops the race for
+// the normal case and never pins input when the request fails.
 let wantedState = "" as "active" | "transformed" | ""; // state we asked the server for
-const SUPPRESS_WINDOW_MS = 500; // generous hard cap for the POST round-trip
 
 function suppressMovesForState(want: "active" | "transformed"): void {
   wantedState = want;
-  suppressMoveUntil = performance.now() + SUPPRESS_WINDOW_MS;
 }
 
 function releaseSuppression(): void {
   wantedState = "";
-  suppressMoveUntil = 0;
 }
 
 function movesSuppressed(): boolean {
-  if (performance.now() < suppressMoveUntil) return true; // inside hard window
-  // Hard deadline passed: if we never saw the requested state applied, stop
-  // waiting (don't pin input forever just because the ack never arrived).
-  if (wantedState && lastState) {
-    const me = myPlayer(lastState);
-    if (!me || me.state === wantedState) {
-      // Ack'd (or player gone): input is safe again.
-      wantedState = "";
-    } else {
-      // The ack never matched within the window — release anyway.
-      releaseSuppression();
-    }
+  if (!wantedState) return false;
+  const me = lastState ? myPlayer(lastState) : undefined;
+  if (!me) {
+    // Player gone / no state — nothing to protect, give input back.
+    wantedState = "";
+    return false;
   }
-  return false;
+  if (me.state === wantedState) {
+    // Server applied the requested state change — safe to resume moves.
+    wantedState = "";
+    return false;
+  }
+  // Still waiting on the transform to apply (or be rejected) — hold input.
+  return true;
 }
 
 function doTransform(): void {
