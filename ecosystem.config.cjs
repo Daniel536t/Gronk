@@ -34,12 +34,17 @@ module.exports = {
       //   pm2 startup   (copy the printed command)
     },
     {
-      // TrueForge agent harness (M4). Needs a model-provider API key configured
-      // in the TrueForge UI once. Optional — scripted mode doesn't use it.
+      // TrueForge agent harness (M4). Provider key is registered via
+      // `NVIDIA_API_KEY=... npm run provision` (never committed). HOST=0.0.0.0
+      // exposes the UI on :8790 — keep the security group rule limited to your
+      // IP, since TrueForge standalone runs with auth disabled.
       name: "trueforge-harness",
       script: "npx",
       args: "--yes @truefoundry/trueforge --port 8790",
       cwd: __dirname,
+      env: {
+        HOST: "0.0.0.0",
+      },
       max_memory_restart: "512M",
       autorestart: true,
       restart_delay: 3000,

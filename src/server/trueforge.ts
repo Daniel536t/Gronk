@@ -141,8 +141,9 @@ export class TrueForgeBackend implements AgentBackend {
 
   private async waitForTurn(sessionId: string, turnId: string): Promise<TurnDoneState["output"]> {
     // Poll until terminal. Bounded so the orchestrator's own timeout can also
-    // fire (this is a belt-and-suspenders cap).
-    const deadline = Date.now() + 30_000;
+    // fire (this is a belt-and-suspenders cap; real LLM turns can take a while
+    // on cold starts).
+    const deadline = Date.now() + 60_000;
     while (Date.now() < deadline) {
       const res = await fetch(`${this.baseUrl}/api/v1/sessions/${sessionId}/turns/${turnId}`, {
         headers: this.headers(),
@@ -227,6 +228,10 @@ export async function provisionTrueForgeAgents(
   const out: { name: string; status: string }[] = [];
   for (const a of agents) {
     // v0.1.4 API: { name, manifest: { model, instructions, mcp_servers, skills, config } }.
+    // No max_tokens cap: the harness errors on "max_tokens breached" instead
+    // of truncating, and these NIM models pad output (~2k tokens) — capping
+    // made turns ERROR rather than faster. parseDecision extracts the decision
+    // JSON from the start of the content regardless.
     const manifest: Record<string, unknown> = {
       model: { name: a.model.name },
       instructions: a.instructions,
@@ -242,14 +247,109 @@ export async function provisionTrueForgeAgents(
 
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (cfg.apiKey) headers.Authorization = `Bearer ${cfg.apiKey}`;
-    const res = await fetch(`${cfg.baseUrl}/api/v1/agents`, {
+    let res = await fetch(`${cfg.baseUrl}/api/v1/agents`, {
       method: "POST",
       headers,
       body: JSON.stringify({ name: a.name, manifest }),
     });
+    if (res.status === 409) {
+      // Exists — update it (PUT by internal agent id) so re-running provision
+      // syncs config changes (e.g. a model swap).
+      const listed = await fetch(`${cfg.baseUrl}/api/v1/agents`, { headers });
+      const list = (await listed.json()) as { data?: { id?: string; name?: string }[] };
+      const found = list.data?.find((ag) => ag.name === a.name);
+      if (found?.id) {
+        res = await fetch(`${cfg.baseUrl}/api/v1/agents/${encodeURIComponent(found.id)}`, {
+          method: "PUT",
+          headers,
+          body: JSON.stringify({ manifest }),
+        });
+        out.push({ name: a.name, status: res.ok ? `updated (${res.status})` : `error (${res.status}): ${await res.text()}` });
+        continue;
+      }
+      out.push({ name: a.name, status: `error (409): could not resolve agent id for update` });
+      continue;
+    }
     out.push({ name: a.name, status: res.ok ? `created (${res.status})` : `error (${res.status}): ${await res.text()}` });
   }
   return out;
+}
+
+/**
+ * Register the NVIDIA NIM provider (OpenAI-compatible) in TrueForge so the
+ * gronk/bots models resolve. Reads the API key from the caller (env) — never
+ * committed. Idempotent-ish: re-registering with the same name is an error,
+ * but the configured provider is what agents resolve against.
+ */
+export async function registerNvidiaProvider(
+  cfg: TrueForgeConfig,
+  apiKey: string,
+): Promise<{ name: string; status: string }> {
+  // Models verified live against the key's account (many catalog entries are
+  // not entitled for it). gpt-oss-20b = reasoning tier (bots);
+  // nemotron-3-nano-30b-a3b = fast tier (Gronk's sniffs).
+  const models = [
+    { model_id: "nvidia/nemotron-3-nano-30b-a3b", name: "nemotron-3-nano-30b-a3b", properties: {} },
+    { model_id: "openai/gpt-oss-20b", name: "gpt-oss-20b", properties: {} },
+  ];
+  const manifest = {
+    type: "custom",
+    name: "nvidia",
+    base_url: "https://integrate.api.nvidia.com/v1",
+    auth: { api_key: apiKey },
+    models,
+  };
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (cfg.apiKey) headers.Authorization = `Bearer ${cfg.apiKey}`;
+  // PUT replaces the provider idempotently; fall back to POST when it's new.
+  let res = await fetch(`${cfg.baseUrl}/api/v1/settings/model-providers`, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify({ manifest }),
+  });
+  if (res.status === 404) {
+    res = await fetch(`${cfg.baseUrl}/api/v1/settings/model-providers`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ manifest }),
+    });
+  }
+  return {
+    name: "nvidia",
+    status: res.ok ? `registered (${res.status})` : `error (${res.status}): ${await res.text()}`,
+  };
+}
+
+/**
+ * Register the gronks-hoard skill pack (rules + riddles + reveal schedule)
+ * from its git repo. TrueForge loads skills from a git URL, so this needs the
+ * repo pushed (Daniel536t/Gronk, ref main). Idempotent: re-registering the
+ * same name is an error, but the existing skill is what agents resolve.
+ */
+export async function registerSkill(
+  cfg: TrueForgeConfig,
+): Promise<{ name: string; status: string }> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (cfg.apiKey) headers.Authorization = `Bearer ${cfg.apiKey}`;
+  const res = await fetch(`${cfg.baseUrl}/api/v1/settings/skills`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      manifest: {
+        type: "git",
+        name: "gronks-hoard",
+        url: "https://github.com/Daniel536t/Gronk",
+        path: "skills/gronks-hoard",
+        ref: "main",
+        description:
+          "Gronk's Hoard game rules, riddle sets, and the riddle reveal schedule (line 1 at 0s, line 2 at 90s, line 3 at 180s).",
+      },
+    }),
+  });
+  return {
+    name: "gronks-hoard",
+    status: res.ok ? `registered (${res.status})` : `error (${res.status}): ${await res.text()}`,
+  };
 }
 
 /**

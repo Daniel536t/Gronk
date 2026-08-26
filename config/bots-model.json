@@ -1,5 +1,5 @@
 {
-  "_comment": "Bot wizards run on a standard-tier model. Swap the `name` (and add/change `provider`) from the TrueForge UI or by editing this file; it is read live on startup.",
-  "name": "openai/gpt-4o",
-  "provider": "openai"
+  "_comment": "Bot wizards decide every 2.5s, so the model must answer within the decision timeout. Verified live against the NVIDIA key: nemotron-3-nano-30b-a3b answers ~1-7s. gpt-oss-20b is registered too and gives smarter reasoning but ~10-25s/decision (constant scripted fallback). Swap the `name` to 'nvidia/gpt-oss-20b' if you accept slow decisions.",
+  "name": "nvidia/nemotron-3-nano-30b-a3b",
+  "provider": "nvidia"
 }

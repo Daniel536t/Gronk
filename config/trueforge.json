@@ -1,6 +1,6 @@
 {
-  "_comment": "TrueForge standalone HTTP endpoint. Override with TRUEFORGE_URL or TRUEFORGE_API_KEY env vars. decisionTimeoutMs is the >5s fallback threshold the orchestrator enforces per agent decision.",
+  "_comment": "TrueForge standalone HTTP endpoint. Override with TRUEFORGE_URL or TRUEFORGE_API_KEY env vars. decisionTimeoutMs is the fallback threshold the orchestrator enforces per agent decision — 60s so real LLM turns (NIM can queue ~5-25s) aren't prematurely replaced; scripted fallback still kicks in on error or true hangs.",
   "baseUrl": "http://localhost:8790",
-  "decisionTimeoutMs": 5000,
+  "decisionTimeoutMs": 60000,
   "mcpServerUrl": "http://localhost:8787/mcp"
 }

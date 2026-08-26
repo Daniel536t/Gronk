@@ -75,21 +75,31 @@ Vercel URL.
 
 ## TrueForge Mode (M4)
 
-On the VPS, the whole thing stays up under pm2. First, one-time setup:
+On the VPS, the whole thing stays up under pm2. One-time setup:
 
 ```bash
-# 1. Start the TrueForge harness under pm2 (needs a model-provider API key
-#    configured in the TrueForge UI once — the harness app is already in
-#    ecosystem.config.cjs)
-pm2 start ecosystem.config.cjs      # starts gronks-hoard + trueforge-harness
+# 1. Start both apps (game + TrueForge harness on :8790, bound to 0.0.0.0).
+#    Open http://<your-ip>:8790 in a browser for the TrueForge UI (keep the
+#    security-group rule limited to your IP — standalone runs auth-disabled).
+pm2 start ecosystem.config.cjs
 
-# 2. Create the agents (Gronk, 3 BotWizards, GameMaster) + point them at this game's MCP
-npm run provision
+# 2. Register the NVIDIA NIM model provider + MCP connector + skill, and
+#    create/update the 5 agents (gronk, botwizard-a/b/c, gamemaster).
+#    The key is passed via env — it is never committed.
+NVIDIA_API_KEY=nvapi-... npm run provision
 
 # 3. Run the game with TrueForge agents (BOTS is read live from env)
 BOTS=trueforge pm2 restart gronks-hoard
 pm2 save
 ```
+
+**Models (NVIDIA NIM, verified live):** both tiers run `nemotron-3-nano-30b-a3b`
+(~1-20s/decision). `openai/gpt-oss-20b` is registered too and reasons better but
+~10-25s/decision — it trips the scripted fallback often, so it's a swap option in
+`config/bots-model.json`. The playing agents carry **no MCP connector**: the full
+public state is injected into every turn prompt, so they answer directly with an
+`agent_intent` JSON (the secret boundary still holds — they only ever see public
+state). The GameMaster keeps the connector + skill pack.
 
 Verify Mode A plays a full match headless — either against the real harness on the
 VPS, or (no harness needed) against an in-process mock that implements the same HTTP
@@ -98,14 +108,19 @@ contract, so the whole pipeline is provable anywhere:
 ```bash
 npm run verify:mode-a                          # mock harness — works anywhere
 TRUEFORGE_URL=http://localhost:8790 npm run verify:mode-a   # real agents on the VPS
+npm run tf:smoke                               # one real gronk + one real bot decision
 ```
 
 The verifier plays a complete match through the MCP surface (1 human proxy + 3 TrueForge
 wizards + TrueForge Gronk), measures per-decision latency, and fails unless the match ends
-with a winner, zero decisions fell back to scripted, and the treasure furniture id never
-appeared in any payload (the "agents can't cheat" proof).
+with a winner, at least one decision came from a real agent (mock: all of them), and the
+treasure furniture id never appeared in any payload (the "agents can't cheat" proof).
+Real-LLM decisions run ~10-28s on NIM; the 60s timeout + scripted fallback is the designed
+safety net — a slow or dead agent is replaced per-seat and the match never crashes.
 
-`BOTS=scripted` (the default) runs the permanent scripted-FSM fallback — same game, zero LLM needed. If any TrueForge agent exceeds the 5s decision timeout, it automatically falls back to scripted for that seat; the match never crashes. `npx @truefoundry/trueforge --port 8790` also works for a foreground harness during dev.
+`BOTS=scripted` (the default) runs the permanent scripted-FSM fallback — same game, zero LLM
+needed. `npx @truefoundry/trueforge --port 8790` also works for a foreground harness during
+dev.
 
 ## How it works
 
