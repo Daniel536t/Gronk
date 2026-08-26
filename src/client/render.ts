@@ -16,6 +16,7 @@
 // (see step()); teleports (respawn, transform snap) jump instantly.
 import type { GameState, Player } from "../engine/types";
 import { ROOM_WIDTH, ROOM_HEIGHT, TICKS_PER_SECOND } from "../engine/constants";
+import { drawRoomProps, drawVisualObject, visualObjectsFor, type VisualLayer } from "./objects";
 
 const TEAM_COLORS = ["#4aa8e8", "#f2765b"]; // blue / coral — Among-Us-esque
 const TEAM_DARK = ["#2f6fa3", "#b34a34"];
@@ -260,6 +261,7 @@ export class Renderer {
     this.drawInteriorWalls(ctx);
     this.drawOuterWalls(ctx);
     this.drawDecor(ctx, timeMs);
+    drawRoomProps(ctx, timeMs);
 
     // Sudden-death treasure pings: expanding rings.
     for (const ping of state.treasurePings) {
@@ -278,7 +280,10 @@ export class Renderer {
       this.drawDiamond(ctx, state.groundTreasure.x, state.groundTreasure.y + bob, 1.6, "#ffd166");
     }
 
-    this.drawFurniture(ctx, state);
+    // Furniture split into back/front passes around the players. Phase 4's
+    // occlusion will flip Y-sorted cover objects into the "front" pass; for
+    // now everything renders behind the players (they walk in front of props).
+    this.drawObjects(ctx, state, timeMs, "back");
 
     // Pedestals: team-colored glow platform at the corners.
     state.pedestals.forEach((ped, team) => this.drawPedestal(ctx, ped.x, ped.y, team));
@@ -299,6 +304,8 @@ export class Renderer {
       }
       this.drawPlayer(ctx, p, dx, dy, timeMs, state);
     }
+
+    this.drawObjects(ctx, state, timeMs, "front");
 
     // Gronk: the big red troll.
     const g = state.gronk;
@@ -806,44 +813,26 @@ export class Renderer {
     }
   }
 
-  // ---- furniture ---------------------------------------------------------
+  // ---- furniture (visual object system, see objects.ts) --------------------
 
-  private drawFurniture(ctx: CanvasRenderingContext2D, state: GameState): void {
-    for (const f of state.furniture) {
-      const col = "#4d5871";
-      const dark = "#333b52";
-      // Soft drop shadow (fake blur via stacked ellipses).
-      ctx.fillStyle = "rgba(0,0,0,0.16)";
-      ctx.beginPath();
-      ctx.ellipse(f.x + 0.4, f.y + 0.55, f.w * 0.62, f.h * 0.48, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "rgba(0,0,0,0.10)";
-      ctx.beginPath();
-      ctx.ellipse(f.x + 0.4, f.y + 0.55, f.w * 0.88, f.h * 0.68, 0, 0, Math.PI * 2);
-      ctx.fill();
-      // Base slab + slight relief.
-      ctx.fillStyle = dark;
-      ctx.beginPath();
-      ctx.roundRect(f.x - f.w / 2 + 0.4, f.y - f.h / 2 + 0.6, f.w, f.h, 1.2);
-      ctx.fill();
-      ctx.fillStyle = col;
-      ctx.beginPath();
-      ctx.roundRect(f.x - f.w / 2, f.y - f.h / 2, f.w, f.h, 1.2);
-      ctx.fill();
-      ctx.strokeStyle = "#222a3d";
-      ctx.lineWidth = 0.5;
-      ctx.stroke();
-      // Label in a little plaque.
-      ctx.fillStyle = "rgba(10,14,22,0.6)";
-      const tw = f.name.length * 0.7 + 1;
-      ctx.beginPath();
-      ctx.roundRect(f.x - tw / 2, f.y - 0.7, tw, 1.4, 0.6);
-      ctx.fill();
-      ctx.fillStyle = "#dfe6f2";
-      ctx.font = `700 1.1px system-ui`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(f.name.toUpperCase(), f.x, f.y + 0.1);
+  // Draw one layer of the visual objects. Labels fade in near the local player
+  // only — the environment itself carries the information, the label is a
+  // secondary reference.
+  private drawObjects(
+    ctx: CanvasRenderingContext2D,
+    state: GameState,
+    timeMs: number,
+    pass: VisualLayer,
+  ): void {
+    const me = this.localOverride ?? this.lastPlayerPos;
+    for (const obj of visualObjectsFor(state)) {
+      if (obj.layer !== pass) continue;
+      let labelAlpha = 0;
+      if (me) {
+        const d = Math.hypot(obj.x - me.x, obj.y - me.y);
+        labelAlpha = d > 16 ? 0 : 0.18 + 0.32 * Math.max(0, 1 - d / 16);
+      }
+      drawVisualObject(ctx, obj, timeMs, labelAlpha);
     }
   }
 

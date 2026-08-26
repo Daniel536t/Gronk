@@ -219,6 +219,38 @@ async function staticProbes(page: Page, view: { width: number; height: number; n
     roomSamples.length >= 2 && distinctPairs >= 1,
     `${roomSamples.length} rooms visible, distinct pairs ${distinctPairs}/${roomSamples.length * (roomSamples.length - 1) * 0.5}: ${roomSamples.map(([l, p]) => `${l}=rgb(${p.join(",")})`).join(" ")}`,
   );
+
+  // Furniture renderers active: the desktop spawn view shows Brazier, Statue,
+  // Bookshelf and Couch. Each should be visually distinct AND none should be
+  // the old generic slab color (#4d5871) — proof the object system replaced
+  // the label-first rectangles.
+  if (view.name === "desktop") {
+    const oldGeneric = [77, 88, 113];
+    const furnitureProbe: { label: string; wx: number; wy: number }[] = [
+      { label: "BRAZIER", wx: 18, wy: 48 },
+      { label: "STATUE", wx: 50, wy: 50 },
+      { label: "BOOKSHELF", wx: 25, wy: 30 },
+      { label: "COUCH", wx: 50, wy: 32 },
+    ];
+    const fSamples: [string, [number, number, number]][] = [];
+    for (const fp of furnitureProbe) {
+      const s = worldToScreen(fp.wx, fp.wy, cam, vw, vh);
+      if (s.x < 6 || s.x > vw - 6 || s.y < 6 || s.y > vh - 6) continue;
+      fSamples.push([fp.label, await sample(page, s.x, s.y, 1)]);
+    }
+    let fDistinct = 0;
+    for (let i = 0; i < fSamples.length; i++) {
+      for (let j = i + 1; j < fSamples.length; j++) {
+        if (chanDist(fSamples[i][1], fSamples[j][1]) >= 6) fDistinct++;
+      }
+    }
+    const anyNotGeneric = fSamples.some(([, p]) => chanDist(p, oldGeneric as [number, number, number]) >= 8);
+    check(
+      `${view.name}: furniture renderers active (non-generic, distinct)`,
+      fSamples.length >= 3 && anyNotGeneric && fDistinct >= 2,
+      `${fSamples.length} visible, distinct pairs ${fDistinct}: ${fSamples.map(([l, p]) => `${l}=rgb(${p.join(",")})`).join(" ")}`,
+    );
+  }
 }
 
 // ---- movement probes: camera follow + clamp + gameplay regression -----------
@@ -281,6 +313,28 @@ async function movementProbes(page: Page, view: { width: number; height: number;
   await page.screenshot({ path: `${SHOTS}/${view.name}-game-corner.png` });
 }
 
+// Best-effort screenshots of additional rooms (never fails the suite): walk
+// up the left edge so the Library (Bookshelf + Couch) is framed, then a bit
+// right toward the mid-map. Gronk interference just skips a screenshot.
+async function furnitureTour(page: Page): Promise<void> {
+  try {
+    await page.keyboard.down("w");
+    await page.waitForTimeout(3800);
+    await page.keyboard.up("w");
+    await keepGameAlive(page);
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: `${SHOTS}/desktop-library.png` });
+    await page.keyboard.down("d");
+    await page.waitForTimeout(2400);
+    await page.keyboard.up("d");
+    await keepGameAlive(page);
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: `${SHOTS}/desktop-mid.png` });
+  } catch {
+    // Best-effort only.
+  }
+}
+
 async function main(): Promise<void> {
   mkdirSync(SHOTS, { recursive: true });
   console.log("Booting game server on :" + PORT + " ...");
@@ -303,17 +357,23 @@ async function main(): Promise<void> {
         console.log("  [pageerror]", e.message);
       });
       p.on("console", (m) => {
-        if (m.type() === "error") {
-          failures.push(`console.error: ${m.text()}`);
-          console.log("  [console.error]", m.text());
-        }
+        if (m.type() !== "error") return;
+        // The game API intentionally answers rejected commands (move while
+        // closeted/stunned, action with nothing nearby) with HTTP 400 — that's
+        // gameplay working, not a rendering failure.
+        if (m.text().includes("status of 400")) return;
+        failures.push(`console.error: ${m.text()}`);
+        console.log("  [console.error]", m.text());
       });
       console.log(`\n=== ${view.name.toUpperCase()} ${view.width}x${view.height} ===`);
       await enterSinglePlayer(p);
       await p.screenshot({ path: `${SHOTS}/${view.name}-title.png` });
       await staticProbes(p, view);
       await p.screenshot({ path: `${SHOTS}/${view.name}-game-spawn.png` });
-      if (view.name === "desktop") await movementProbes(p, view);
+      if (view.name === "desktop") {
+        await movementProbes(p, view);
+        await furnitureTour(p);
+      }
       const cam = await getCam(p);
       if (cam) {
         check(
