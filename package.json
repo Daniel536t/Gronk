@@ -21,10 +21,12 @@
     "verify:mode-a": "tsx scripts/verify-mode-a.ts",
     "tf:smoke": "tsx scripts/tf-smoke.ts",
     "live:demo": "tsx scripts/live-demo.ts",
-    "mock:trueforge": "tsx scripts/mock-trueforge.ts"
+    "mock:trueforge": "tsx scripts/mock-trueforge.ts",
+    "qa:visual": "tsx scripts/visual-qa.ts"
   },
   "devDependencies": {
     "@types/node": "^26.3.0",
+    "playwright": "^1.62.1",
     "tsx": "^4.23.12",
     "typescript": "^5.5.4",
     "vite": "^5.4.21",

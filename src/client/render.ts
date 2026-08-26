@@ -2,13 +2,18 @@
 // existing 2D x,y plane (no engine changes). Characters are bean-shaped
 // astronaut wizards (rounded body + dome visor + backpack + stubby legs),
 // Gronk is a hulking red troll, furniture is chunky rounded props, and the
-// floor is a tiled, wall-topped spaceship interior.
+// world is a dark-fantasy interior: gradient floors with per-room patterns,
+// depth-edged walls, soft lighting pools, and a subtle vignette.
 //
-// Projection: the 100x60 world is letterboxed into the viewport at a fixed
-// DPR-correct scale. All drawing happens in WORLD units on top of the letterbox
-// transform so nothing depends on window size. Positions are exponentially
-// smoothed toward the latest 10Hz poll (see step()). Teleports (respawn,
-// transform snap) jump instantly when the gap is large.
+// Projection: a game camera follows the local player. The view is zoomed so
+// ~VIEW_VERTICAL_UNITS world units fill the viewport height (a readable player
+// scale), the camera is exponentially smoothed toward the player with a small
+// movement lookahead, and it clamps to the world bounds so nothing outside the
+// map is ever shown. When the window is too small for that zoom we fall back to
+// fitting the whole 100x60 world (the old letterbox behavior). All drawing
+// happens in WORLD units on top of the camera transform so nothing depends on
+// window size. Positions are exponentially smoothed toward the latest 10Hz poll
+// (see step()); teleports (respawn, transform snap) jump instantly.
 import type { GameState, Player } from "../engine/types";
 import { ROOM_WIDTH, ROOM_HEIGHT, TICKS_PER_SECOND } from "../engine/constants";
 
@@ -23,20 +28,31 @@ const LERP_K = 14; // exponential smoothing constant (dt-based)
 const SEAT_COLORS = ["#f2765b", "#4aa8e8", "#8ee36b", "#e072f0"]; // coral, sky, leaf, bloom
 const SEAT_DARK = ["#b04b36", "#2f6fa3", "#5ba83f", "#a843bd"];
 
+// ---- camera --------------------------------------------------------------
+const VIEW_VERTICAL_UNITS = 36; // zoom: this many world units fill the viewport height
+const CAM_SMOOTH = 7; // exponential follow rate (1/s): k = 1 - exp(-dt * CAM_SMOOTH)
+const CAM_SNAP_DIST = 60; // bigger = teleport (match start, respawn)
+const CAM_LOOKAHEAD = 3; // world units of lead-in toward the movement direction
+
 // Cosmetic, client-side "rooms" painted on the floor. The engine only knows one
 // open 100x60 plane — these zones are visual theming that group the fixed
 // furniture clusters. Purely decorative; never lets the engine's secret leak.
+// `kind` selects the floor pattern (tile / plank / panel / slab), `tint` drives
+// the room's ambient light color, `accent` colors the floor label.
 const ROOMS: {
   x: number;
   y: number;
   w: number;
   h: number;
   label: string;
+  kind: "tile" | "plank" | "panel" | "slab";
+  tint: string;
+  accent: string;
 }[] = [
-  { x: 4, y: 4, w: 92, h: 22, label: "CAFETERIA" }, // top: fridge/barrel/chest/armory
-  { x: 14, y: 28, w: 72, h: 14, label: "LIBRARY" }, // center: bookshelf/couch/tapestry
-  { x: 4, y: 42, w: 46, h: 14, label: "REACTOR" }, // bottom-left: brazier/statue
-  { x: 52, y: 42, w: 44, h: 14, label: "STORAGE" }, // bottom-right: cauldron
+  { x: 4, y: 4, w: 92, h: 22, label: "CAFETERIA", kind: "tile", tint: "#ffd9a0", accent: "#ffd166" }, // top: fridge/barrel/chest/armory
+  { x: 14, y: 28, w: 72, h: 14, label: "LIBRARY", kind: "plank", tint: "#9fd8ff", accent: "#4fc3f7" }, // center: bookshelf/couch/tapestry
+  { x: 4, y: 42, w: 46, h: 14, label: "REACTOR", kind: "panel", tint: "#ff9d7a", accent: "#ff7b72" }, // bottom-left: brazier/statue
+  { x: 52, y: 42, w: 44, h: 14, label: "STORAGE", kind: "slab", tint: "#8ee36b", accent: "#8ee36b" }, // bottom-right: cauldron
 ];
 
 // Ambient decor, purely cosmetic: floor vents, floor hatches, wall-mounted
@@ -85,60 +101,128 @@ const DECOR = {
   ],
 };
 
-// World->screen projection, recomputed on resize. Everything is drawn in world
-// units through this transform, so DPR and window size only affect scale/offset.
+// World->screen projection via a camera transform, recomputed every frame. All
+// drawing is in world units through this transform; DPR, window size, and the
+// camera only affect scale/offset.
 export class Renderer {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
   private smooth = new Map<string, { x: number; y: number }>();
-  private scale = 1;
-  private ox = 0;
+  private scale = 1; // px per world unit
+  private ox = 0; // screen offset of world (0,0), css px
   private oy = 0;
-  private margin = 0;
+  private camX = ROOM_WIDTH / 2;
+  private camY = ROOM_HEIGHT / 2;
+  private lastInputDir = { x: 0, y: 0 };
+  private lastPlayerPos: { x: number; y: number } | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d")!;
     this.resize();
     window.addEventListener("resize", () => this.resize());
+    // Debug/QA hook: exposes camera state so automated visual tests can assert
+    // framing. Read-only; not used by gameplay.
+    (window as unknown as { __ghCam?: () => { x: number; y: number; scale: number } }).__ghCam = () => ({
+      x: this.camX,
+      y: this.camY,
+      scale: this.scale,
+    });
   }
 
   resize(): void {
     const dpr = window.devicePixelRatio || 1;
-    const cw = Math.floor(window.innerWidth * dpr);
-    const chh = Math.floor(window.innerHeight * dpr);
-    // Match the CSS box exactly so the backing store == displayed pixels.
-    this.canvas.style.width = `${window.innerWidth}px`;
-    this.canvas.style.height = `${window.innerHeight}px`;
-    this.canvas.width = cw;
-    this.canvas.height = chh;
-
-    // Letterbox the room into the viewport with a small margin, in CSS px.
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-    this.margin = Math.max(12, Math.min(48, vw * 0.04, vh * 0.04));
-    this.scale = Math.min(
-      (vw - this.margin * 2) / ROOM_WIDTH,
-      (vh - this.margin * 2) / ROOM_HEIGHT,
-    );
-    this.ox = (vw - ROOM_WIDTH * this.scale) / 2;
-    this.oy = (vh - ROOM_HEIGHT * this.scale) / 2;
+    // Match the CSS box exactly so the backing store == displayed pixels.
+    this.canvas.style.width = `${vw}px`;
+    this.canvas.style.height = `${vh}px`;
+    this.canvas.width = Math.floor(vw * dpr);
+    this.canvas.height = Math.floor(vh * dpr);
+
+    // Zoom: keep ~VIEW_VERTICAL_UNITS world units on screen vertically so the
+    // player stays readable, but never zoom past "whole world fits" (small
+    // windows fall back to the old letterbox framing).
+    const fitScale = Math.min(vw / ROOM_WIDTH, vh / ROOM_HEIGHT);
+    const zoomScale = vh / VIEW_VERTICAL_UNITS;
+    this.scale = Math.max(fitScale, zoomScale);
+    this.clampCamera();
+  }
+
+  // Keep the camera inside the world. When the whole world fits in the view,
+  // pin the camera to the world center (no panning at all).
+  private clampCamera(): void {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const viewW = vw / this.scale;
+    const viewH = vh / this.scale;
+    if (viewW >= ROOM_WIDTH) {
+      this.camX = ROOM_WIDTH / 2;
+    } else {
+      this.camX = Math.min(ROOM_WIDTH - viewW / 2, Math.max(viewW / 2, this.camX));
+    }
+    if (viewH >= ROOM_HEIGHT) {
+      this.camY = ROOM_HEIGHT / 2;
+    } else {
+      this.camY = Math.min(ROOM_HEIGHT - viewH / 2, Math.max(viewH / 2, this.camY));
+    }
+    this.ox = vw / 2 - this.camX * this.scale;
+    this.oy = vh / 2 - this.camY * this.scale;
+  }
+
+  // Follow the local player: exponential smoothing toward (player + small
+  // lookahead), snap on teleports, clamp to world bounds.
+  private updateCamera(dt: number): void {
+    let tx: number;
+    let ty: number;
+    if (this.myPlayerId && (this.localOverride || this.lastPlayerPos)) {
+      const p = this.localOverride ?? this.lastPlayerPos!;
+      tx = p.x + this.lastInputDir.x * CAM_LOOKAHEAD;
+      ty = p.y + this.lastInputDir.y * CAM_LOOKAHEAD;
+    } else {
+      tx = ROOM_WIDTH / 2;
+      ty = ROOM_HEIGHT / 2;
+    }
+    const dx = tx - this.camX;
+    const dy = ty - this.camY;
+    const d = Math.hypot(dx, dy);
+    if (d > CAM_SNAP_DIST) {
+      this.camX = tx;
+      this.camY = ty;
+    } else {
+      const k = 1 - Math.exp(-dt * CAM_SMOOTH);
+      this.camX += dx * k;
+      this.camY += dy * k;
+    }
+    this.clampCamera();
   }
 
   // Build the DPR-correct transform: cssPx -> backing pixels via dpr, then world
   // -> cssPx via (scale, ox, oy).
   private setProjection(): void {
     const dpr = window.devicePixelRatio || 1;
-    const ctx = this.ctx;
-    ctx.setTransform(dpr * this.scale, 0, 0, dpr * this.scale, dpr * this.ox, dpr * this.oy);
+    this.ctx.setTransform(dpr * this.scale, 0, 0, dpr * this.scale, dpr * this.ox, dpr * this.oy);
   }
 
   clear(): void {
     const dpr = window.devicePixelRatio || 1;
     const ctx = this.ctx;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = "#0b0e14";
+    // Deep space behind the whole viewport.
+    ctx.fillStyle = "#05070d";
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    // Faint static stars — only visible in the margins when the whole map fits
+    // (zoomed camera views are fully covered by the world).
+    ctx.fillStyle = "#c8d8f2";
+    for (let i = 0; i < 110; i++) {
+      const x = (((i * 73) % 211) / 211) * this.canvas.width;
+      const y = (((i * 151) % 179) / 179) * this.canvas.height;
+      ctx.globalAlpha = 0.04 + (i % 5) * 0.035;
+      ctx.beginPath();
+      ctx.arc(x, y, 0.6 + (i % 3) * 0.7, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
     ctx.setTransform(dpr * this.scale, 0, 0, dpr * this.scale, dpr * this.ox, dpr * this.oy);
   }
 
@@ -165,12 +249,16 @@ export class Renderer {
   }
 
   draw(state: GameState, dt: number, timeMs: number): void {
+    this.updateCamera(dt);
     this.clear();
     const ctx = this.ctx;
     const lw = 0.5; // world-unit line width
 
-    this.drawFloor(ctx);
-    this.drawTiles(ctx, ROOM_WIDTH, ROOM_HEIGHT);
+    this.drawFloorBase(ctx);
+    this.drawRoomFloors(ctx);
+    this.drawDust(ctx, timeMs);
+    this.drawInteriorWalls(ctx);
+    this.drawOuterWalls(ctx);
     this.drawDecor(ctx, timeMs);
 
     // Sudden-death treasure pings: expanding rings.
@@ -202,9 +290,12 @@ export class Renderer {
       const pos = this.step(p.id, p.x, p.y, dt);
       let dx = pos.x;
       let dy = pos.y;
-      if (p.id === this.myPlayerId && this.localOverride != null) {
-        dx = this.localOverride.x;
-        dy = this.localOverride.y;
+      if (p.id === this.myPlayerId) {
+        this.lastPlayerPos = { x: pos.x, y: pos.y };
+        if (this.localOverride != null) {
+          dx = this.localOverride.x;
+          dy = this.localOverride.y;
+        }
       }
       this.drawPlayer(ctx, p, dx, dy, timeMs, state);
     }
@@ -214,120 +305,344 @@ export class Renderer {
     const gpos = this.step("gronk", g.x, g.y, dt);
     this.drawGronk(ctx, state, gpos.x, gpos.y, timeMs);
 
-    // Enrage: screen-edge pulse.
-    if (state.enraged) {
-      const a = 0.18 + 0.12 * Math.sin(timeMs / 180);
-      ctx.strokeStyle = `rgba(255, 40, 40, ${a})`;
-      ctx.lineWidth = 3 * lw;
-      ctx.strokeRect(1, 1, ROOM_WIDTH - 2, ROOM_HEIGHT - 2);
-      ctx.lineWidth = 6 * lw;
-      ctx.strokeRect(3, 3, ROOM_WIDTH - 6, ROOM_HEIGHT - 6);
+    // Screen-space lighting: vignette + enrage edge pulse.
+    this.postLighting(ctx, state, timeMs);
+  }
+
+  // ---- floor: base slab + faint global grid -------------------------------
+
+  private drawFloorBase(ctx: CanvasRenderingContext2D): void {
+    // Vertical gradient slab (light pools toward mid-room).
+    const g = ctx.createLinearGradient(0, 0, 0, ROOM_HEIGHT);
+    g.addColorStop(0, "#141a27");
+    g.addColorStop(0.45, "#1a2231");
+    g.addColorStop(1, "#131925");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, ROOM_WIDTH, ROOM_HEIGHT);
+
+    // Soft central light pool.
+    const pool = ctx.createRadialGradient(
+      ROOM_WIDTH / 2,
+      ROOM_HEIGHT * 0.42,
+      4,
+      ROOM_WIDTH / 2,
+      ROOM_HEIGHT * 0.42,
+      58,
+    );
+    pool.addColorStop(0, "rgba(140,170,220,0.06)");
+    pool.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = pool;
+    ctx.fillRect(0, 0, ROOM_WIDTH, ROOM_HEIGHT);
+
+    // Faint global grid — spatial reference, not a design element.
+    ctx.strokeStyle = "rgba(255,255,255,0.03)";
+    ctx.lineWidth = 0.15;
+    ctx.beginPath();
+    for (let x = 0; x <= ROOM_WIDTH; x += 10) {
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, ROOM_HEIGHT);
     }
-  }
-
-  // ---- floor + walls -----------------------------------------------------
-
-  private drawFloor(ctx: CanvasRenderingContext2D): void {
-    // Outer space.
-    ctx.fillStyle = "#05060a";
-    ctx.fillRect(-40, -40, ROOM_WIDTH + 80, ROOM_HEIGHT + 80);
-    // Room floor slab.
-    ctx.fillStyle = "#1a2130";
-    ctx.fillRect(-3, -3, ROOM_WIDTH + 6, ROOM_HEIGHT + 6);
-  }
-
-  private roomTint(label: string): { fill: string; alt: string; accent: string } {
-    switch (label) {
-      case "CAFETERIA": return { fill: "#222b3d", alt: "#202836", accent: "#ffd166" };
-      case "LIBRARY": return { fill: "#252c3e", alt: "#22293a", accent: "#4fc3f7" };
-      case "REACTOR": return { fill: "#2a2535", alt: "#272131", accent: "#ff7b72" };
-      case "STORAGE": return { fill: "#20302c", alt: "#1d2b28", accent: "#8ee36b" };
-      default: return { fill: "#232c3e", alt: "#212938", accent: "#9aa7bd" };
+    for (let y = 0; y <= ROOM_HEIGHT; y += 10) {
+      ctx.moveTo(0, y);
+      ctx.lineTo(ROOM_WIDTH, y);
     }
+    ctx.stroke();
   }
 
-  private drawTiles(ctx: CanvasRenderingContext2D, w: number, h: number): void {
-    const T = 10; // tile size
-    ctx.fillStyle = "#191f2d";
-    ctx.fillRect(0, 0, w, h);
+  // ---- per-room floors: tint wash + pattern + ambient glow ----------------
 
-    // --- paint each named room with its own tile tint ---
+  private drawRoomFloors(ctx: CanvasRenderingContext2D): void {
     for (const room of ROOMS) {
-      const { fill, alt } = this.roomTint(room.label);
-      for (let y = room.y; y < room.y + room.h; y += T) {
-        for (let x = room.x; x < room.x + room.w; x += T) {
-          const even = ((x / T) + (y / T)) % 2 === 0;
-          ctx.fillStyle = even ? fill : alt;
-          ctx.fillRect(x + 0.6, y + 0.6, T - 1.2, T - 1.2);
-        }
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(room.x, room.y, room.w, room.h);
+      ctx.clip();
+
+      // Tint wash (kept subtle so the base slab still reads through).
+      ctx.fillStyle = rgba(room.tint, 0.05);
+      ctx.fillRect(room.x, room.y, room.w, room.h);
+
+      switch (room.kind) {
+        case "tile": this.floorTiles(ctx, room); break;
+        case "plank": this.floorPlanks(ctx, room); break;
+        case "panel": this.floorPanels(ctx, room); break;
+        case "slab": this.floorSlabs(ctx, room); break;
       }
-    }
 
-    // --- interior room walls (with door gaps) ---
-    ctx.strokeStyle = "#3a4660";
-    ctx.lineWidth = 2.4;
-    ctx.lineCap = "butt";
-    // Wall separating the cafeteria band (top) from the lower zones.
-    this.wallGap(ctx, 4, 26, w - 8, 10);
-    // Corridor divider between the two lower rooms.
-    this.wallGapV(ctx, 50, 42, 14, 6);
+      // Room-specific ambient glow from the room center.
+      const cx = room.x + room.w / 2;
+      const cy = room.y + room.h / 2;
+      const glow = ctx.createRadialGradient(cx, cy, 1, cx, cy, room.w * 0.55);
+      glow.addColorStop(0, rgba(room.tint, 0.055));
+      glow.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = glow;
+      ctx.fillRect(room.x, room.y, room.w, room.h);
 
-    // --- floor-painted room labels ---
-    ctx.save();
-    ctx.globalAlpha = 0.55;
-    ctx.font = `800 3.6px 'Segoe UI', system-ui, sans-serif`;
-    for (const room of ROOMS) {
-      // Room label sits at the top of its zone so occupants aren't hidden.
-      const { accent } = this.roomTint(room.label);
-      ctx.fillStyle = accent;
+      // Floor-painted room label (environment-first, label as reference).
+      ctx.globalAlpha = 0.4;
+      ctx.fillStyle = room.accent;
+      ctx.font = `800 3.2px 'Segoe UI', system-ui, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "top";
-      ctx.fillText(room.label, room.x + room.w / 2, room.y + 1.2);
+      ctx.fillText(room.label, cx, room.y + 1.2);
+      ctx.globalAlpha = 1;
+
+      ctx.restore();
     }
-    ctx.restore();
-
-    // --- outer walls ---
-    ctx.strokeStyle = "#222a3d";
-    ctx.lineWidth = 0.4;
-    ctx.fillStyle = "#39435c";
-    ctx.fillRect(-2, 0, w + 4, 2); // top
-    ctx.fillRect(-2, h - 2, w + 4, 3); // bottom
-    ctx.fillRect(-2, 0, 3, h); // left
-    ctx.fillRect(w - 1, 0, 3, h); // right
   }
 
-  // Horizontal interior wall with a centered door gap.
-  private wallGap(
+  // Large square tiles with grout lines (cafeteria).
+  private floorTiles(
+    ctx: CanvasRenderingContext2D,
+    room: { x: number; y: number; w: number; h: number },
+  ): void {
+    const s = 5;
+    for (let y = room.y; y < room.y + room.h; y += s) {
+      for (let x = room.x; x < room.x + room.w; x += s) {
+        ctx.fillStyle = ((x / s + y / s) % 2 === 0)
+          ? "rgba(255,255,255,0.028)"
+          : "rgba(0,0,0,0.03)";
+        ctx.fillRect(x, y, s, s);
+      }
+    }
+    ctx.strokeStyle = "rgba(0,0,0,0.14)";
+    ctx.lineWidth = 0.16;
+    ctx.beginPath();
+    for (let x = room.x; x <= room.x + room.w; x += s) {
+      ctx.moveTo(x, room.y);
+      ctx.lineTo(x, room.y + room.h);
+    }
+    for (let y = room.y; y <= room.y + room.h; y += s) {
+      ctx.moveTo(room.x, y);
+      ctx.lineTo(room.x + room.w, y);
+    }
+    ctx.stroke();
+  }
+
+  // Horizontal wood planks with staggered seams (library).
+  private floorPlanks(
+    ctx: CanvasRenderingContext2D,
+    room: { x: number; y: number; w: number; h: number },
+  ): void {
+    const p = 2;
+    let seamOff = 0;
+    for (let y = room.y; y < room.y + room.h; y += p) {
+      ctx.fillStyle = seamOff % 2 === 0 ? "rgba(255,255,255,0.02)" : "rgba(0,0,0,0.035)";
+      ctx.fillRect(room.x, y, room.w, p);
+      ctx.strokeStyle = "rgba(0,0,0,0.15)";
+      ctx.lineWidth = 0.14;
+      ctx.beginPath();
+      ctx.moveTo(room.x, y + p - 0.08);
+      ctx.lineTo(room.x + room.w, y + p - 0.08);
+      ctx.stroke();
+      // Staggered plank joints.
+      ctx.beginPath();
+      for (let x = room.x + seamOff; x < room.x + room.w; x += 8) {
+        ctx.moveTo(x, y);
+        ctx.lineTo(x, y + p);
+      }
+      ctx.stroke();
+      seamOff = (seamOff + 3) % 8;
+    }
+  }
+
+  // Industrial metal panels with corner rivets (reactor).
+  private floorPanels(
+    ctx: CanvasRenderingContext2D,
+    room: { x: number; y: number; w: number; h: number },
+  ): void {
+    const s = 4;
+    for (let y = room.y; y < room.y + room.h; y += s) {
+      for (let x = room.x; x < room.x + room.w; x += s) {
+        ctx.strokeStyle = "rgba(0,0,0,0.18)";
+        ctx.lineWidth = 0.2;
+        ctx.strokeRect(x, y, s, s);
+        ctx.fillStyle = "rgba(255,255,255,0.07)";
+        ctx.beginPath();
+        ctx.arc(x + 0.3, y + 0.3, 0.13, 0, Math.PI * 2);
+        ctx.arc(x + s - 0.3, y + 0.3, 0.13, 0, Math.PI * 2);
+        ctx.arc(x + 0.3, y + s - 0.3, 0.13, 0, Math.PI * 2);
+        ctx.arc(x + s - 0.3, y + s - 0.3, 0.13, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
+  // Large concrete slabs with tone variance (storage).
+  private floorSlabs(
+    ctx: CanvasRenderingContext2D,
+    room: { x: number; y: number; w: number; h: number },
+  ): void {
+    const sw = 6;
+    const sh = 5;
+    for (let y = room.y; y < room.y + room.h; y += sh) {
+      for (let x = room.x; x < room.x + room.w; x += sw) {
+        ctx.fillStyle = ((x / sw + y / sh) % 2 === 0)
+          ? "rgba(255,255,255,0.02)"
+          : "rgba(0,0,0,0.03)";
+        ctx.fillRect(x, y, sw, sh);
+      }
+    }
+    ctx.strokeStyle = "rgba(0,0,0,0.16)";
+    ctx.lineWidth = 0.18;
+    ctx.beginPath();
+    for (let x = room.x; x <= room.x + room.w; x += sw) {
+      ctx.moveTo(x, room.y);
+      ctx.lineTo(x, room.y + room.h);
+    }
+    for (let y = room.y; y <= room.y + room.h; y += sh) {
+      ctx.moveTo(room.x, y);
+      ctx.lineTo(room.x + room.w, y);
+    }
+    ctx.stroke();
+  }
+
+  // ---- walls: interior dividers + outer frame with depth ------------------
+
+  private drawInteriorWalls(ctx: CanvasRenderingContext2D): void {
+    // Cafeteria band (top) vs. the lower zones: horizontal wall, door gap.
+    this.wallBand(ctx, 4, 26, 92, 10, "h");
+    // Corridor divider between Reactor and Storage: vertical wall, door gap.
+    this.wallBand(ctx, 50, 42, 14, 6, "v");
+  }
+
+  // A thick interior wall drawn in two segments around a centered door gap,
+  // with door jambs at the gap edges and a faint threshold on the floor.
+  private wallBand(
     ctx: CanvasRenderingContext2D,
     x: number,
     y: number,
     len: number,
     gap: number,
+    dir: "h" | "v",
   ): void {
-    const mid = x + len / 2;
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    ctx.lineTo(mid - gap / 2, y);
-    ctx.moveTo(mid + gap / 2, y);
-    ctx.lineTo(x + len, y);
-    ctx.stroke();
+    const t = 2.2; // wall thickness
+    const mid = dir === "h" ? x + len / 2 : y + len / 2;
+    const g0 = mid - gap / 2;
+    const g1 = mid + gap / 2;
+
+    if (dir === "h") {
+      this.bevelBar(ctx, x, y - t / 2, g0 - x, t);
+      this.bevelBar(ctx, g1, y - t / 2, x + len - g1, t);
+      // Floor contact shadow (per segment, so the doorway stays clean).
+      for (const seg of [
+        { a: x, b: g0 - x },
+        { a: g1, b: x + len - g1 },
+      ]) {
+        const sh = ctx.createLinearGradient(0, y + t / 2, 0, y + t / 2 + 1.6);
+        sh.addColorStop(0, "rgba(0,0,0,0.28)");
+        sh.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = sh;
+        ctx.fillRect(seg.a, y + t / 2, seg.b, 1.6);
+      }
+      // Door jambs + threshold.
+      ctx.fillStyle = "#39435c";
+      ctx.fillRect(g0 - 0.28, y - t / 2 - 0.55, 0.56, t + 1.1);
+      ctx.fillRect(g1 - 0.28, y - t / 2 - 0.55, 0.56, t + 1.1);
+      ctx.strokeStyle = "rgba(255,255,255,0.05)";
+      ctx.lineWidth = 0.3;
+      ctx.beginPath();
+      ctx.moveTo(g0 + 0.5, y);
+      ctx.lineTo(g1 - 0.5, y);
+      ctx.stroke();
+    } else {
+      this.bevelBar(ctx, x - t / 2, y, t, g0 - y);
+      this.bevelBar(ctx, x - t / 2, g1, t, y + len - g1);
+      for (const seg of [
+        { a: y, b: g0 - y },
+        { a: g1, b: y + len - g1 },
+      ]) {
+        const sh = ctx.createLinearGradient(x + t / 2, 0, x + t / 2 + 1.6, 0);
+        sh.addColorStop(0, "rgba(0,0,0,0.28)");
+        sh.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = sh;
+        ctx.fillRect(x + t / 2, seg.a, 1.6, seg.b);
+      }
+      ctx.fillStyle = "#39435c";
+      ctx.fillRect(x - t / 2 - 0.55, g0 - 0.28, t + 1.1, 0.56);
+      ctx.fillRect(x - t / 2 - 0.55, g1 - 0.28, t + 1.1, 0.56);
+      ctx.strokeStyle = "rgba(255,255,255,0.05)";
+      ctx.lineWidth = 0.3;
+      ctx.beginPath();
+      ctx.moveTo(x, g0 + 0.5);
+      ctx.lineTo(x, g1 - 0.5);
+      ctx.stroke();
+    }
   }
 
-  // Vertical interior wall with a centered door gap (door offset kept simple).
-  private wallGapV(
-    ctx: CanvasRenderingContext2D,
-    x: number,
-    y: number,
-    len: number,
-    gap: number,
-  ): void {
-    const mid = y + len / 2;
+  // A rounded wall bar with a light top edge and a dark bottom edge (bevel).
+  private bevelBar(ctx: CanvasRenderingContext2D, bx: number, by: number, bw: number, bh: number): void {
+    ctx.fillStyle = "#2c3448";
     ctx.beginPath();
-    ctx.moveTo(x, y);
-    ctx.lineTo(x, mid - gap / 2);
-    ctx.moveTo(x, mid + gap / 2);
-    ctx.lineTo(x, y + len);
-    ctx.stroke();
+    ctx.roundRect(bx, by, bw, bh, 0.4);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.08)";
+    ctx.fillRect(bx + 0.2, by + 0.2, bw - 0.4, Math.min(0.45, bh * 0.3));
+    ctx.fillStyle = "rgba(0,0,0,0.3)";
+    ctx.fillRect(bx + 0.2, by + bh - 0.45, bw - 0.4, 0.45);
+  }
+
+  // Outer walls: a dark frame with a beveled face, corner rivets, and soft
+  // floor-contact shadows along each inside edge.
+  private drawOuterWalls(ctx: CanvasRenderingContext2D): void {
+    const t = 3;
+    // Outer dark frame.
+    ctx.fillStyle = "#0a0e17";
+    ctx.fillRect(-t, -t, ROOM_WIDTH + t * 2, ROOM_HEIGHT + t * 2);
+    // Wall face.
+    ctx.fillStyle = "#232a3c";
+    ctx.fillRect(-t + 0.45, -t + 0.45, ROOM_WIDTH + t * 2 - 0.9, ROOM_HEIGHT + t * 2 - 0.9);
+    // Face bevel: faint inner highlight.
+    ctx.strokeStyle = "rgba(255,255,255,0.05)";
+    ctx.lineWidth = 0.5;
+    ctx.strokeRect(-t + 0.7, -t + 0.7, ROOM_WIDTH + t * 2 - 1.4, ROOM_HEIGHT + t * 2 - 1.4);
+    // Corner rivets.
+    ctx.fillStyle = "rgba(255,255,255,0.10)";
+    for (const [cx, cy] of [
+      [-t + 0.9, -t + 0.9],
+      [ROOM_WIDTH + t - 0.9, -t + 0.9],
+      [-t + 0.9, ROOM_HEIGHT + t - 0.9],
+      [ROOM_WIDTH + t - 0.9, ROOM_HEIGHT + t - 0.9],
+    ]) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, 0.28, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Floor-contact shadows along each inside edge.
+    const top = ctx.createLinearGradient(0, 0, 0, 2.6);
+    top.addColorStop(0, "rgba(0,0,0,0.30)");
+    top.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = top;
+    ctx.fillRect(0, 0, ROOM_WIDTH, 2.6);
+    const bottom = ctx.createLinearGradient(0, ROOM_HEIGHT - 2.6, 0, ROOM_HEIGHT);
+    bottom.addColorStop(0, "rgba(0,0,0,0)");
+    bottom.addColorStop(1, "rgba(0,0,0,0.30)");
+    ctx.fillStyle = bottom;
+    ctx.fillRect(0, ROOM_HEIGHT - 2.6, ROOM_WIDTH, 2.6);
+    const left = ctx.createLinearGradient(0, 0, 2.6, 0);
+    left.addColorStop(0, "rgba(0,0,0,0.30)");
+    left.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = left;
+    ctx.fillRect(0, 0, 2.6, ROOM_HEIGHT);
+    const right = ctx.createLinearGradient(ROOM_WIDTH - 2.6, 0, ROOM_WIDTH, 0);
+    right.addColorStop(0, "rgba(0,0,0,0)");
+    right.addColorStop(1, "rgba(0,0,0,0.30)");
+    ctx.fillStyle = right;
+    ctx.fillRect(ROOM_WIDTH - 2.6, 0, 2.6, ROOM_HEIGHT);
+  }
+
+  // ---- airborne dust motes (barely-there atmosphere) -----------------------
+
+  private drawDust(ctx: CanvasRenderingContext2D, timeMs: number): void {
+    for (let i = 0; i < 36; i++) {
+      const x = 3 + ((i * 17) % 94);
+      const y = 3 + ((i * 31) % 54);
+      const a = 0.04 + 0.045 * (0.5 + 0.5 * Math.sin(timeMs / 1800 + i * 1.7));
+      ctx.fillStyle = `rgba(190,205,235,${a.toFixed(3)})`;
+      ctx.beginPath();
+      ctx.arc(x, y, 0.12 + (i % 3) * 0.06, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
   // ---- ambient decor: vents / hatches / pipes / posters / lights ---------
@@ -406,17 +721,22 @@ export class Renderer {
       ctx.fillRect(po.x - 0.6, po.y + 0.3, 1.2, 0.12);
     }
 
-    // Flickering ceiling lights: fixture bar + warm/cool floor glow pool.
+    // Flickering ceiling lights: fixture bar + warm/cool floor glow pools.
     for (const L of DECOR.lights) {
       // Deterministic per-light flicker dip.
       const on = Math.sin(timeMs / 700 + L.phase * 17) > 0.92 ? 0.35 : 1;
       const [r, g, b] = this.hexRgb(L.tint);
 
-      ctx.fillStyle = `rgba(${r},${g},${b},${0.1 * on})`;
+      // Wide ambient pool + tighter core pool.
+      ctx.fillStyle = `rgba(${r},${g},${b},${0.06 * on})`;
+      ctx.beginPath();
+      ctx.ellipse(L.x, L.y + 3.6, 6.4, 3.2, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = `rgba(${r},${g},${b},${0.14 * on})`;
       ctx.beginPath();
       ctx.ellipse(L.x, L.y + 3.4, 4.2, 2.3, 0, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = `rgba(${r},${g},${b},${0.14 * on})`;
+      ctx.fillStyle = `rgba(${r},${g},${b},${0.2 * on})`;
       ctx.beginPath();
       ctx.ellipse(L.x, L.y + 3.4, 2.4, 1.3, 0, 0, Math.PI * 2);
       ctx.fill();
@@ -435,12 +755,72 @@ export class Renderer {
     return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
   }
 
+  // ---- screen-space lighting: vignette + enrage edge pulse ----------------
+
+  private postLighting(
+    ctx: CanvasRenderingContext2D,
+    state: GameState,
+    timeMs: number,
+  ): void {
+    const dpr = window.devicePixelRatio || 1;
+    const w = this.canvas.width;
+    const h = this.canvas.height;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    // Subtle elliptical vignette: hugs the viewport so the framing is felt on
+    // the mid-edges too, while the center stays clean. A circle scaled to an
+    // ellipse (unit radius 1 == each screen edge) keeps it predictable at any
+    // aspect ratio; radius sqrt(2) reaches the corners (canvas gradients clamp
+    // stop offsets to [0,1]).
+    ctx.save();
+    try {
+      ctx.translate(w / 2, h / 2);
+      ctx.scale(w / 2, h / 2);
+      const g = ctx.createRadialGradient(0, 0, 0, 0, 0, Math.SQRT2);
+      g.addColorStop(0, "rgba(3,5,10,0)");
+      g.addColorStop(0.39, "rgba(3,5,10,0)");
+      g.addColorStop(0.58, "rgba(3,5,10,0.10)");
+      g.addColorStop(1, "rgba(3,5,10,0.45)");
+      ctx.fillStyle = g;
+      ctx.fillRect(-2, -2, 4, 4);
+    } finally {
+      ctx.restore();
+    }
+
+    // Enrage: pulsing red edge glow (screen-space, so it reads at any zoom).
+    if (state.enraged) {
+      const a = 0.10 + 0.08 * Math.sin(timeMs / 180);
+      for (const side of ["top", "bottom", "left", "right"] as const) {
+        const grad = ctx.createLinearGradient(
+          side === "left" ? 0 : side === "right" ? w : 0,
+          side === "top" ? 0 : side === "bottom" ? h : 0,
+          side === "left" ? 46 : side === "right" ? w - 46 : 0,
+          side === "top" ? 46 : side === "bottom" ? h - 46 : 0,
+        );
+        grad.addColorStop(0, `rgba(255,40,40,${a})`);
+        grad.addColorStop(1, "rgba(255,40,40,0)");
+        ctx.fillStyle = grad;
+        if (side === "top" || side === "bottom") ctx.fillRect(0, side === "top" ? 0 : h - 46, w, 46);
+        else ctx.fillRect(side === "left" ? 0 : w - 46, 0, 46, h);
+      }
+    }
+  }
+
   // ---- furniture ---------------------------------------------------------
 
   private drawFurniture(ctx: CanvasRenderingContext2D, state: GameState): void {
     for (const f of state.furniture) {
       const col = "#4d5871";
       const dark = "#333b52";
+      // Soft drop shadow (fake blur via stacked ellipses).
+      ctx.fillStyle = "rgba(0,0,0,0.16)";
+      ctx.beginPath();
+      ctx.ellipse(f.x + 0.4, f.y + 0.55, f.w * 0.62, f.h * 0.48, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "rgba(0,0,0,0.10)";
+      ctx.beginPath();
+      ctx.ellipse(f.x + 0.4, f.y + 0.55, f.w * 0.88, f.h * 0.68, 0, 0, Math.PI * 2);
+      ctx.fill();
       // Base slab + slight relief.
       ctx.fillStyle = dark;
       ctx.beginPath();
@@ -738,6 +1118,7 @@ export class Renderer {
     const now = performance.now();
     const dt = Math.min(0.1, (now - this.localT) / 1000);
     this.localT = now;
+    this.lastInputDir = inputDir ?? { x: 0, y: 0 };
     const moving = !!inputDir && (inputDir.x !== 0 || inputDir.y !== 0) && canMove && !!serverPos;
     if (!moving) {
       // No input (or can't move): stop predicting and let server smoothing take over.
