@@ -247,15 +247,34 @@ npx tsx scripts/playtest.ts   # headless 3-match single-player playtest
 
 ## Qodo Code Review Evidence
 
-Every substantive change ships via a Qodo-reviewed PR. The most complex change —
-the **M4 MCP integration** (streamable-HTTP MCP bridge + TrueForge backend + orchestrator
-with timeout fallback) — is the representative review.
+Every substantive change ships via a Qodo-reviewed PR. Qodo's GitHub App is installed
+on this repo; each PR runs an agentic review and findings are resolved or explicitly
+rationalized before merge.
 
+### Representative reviewed PR
 - **Repo:** https://github.com/Daniel536t/Gronk
-- **Representative reviewed PR:** [M4 MCP integration — link to PR](https://github.com/Daniel536t/Gronk)
+- **PR: [Phase 3 — original hooded-adventurer characters + animation/state system](https://github.com/Daniel536t/Gronk/pull/1)** (#1, merged)
 
-Workflow: branch → push → open a PR → run the Qodo review on it → merge. Paste the
-merged PR's URL over the link above (required for judging).
+### What Qodo found and what we changed
+Qodo's agentic review of PR #1 (deep mode) flagged two bugs:
+1. **High — Rejected transform froze movement.** A rejected/errored `transform` POST left move
+   suppression permanently set, disabling input. Fixed: suppression now releases immediately on
+   a rejected/failed request and is reset when a session changes.
+2. **High — Slow-transform move race.** A hard 500ms suppression cap could expire before a slow
+   transform applied, letting a racing move break the disguise. Fixed: removed the time cap; input
+   is held only until a poll observes the applied state (and released instantly on rejection).
+
+Follow-up: Qodo raised a deeper ordering sub-case (a move POST in flight the same tick as the
+creature transform). This is **intentionally deferred** as out of scope for a visual phase (it needs
+engine/API ordering tokens, which this repo's Phase 3 brief reserves for a later milestone) and is
+documented in the PR thread with that rationale.
+
+### Review history (public)
+The Qodo review and follow-up re-reviews on the updated commits are public on PR #1:
+https://github.com/Daniel536t/Gronk/pull/1 (Qodo Code Review comment + review markers at each commit).
+
+### Workflow
+branch → push → open PR → `\`/agentic_review\`` → fix/dismiss findings → re-review → merge.
 
 ## Demo clips
 
