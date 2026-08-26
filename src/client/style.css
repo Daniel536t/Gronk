@@ -1,0 +1,513 @@
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #0b0e14;
+  color: #e8ecf4;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  user-select: none;
+  touch-action: none;
+}
+
+#app {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+}
+
+.screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  background: radial-gradient(circle at 50% 30%, #1a2233 0%, #0b0e14 70%);
+}
+
+.hidden {
+  display: none !important;
+}
+
+.game-title {
+  font-size: clamp(2.5rem, 8vw, 5rem);
+  letter-spacing: 0.06em;
+  margin: 0;
+  color: #ffd166;
+  text-shadow: 0 4px 0 #7a4b00, 0 8px 24px rgba(0, 0, 0, 0.6);
+}
+
+.tagline {
+  color: #9aa7bd;
+  margin: 0;
+}
+
+.menu-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.btn {
+  font-size: 1.1rem;
+  font-weight: 600;
+  padding: 0.7rem 1.6rem;
+  border-radius: 999px;
+  border: 2px solid #3a4660;
+  background: #182032;
+  color: #e8ecf4;
+  cursor: pointer;
+  min-width: 220px;
+  transition: transform 0.05s ease, background 0.15s ease, border-color 0.15s ease;
+}
+
+.btn:hover {
+  background: #232e47;
+}
+
+.btn:active {
+  transform: scale(0.96);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: #ffd166;
+  border-color: #ffd166;
+  color: #3a2400;
+}
+
+.btn-primary:hover {
+  background: #ffdf8e;
+}
+
+.btn-ghost {
+  background: transparent;
+  min-width: 0;
+  margin-top: 1rem;
+}
+
+.join-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.code-input {
+  font-size: 1.3rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  text-align: center;
+  padding: 0.6rem 1rem;
+  width: 220px;
+  border-radius: 12px;
+  border: 2px solid #3a4660;
+  background: #10161f;
+  color: #e8ecf4;
+}
+
+.error {
+  color: #ff7b72;
+}
+
+.muted {
+  color: #9aa7bd;
+}
+
+/* ---- Lobby ---- */
+.room-code-display {
+  font-size: 1.1rem;
+  color: #9aa7bd;
+}
+
+.room-code {
+  font-size: 2.4rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: #ffd166;
+  font-family: ui-monospace, monospace;
+}
+
+.lobby-teams {
+  display: flex;
+  gap: 2rem;
+}
+
+.team-col {
+  background: #10161f;
+  border: 2px solid #3a4660;
+  border-radius: 16px;
+  padding: 1rem 1.5rem;
+  min-width: 180px;
+}
+
+.team-col h3 {
+  margin: 0 0 0.6rem;
+  font-size: 1rem;
+  letter-spacing: 0.1em;
+}
+
+.team-0 h3 {
+  color: #4fc3f7;
+}
+
+.team-1 h3 {
+  color: #ff7b72;
+}
+
+.seat {
+  padding: 0.35rem 0.6rem;
+  border-radius: 8px;
+  margin: 0.25rem 0;
+  background: #182032;
+  color: #c7d2e4;
+}
+
+.seat.empty {
+  color: #4a5670;
+  background: transparent;
+  border: 1px dashed #2c3650;
+}
+
+.seat.you {
+  outline: 2px solid #ffd166;
+}
+
+/* ---- Game HUD ---- */
+#game-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.riddle-banner {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(640px, 90vw);
+  background: rgba(10, 14, 22, 0.88);
+  border: 1px solid #3a4660;
+  border-left: 4px solid #ffd166;
+  border-radius: 10px;
+  padding: 0.5rem 1rem;
+  font-size: 0.95rem;
+  color: #ffd166;
+  text-align: center;
+  opacity: 0;
+  transition: opacity 0.6s ease;
+  pointer-events: none;
+}
+
+.riddle-banner.show {
+  opacity: 1;
+}
+
+.timer-hud {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  font-family: ui-monospace, monospace;
+  font-size: 1.2rem;
+  color: #c7d2e4;
+  background: rgba(10, 14, 22, 0.8);
+  padding: 0.3rem 0.7rem;
+  border-radius: 8px;
+  border: 1px solid #3a4660;
+}
+
+.timer-hud.sudden-death {
+  color: #ff7b72;
+  border-color: #ff7b72;
+  animation: pulse 1s ease-in-out infinite;
+}
+
+/* ---- Players strip (portraits) ---- */
+.players-hud {
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  pointer-events: none;
+}
+
+.player-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(10, 14, 22, 0.82);
+  border: 1px solid rgba(60, 72, 100, 0.6);
+  border-radius: 999px;
+  padding: 0.22rem 0.7rem 0.22rem 0.3rem;
+  font-size: 0.82rem;
+  color: #c7d2e4;
+  min-width: 132px;
+}
+
+.player-chip .bean {
+  width: 20px;
+  height: 20px;
+  border-radius: 46% 46% 44% 44% / 38% 38% 46% 46%;
+  background: var(--pc);
+  position: relative;
+  flex: none;
+}
+
+/* tiny visor on the bean avatar */
+.player-chip .bean::after {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: 4px;
+  width: 9px;
+  height: 7px;
+  border-radius: 50%;
+  background: #9fe2ff;
+  box-shadow: inset 1px 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+.player-chip .name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.player-chip .state-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+  background: #4fc36b;
+}
+
+.player-chip.carrying .bean {
+  box-shadow: 0 0 0 2px #ffd166, 0 0 8px rgba(255, 209, 102, 0.8);
+}
+.player-chip.carrying .state-dot {
+  background: #ffd166;
+}
+
+.player-chip.closeted {
+  opacity: 0.45;
+}
+.player-chip.closeted .state-dot {
+  background: #6b7688;
+}
+
+.player-chip.stunned .state-dot {
+  background: #ffd166;
+  animation: pulse 0.5s ease-in-out infinite;
+}
+
+.player-chip.you {
+  border-color: #ffd166;
+  box-shadow: 0 0 8px rgba(255, 209, 102, 0.35);
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+.toasts {
+  position: absolute;
+  top: 76px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  pointer-events: none;
+}
+
+.toast {
+  background: rgba(120, 20, 20, 0.92);
+  border: 1px solid #ff7b72;
+  color: #ffd9d6;
+  padding: 0.4rem 1rem;
+  border-radius: 999px;
+  font-size: 0.95rem;
+  animation: toast-in 0.25s ease;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+/* ---- Touch controls (Among-Us feel) ---- */
+.joystick {
+  position: absolute;
+  left: 26px;
+  bottom: 26px;
+  width: 150px;
+  height: 150px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.22);
+  background: radial-gradient(circle at 50% 50%, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.03) 100%);
+  touch-action: none;
+  box-shadow: 0 0 0 6px rgba(0,0,0,0.18);
+}
+
+.joystick-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 60px;
+  height: 60px;
+  margin: -30px 0 0 -30px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #ffe9b0, #ffd166 60%, #e0a83d);
+  border: 2px solid rgba(255,255,255,0.35);
+  box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+  pointer-events: none;
+}
+
+.controls {
+  position: absolute;
+  right: 26px;
+  bottom: 26px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.9rem;
+}
+
+/* The main ACTION button is a big circle (like Among Us' USE button). */
+.action-btn {
+  width: 96px;
+  height: 96px;
+  min-width: 0;
+  border-radius: 50%;
+  font-size: 1rem;
+  font-weight: 800;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.4), inset 0 2px 0 rgba(255,255,255,0.25);
+}
+
+/* Secondary TRANSFORM is a small circle above ABSTRACT. */
+.action-btn.secondary {
+  width: 64px;
+  height: 64px;
+  font-size: 0.72rem;
+  background: rgba(40, 48, 66, 0.9);
+  border-color: #4a5670;
+}
+
+/* Desktop (fine pointer): hide the touch joystick + buttons, show a hint.
+   Touch (coarse pointer): show the touch controls, hide the hint. */
+.desktop-hint {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: rgba(190, 202, 224, 0.55);
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+@media (pointer: fine) and (hover: hover) {
+  #controls { display: none; }
+}
+
+@media (pointer: coarse), (hover: none) {
+  .desktop-hint { display: none; }
+}
+
+/* ---- Approval modal (M5) ---- */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal {
+  background: var(--bg-secondary);
+  border: 2px solid var(--border);
+  border-radius: 20px;
+  padding: 2.5rem 2rem;
+  max-width: 420px;
+  width: 90%;
+  text-align: center;
+}
+
+.modal h2 {
+  font-size: 1.8rem;
+  margin: 0 0 1rem;
+  color: var(--accent);
+  line-height: 1.25;
+}
+
+.modal .muted {
+  color: var(--text-muted);
+  margin-bottom: 1.5rem;
+}
+
+.btn-danger {
+  background: #c0392b;
+  color: #fff;
+  margin-left: 0.5rem;
+}
+.btn-danger:hover {
+  background: #e74c3c;
+}
+
+/* ---- Confetti (M5 demo climax) ---- */
+.confetti {
+  position: fixed;
+  top: -20px;
+  z-index: 200;
+  pointer-events: none;
+  animation: confetti-fall linear forwards;
+  border-radius: 2px;
+}
+
+@keyframes confetti-fall {
+  0%   { transform: translateY(0) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
+}
+
+/* ---- Treasure ping (sudden death, M6) ---- */
+.ping-flash {
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(circle at center, rgba(255, 209, 102, 0.2) 0%, transparent 60%);
+  pointer-events: none;
+  animation: ping-pulse 0.8s ease-out forwards;
+  z-index: 50;
+}
+
+@keyframes ping-pulse {
+  0%   { opacity: 0; }
+  30%  { opacity: 1; }
+  100% { opacity: 0; }
+}

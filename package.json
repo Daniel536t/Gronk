@@ -1,0 +1,35 @@
+{
+  "name": "gronks-hoard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.client.json",
+    "server": "tsx src/server/index.ts",
+    "dev": "vite",
+    "build": "vite build",
+    "prod": "npm run build && node --import tsx src/server/index.ts",
+    "dev:all": "sh -c 'npm run server & npm run dev & wait'",
+    "start": "npm run build && node --import tsx src/server/index.ts",
+    "start:nohup": "bash start-server.sh",
+    "provision": "tsx scripts/provision.ts",
+    "verify:mode-a": "tsx scripts/verify-mode-a.ts",
+    "mock:trueforge": "tsx scripts/mock-trueforge.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.3.0",
+    "tsx": "^4.23.12",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.21",
+    "vitest": "^2.1.9"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^4.4.3"
+  }
+}

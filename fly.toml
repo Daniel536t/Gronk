@@ -1,0 +1,31 @@
+# Deploy the always-on game server to Fly.io (real-time persistent Node host).
+#
+#   fly auth login
+#   fly launch --no-deploy --region iad
+#   fly secrets set BOTS=scripted
+#   fly deploy
+#
+# The frontend is served by the same process, so fly.dev's URL is the whole game.
+app = "gronks-hoard"
+primary_region = "iad"
+
+[build]
+  image = "node"
+  # Uses the Dockerfile in this repo instead:
+  # run `fly apps create gronks-hoard` then `fly deploy`.
+
+[env]
+  PORT = "8787"
+  BOTS = "scripted"
+  NODE_ENV = "production"
+
+[http_service]
+  internal_port = 8787
+  force_https = true
+  auto_stop_machines = false   # must stay ON — the game is real-time
+  auto_start_machines = true
+
+  [[http_service.checks]]
+    interval = "10s"
+    timeout = "3s"
+    path = "/"

@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Gronk's Hoard</title>
+  </head>
+  <body>
+    <div id="app">
+      <!-- TITLE -->
+      <section id="screen-title" class="screen">
+        <h1 class="game-title">Gronk's Hoard</h1>
+        <p class="tagline">Find the treasure. Hide from Gronk. Bank it.</p>
+        <div class="menu-buttons">
+          <button id="btn-single" class="btn btn-primary">Single Player</button>
+          <button id="btn-multi" class="btn">Multiplayer</button>
+        </div>
+      </section>
+
+      <!-- MULTIPLAYER: create / join -->
+      <section id="screen-multi" class="screen hidden">
+        <h2>Multiplayer</h2>
+        <div class="menu-buttons">
+          <button id="btn-create" class="btn btn-primary">Create Room</button>
+        </div>
+        <div class="join-row">
+          <input id="join-code" class="code-input" placeholder="ROOM CODE" maxlength="7" autocomplete="off" />
+          <button id="btn-join" class="btn">Join</button>
+        </div>
+        <p id="multi-error" class="error hidden"></p>
+        <button id="btn-back-title" class="btn btn-ghost">Back</button>
+      </section>
+
+      <!-- LOBBY -->
+      <section id="screen-lobby" class="screen hidden">
+        <h2>Lobby</h2>
+        <p class="room-code-display">Room <span id="lobby-code" class="room-code">----</span></p>
+        <div id="lobby-teams" class="lobby-teams"></div>
+        <p id="lobby-waiting" class="muted">Waiting for players…</p>
+        <button id="btn-start" class="btn btn-primary hidden">Start Match</button>
+        <p id="lobby-error" class="error hidden"></p>
+      </section>
+
+      <!-- GAME -->
+      <section id="screen-game" class="screen hidden">
+        <canvas id="game-canvas"></canvas>
+        <div id="riddle-banner" class="riddle-banner"></div>
+        <div id="timer-hud" class="timer-hud"></div>
+        <div id="players-hud" class="players-hud"></div>
+        <div id="toasts" class="toasts"></div>
+        <div id="joystick" class="joystick hidden">
+          <div id="joystick-knob" class="joystick-knob"></div>
+        </div>
+        <div id="controls" class="controls">
+          <button id="btn-transform" class="btn action-btn secondary">TRANSFORM</button>
+          <button id="btn-action" class="btn action-btn btn-primary">ACTION</button>
+        </div>
+        <div id="desktop-hint" class="desktop-hint">WASD move · Space action · E transform</div>
+      </section>
+
+      <!-- APPROVAL MODAL (M5: shown to ALL human players when a team banks) -->
+      <div id="approval-modal" class="modal-backdrop hidden">
+        <div class="modal">
+          <h2 id="approval-title">TEAM 1 IS BANKING THE TREASURE!</h2>
+          <p class="muted">Approve the bank to end the match. Rejecting gives that team a 10s cooldown.</p>
+          <div class="menu-buttons">
+            <button id="btn-approve" class="btn btn-primary">Approve</button>
+            <button id="btn-reject" class="btn btn-danger">Reject</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- RECONNECT OVERLAY (M5: server restarted / network blip) -->
+      <div id="reconnect-overlay" class="modal-backdrop hidden">
+        <div class="modal">
+          <h2 id="reconnect-title">Reconnecting…</h2>
+          <p id="reconnect-sub" class="muted">Connection lost — retrying…</p>
+          <button id="btn-reconnect-title" class="btn hidden">Back to Title</button>
+        </div>
+      </div>
+
+      <!-- RESULT -->
+      <section id="screen-result" class="screen hidden">
+        <h1 id="result-title" class="game-title"></h1>
+        <p id="result-sub" class="tagline"></p>
+        <div class="menu-buttons">
+          <button id="btn-again" class="btn btn-primary">Play Again</button>
+        </div>
+      </section>
+    </div>
+    <script type="module" src="/src/client/main.ts"></script>
+  </body>
+</html>

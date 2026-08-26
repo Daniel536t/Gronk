@@ -1,0 +1,248 @@
+# Gronk's Hoard
+
+A real-time multiplayer hide-and-seek heist where the TrueForge agent harness IS the game engine. The monster and bot players are TrueForge agents, game actions are MCP tools, the treasure location is protected behind the tool boundary, and winning requires human approval.
+
+**No blockchain. No crypto. No Solana. No MagicBlock.** Just agents, MCP tools, and a troll.
+
+## Quick Start
+
+```bash
+npm install
+npm run prod  # serves everything on http://localhost:8787
+```
+
+Open http://localhost:8787, hit **Single Player** — one click to a live match (you + 3 scripted bots). For development (hot-reload frontend):
+
+```bash
+npm run dev:all  # game server :8787 + Vite frontend :5173
+```
+
+Open http://localhost:5173.
+
+## Running it forever (VPS / pm2 / nohup)
+
+The game is a real-time, in-memory server — it must keep running. On your own box
+(you already have one hosting the previous build):
+
+**With pm2** (recommended; auto-restarts + survives crashes):
+
+```bash
+npm i -g pm2
+npm run build && pm2 start ecosystem.config.cjs && pm2 save
+pm2 startup   # optional: copy the printed command so it survives server reboots
+pm2 logs
+```
+
+**Without pm2 (nohup):**
+
+```bash
+./start-server.sh          # build-if-needed + start under nohup on :8787
+./start-server.sh status
+./start-server.sh stop
+```
+
+Both serve the whole game on **one port: 8787** (`http://<ip>:8787`). Open the security
+group / firewall for 8787. This is the **recommended** deployment: one URL, no CORS,
+and the in-memory lobbies that power refresh-resume.
+
+## Deploying the frontend separately (Vercel optional)
+
+The game logic **must** run on an always-on host (Vercel's serverless functions are
+stateless and scale-to-zero, so they can't hold a live match). Two options:
+
+1. **Frontend on Vercel + game server on your VPS or Fly.io.** Build the static frontend
+   with the game server's origin baked in:
+
+   ```bash
+   VITE_API_URL="https://game.example.com" npm run build
+   vercel --prod            # statically serves dist/
+   ```
+
+   The game server already sends `Access-Control-Allow-Origin: *`, so the cross-origin
+   polling works as-is. `vercel.json` is ready.
+
+2. **Fly.io for the whole game** (one always-on host, still single origin):
+
+   ```bash
+   fly launch --no-deploy
+   fly secrets set BOTS=scripted
+   fly deploy               # uses Dockerfile + fly.toml
+   ```
+
+**Verdict:** for a hackathon demo, skip the split and run everything with pm2 on one
+box — simplest and most reliable. Use option 1 or 2 only if you specifically want the
+Vercel URL.
+
+## TrueForge Mode (M4)
+
+On the VPS, the whole thing stays up under pm2. First, one-time setup:
+
+```bash
+# 1. Start the TrueForge harness under pm2 (needs a model-provider API key
+#    configured in the TrueForge UI once — the harness app is already in
+#    ecosystem.config.cjs)
+pm2 start ecosystem.config.cjs      # starts gronks-hoard + trueforge-harness
+
+# 2. Create the agents (Gronk, 3 BotWizards, GameMaster) + point them at this game's MCP
+npm run provision
+
+# 3. Run the game with TrueForge agents (BOTS is read live from env)
+BOTS=trueforge pm2 restart gronks-hoard
+pm2 save
+```
+
+Verify Mode A plays a full match headless — either against the real harness on the
+VPS, or (no harness needed) against an in-process mock that implements the same HTTP
+contract, so the whole pipeline is provable anywhere:
+
+```bash
+npm run verify:mode-a                          # mock harness — works anywhere
+TRUEFORGE_URL=http://localhost:8790 npm run verify:mode-a   # real agents on the VPS
+```
+
+The verifier plays a complete match through the MCP surface (1 human proxy + 3 TrueForge
+wizards + TrueForge Gronk), measures per-decision latency, and fails unless the match ends
+with a winner, zero decisions fell back to scripted, and the treasure furniture id never
+appeared in any payload (the "agents can't cheat" proof).
+
+`BOTS=scripted` (the default) runs the permanent scripted-FSM fallback — same game, zero LLM needed. If any TrueForge agent exceeds the 5s decision timeout, it automatically falls back to scripted for that seat; the match never crashes. `npx @truefoundry/trueforge --port 8790` also works for a foreground harness during dev.
+
+## How it works
+
+- **Engine (pure TS, zero deps):** authoritative `GameState`, 10 ticks/sec. Secret boundary: `treasureFurnitureId` lives on the engine instance only and can never cross `getPublicState()` — clients and agents see riddles and their own search results, nothing more.
+- **MCP server (the game's tool surface):** `create_lobby`, `join_lobby`, `start_match`, `get_state`, `move`, `transform`, `action`, `agent_intent`, `approve_bank`, `reject_bank`, `reveal_riddle` — over stdio and over HTTP (`POST /mcp`, streamable HTTP, where TrueForge connects).
+- **HTTP API (for the browser):** `POST /api/create|join|start|move|transform|action|approve-bank|reject-bank` + `GET /state` (10Hz polling) + `GET /api/lobby`.
+- **Agent harness:** Gronk (cheap/fast model) decides every 15s sniff tick; bot wizards (standard model) every 2.5s. Intents are executed continuously by the engine's intent executor.
+- **Approval gate (M5):** banking only ends the match after a human clicks **Approve**. Every human player gets the modal: "TEAM X IS BANKING THE TREASURE!" Rejecting gives that team a 10s bank cooldown.
+
+## Screens
+
+Title → Single Player (one click) or Multiplayer (create/join) → Lobby (team seats, host-only start) → Game (canvas + riddle banner + timer + toasts + approval modal) → Result (winner + confetti).
+
+Visuals are a flat "Among Us"-style cartoon drawn as shapes on our 2D plane: bean-shaped
+astronaut **crewmate** wizards (rounded body + dome visor + backpack + stubby legs that waddle
+as they move), a hulking troll Gronk, and a tiled spaceship interior. No assets, no sprites —
+everything is Canvas 2D primitives. The own avatar moves at 60fps via client-side prediction
+(lerped/snapped from the 10Hz server stream) for a smooth Among-Us feel.
+
+Controls: WASD + Space (action) + E (transform) on desktop; a floating joystick + a single
+big circular ACTION button (label flips to SEARCH / BANK / HIDING) + a smaller TRANSFORM button
+above it on touch. Ops screens auto-hide and show a control hint on desktop.
+
+## Tests
+
+```bash
+npm test           # 64 tests: engine rules, lobby, MCP wire, HTTP API, M4 fallback/secrecy, M5 approval, M6 playtest
+npm run typecheck
+npm run verify:mode-a   # full match driven by TrueForge agents (mock harness)
+npx tsx scripts/playtest.ts   # headless 3-match single-player playtest
+```
+
+## Project structure
+
+```
+├── package.json                  # scripts: test, typecheck, server, prod, dev:all
+├── tsconfig.json / tsconfig.client.json
+├── index.html                    # 5 screens + approval modal + reconnect overlay
+├── vite.config.ts                # dev server (:5173), proxies /state + /api -> :8787
+├── ecosystem.config.cjs          # pm2 process config (VPS)
+├── start-server.sh               # nohup alternative: start/status/stop
+├── vercel.json                   # static-frontend deploy (optional split)
+├── Dockerfile + fly.toml         # always-on host deploy (optional)
+├── .env.example                  # VITE_API_URL for a split frontend (optional)
+├── config/
+│   ├── gronk-model.json          # Gronk's cheap/fast model (swappable)
+│   ├── bots-model.json           # bot wizards' standard model (swappable)
+│   └── trueforge.json            # TrueForge baseUrl + 5s decision timeout
+├── skills/gronks-hoard/SKILL.md  # skill pack: rules + riddles + schedule
+├── scripts/
+│   ├── provision.ts              # creates the TrueForge agents
+│   ├── verify-mode-a.ts          # full match driven by TrueForge agents (mock or real harness)
+│   ├── mock-trueforge.ts         # mock TrueForge harness (same HTTP contract)
+│   └── playtest.ts               # headless single-player playtest
+├── demo-clips/                   # demo video captures (see README there)
+├── src/
+│   ├── engine/                   # pure TS, zero deps, unit-testable
+│   │   ├── constants.ts          # room, speeds, all timings (+ bank cooldown)
+│   │   ├── types.ts              # GameState + JSON schema (in comment)
+│   │   ├── riddles.ts            # 3 riddle sets (fridge/bookshelf/couch)
+│   │   ├── engine.ts             # GameEngine: tick loop, commands, Gronk FSM, approval gate
+│   │   └── index.ts              # barrel export
+│   ├── server/                   # MCP + HTTP layer (wraps the engine)
+│   │   ├── intents.ts            # agent_intent executor (engine public API only)
+│   │   ├── agent.ts              # AgentView/AgentDecision seam
+│   │   ├── bots.ts               # scripted FSM fallback bots + toAgentView
+│   │   ├── orchestrator.ts       # decision cadence + >5s timeout fallback + payload log
+│   │   ├── trueforge.ts          # TrueForge HTTP backend + exact agent prompts
+│   │   ├── trueforgeFactory.ts   # seats -> TrueForge agents
+│   │   ├── gamemaster.ts         # game-master driver (riddle reveal schedule)
+│   │   ├── config.ts             # loads config/*.json
+│   │   ├── lobby.ts              # room codes, teams, host rules, tick loop
+│   │   ├── mcp.ts                # MCP server: 11 tools over stdio
+│   │   ├── mcpHttp.ts            # MCP over HTTP (POST /mcp)
+│   │   ├── http.ts               # /state + /api/* + /mcp + static dist/
+│   │   └── index.ts              # entrypoint
+│   └── client/                   # vanilla TS + Canvas 2D
+│       ├── main.ts               # screens, 10Hz poll, HUD, modal, confetti, reconnect
+│       ├── render.ts             # shapes + lerp + juice (sniff flare, stun, gold, enrage, pings)
+│       ├── input.ts              # WASD/Space/E + touch joystick
+│       ├── api.ts                # fetch wrappers + localStorage session
+│       └── style.css
+└── tests/
+    ├── helpers.ts                # seeded RNG, engine factory, neutralizer
+    ├── setup-movement.test.ts    # setup, movement, transform, riddles, secrecy
+    ├── action.test.ts            # search / stun / pickup / bank / cooldown
+    ├── gronk.test.ts             # Gronk FSM, enrage, closet, sudden death, wins
+    ├── integration.test.ts       # lobby rules + headless full match + M5 approval
+    ├── http-api.test.ts          # browser data path over HTTP (full match)
+    ├── mcp-smoke.test.ts         # MCP wire round trip (11 tools over stdio)
+    ├── m4.test.ts                # steer/forceSniff, MCP-over-HTTP, fallback, secrecy
+    └── playtest.test.ts          # M6: three full solo matches + milestone transitions
+```
+
+## Game rules (engine)
+
+- 2 wizard teams, one room (~100x60), no roles — everyone hides, everyone searches.
+- ~10 furniture spots; stand next to one and TRANSFORM to hide (position locks; moving breaks the disguise).
+- ACTION near furniture = SEARCH: treasure → pick it up; hidden enemy → reveal + 3s stun; else empty. Every search makes noise that attracts Gronk.
+- Carrier glows gold, 30% slower, can't hide. Stunned carrier drops the treasure.
+- Gronk wanders, sniffs every 15s (noise > stunned > visible), catches → 25s closet, enrages at 4:00 (2x speed).
+- No bank by 5:00 → sudden death: treasure pings every 10s, enrage stays on.
+- Win: bank with human approval, or whole enemy team in the closet at once.
+
+## Milestones
+
+| # | Scope | Status |
+|---|-------|--------|
+| M1 | Pure TS engine: rules, Gronk FSM, unit tests | ✅ |
+| M2 | MCP server + lobby + `/state` + scripted bots | ✅ |
+| M3 | Canvas frontend, 1 human vs 3 bots playable | ✅ |
+| M4 | TrueForge live agents + skill pack + game-master | ✅ |
+| M5 | Approval gate on bank + session resume + reconnect | ✅ |
+| M6 | Single-player finalization + playtest | ✅ |
+| M7 | Submission package (this README, Qodo evidence, demo clips) | ✅ |
+
+## Qodo Code Review Evidence
+
+Every substantive change ships via a Qodo-reviewed PR. The most complex change —
+the **M4 MCP integration** (streamable-HTTP MCP bridge + TrueForge backend + orchestrator
+with timeout fallback) — is the representative review.
+
+- **Repo:** https://github.com/Daniel536t/Gronk
+- **Representative reviewed PR:** [M4 MCP integration — link to PR](https://github.com/Daniel536t/Gronk)
+
+Workflow: branch → push → open a PR → run the Qodo review on it → merge. Paste the
+merged PR's URL over the link above (required for judging).
+
+## Demo clips
+
+`demo-clips/` contains capture instructions for the two required clips (approval gate +
+session resume). Run the commands in `demo-clips/README.md` on a machine with a browser;
+headless environments can't record video.
+
+## Hackathon constraints honored
+
+- TypeScript everywhere, Node 20+, no game engine, no 3D, no external DB, no blockchain.
+- GameState: plain serializable object, fixed-size arrays for 4 players, JSON schema in a comment.
+- Engine stays pure and dependency-free; the server layer talks to it only through its public API.
+- One command to run everything: `npm run prod`.

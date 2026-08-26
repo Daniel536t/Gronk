@@ -1,0 +1,6 @@
+{
+  "_comment": "TrueForge standalone HTTP endpoint. Override with TRUEFORGE_URL or TRUEFORGE_API_KEY env vars. decisionTimeoutMs is the >5s fallback threshold the orchestrator enforces per agent decision.",
+  "baseUrl": "http://localhost:8790",
+  "decisionTimeoutMs": 5000,
+  "mcpServerUrl": "http://localhost:8787/mcp"
+}

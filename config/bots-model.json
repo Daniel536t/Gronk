@@ -1,0 +1,5 @@
+{
+  "_comment": "Bot wizards run on a standard-tier model. Swap the `name` (and add/change `provider`) from the TrueForge UI or by editing this file; it is read live on startup.",
+  "name": "openai/gpt-4o",
+  "provider": "openai"
+}
