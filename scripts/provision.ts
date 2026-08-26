@@ -24,11 +24,12 @@ import { loadConfig } from "../src/server/config";
 const cfg = loadConfig().trueforge;
 const mcpUrl = cfg.mcpServerUrl ?? "http://localhost:8787/mcp";
 
-// The four PLAYING agents (gronk + bot wizards) get NO MCP connector: the full
-// public state is injected into every turn prompt by TrueForgeBackend, so they
-// answer directly with an agent_intent JSON — no tool calls, no transport
-// fragility. The secret boundary still holds (they only ever see public
-// state). The GameMaster keeps the connector + skill for the harness demo.
+// NO agent carries an MCP connector: the full public state is injected into
+// every turn prompt by TrueForgeBackend, and the GameMaster loads the skill
+// pack via the sandbox — so no agent needs MCP tool calls, and the flaky
+// TrueForge<->game streamable-HTTP transport can't error a turn. The connector
+// stays registered as the harness's tool surface; the secret boundary still
+// holds (agents only ever see public state).
 const agents: AgentSpecInput[] = [
   {
     name: GRONK_AGENT_NAME,
@@ -44,7 +45,6 @@ const agents: AgentSpecInput[] = [
     name: GAME_MASTER_AGENT_NAME,
     model: cfg.botsModel,
     instructions: GAME_MASTER_SYSTEM_PROMPT,
-    mcpServers: [{ name: MCP_CONNECTOR_NAME, url: mcpUrl }],
     skills: ["gronks-hoard"],
   },
 ];

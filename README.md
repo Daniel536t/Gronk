@@ -97,8 +97,9 @@ pm2 save
 schedule) is registered from `Daniel536t/Gronk` (ref `main`, path
 `skills/gronks-hoard`) and loads into the local sandbox — the harness needs its
 host deps installed once: `sudo apt-get install -y socat ripgrep python3-venv`.
-The GameMaster also keeps the MCP connector; the four playing agents carry no
-connector (the public state is in every turn prompt).
+No agent carries an MCP connector (the public state is in every turn prompt, and
+the TrueForge<->game streamable-HTTP transport is flaky); the connector stays
+registered as the harness's tool surface.
 
 **Models (NVIDIA NIM, verified live):** both tiers run `nemotron-3-nano-30b-a3b`
 (~1-20s/decision). `openai/gpt-oss-20b` is registered too and reasons better but
