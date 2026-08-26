@@ -247,30 +247,43 @@ function doAction(): void {
   }
 }
 
-// The engine's move() breaks a disguise, and the idle move(0,0) sender races
-// with the transform POST (it can fire before the next poll reflects the new
-// state and instantly untransform). Suppress idle moves until a poll confirms
-// the local player's state actually changed (i.e. the server applied the
-// transform), plus a safety margin for the POST round-trip.
-let suppressMoveUntil = 0; // performance.now() deadline
+// The engine's move() breaks a disguise, and both the immediate input path and
+// the idle move(0,0) sender can race the transform POST (firing before the next
+// poll reflects the new state and instantly untransforming). So we suppress
+// moves around a transform until a poll confirms the server applied the change.
+//
+// Suppression is bounded two ways so input can never be permanently disabled:
+//  - a hard deadline (suppressMoveUntil): moves resume after it no matter what;
+//  - releasing on request failure: if the transform POST is rejected (stunned,
+//    carrying, out of range) or errors, we clear the pending state immediately.
+let suppressMoveUntil = 0; // performance.now() hard deadline
 let wantedState = "" as "active" | "transformed" | ""; // state we asked the server for
+const SUPPRESS_WINDOW_MS = 500; // generous hard cap for the POST round-trip
 
 function suppressMovesForState(want: "active" | "transformed"): void {
   wantedState = want;
-  suppressMoveUntil = performance.now() + 350; // fallback safety cap
+  suppressMoveUntil = performance.now() + SUPPRESS_WINDOW_MS;
+}
+
+function releaseSuppression(): void {
+  wantedState = "";
+  suppressMoveUntil = 0;
 }
 
 function movesSuppressed(): boolean {
-  const now = performance.now();
-  if (now < suppressMoveUntil) return true;
-  // If we're waiting to confirm the server applied a transform/untransform,
-  // keep suppressing until lastState reflects it.
+  if (performance.now() < suppressMoveUntil) return true; // inside hard window
+  // Hard deadline passed: if we never saw the requested state applied, stop
+  // waiting (don't pin input forever just because the ack never arrived).
   if (wantedState && lastState) {
     const me = myPlayer(lastState);
-    const applied = me && me.state === wantedState;
-    if (!applied) return true; // still waiting for acknowledgment
+    if (!me || me.state === wantedState) {
+      // Ack'd (or player gone): input is safe again.
+      wantedState = "";
+    } else {
+      // The ack never matched within the window — release anyway.
+      releaseSuppression();
+    }
   }
-  wantedState = "";
   return false;
 }
 
@@ -278,15 +291,19 @@ function doTransform(): void {
   if (btnTransform.disabled || !session || !lastState) return;
   const me = myPlayer(lastState);
   if (!me) return;
-  suppressMovesForState(me.state === "transformed" ? "active" : "transformed");
-  if (me.state === "transformed") {
-    void api
-      .transform(session.roomCode, session.playerId, me.transformedAs ?? "furn-0")
-      .catch(() => {});
-  } else {
-    const near = nearestFurniture(lastState, TRANSFORM_RANGE, me.x, me.y);
-    if (near) void api.transform(session.roomCode, session.playerId, near.id).catch(() => {});
-  }
+  const isTransformed = me.state === "transformed";
+  const targetFurniture = isTransformed ? (me.transformedAs ?? "furn-0") : nearestFurniture(lastState, TRANSFORM_RANGE, me.x, me.y)?.id;
+  if (!targetFurniture) return; // button disabled gate should prevent this
+  const wantState = isTransformed ? "active" : "transformed";
+  suppressMovesForState(wantState);
+  const res = api.transform(session.roomCode, session.playerId, targetFurniture);
+  res.then((r) => {
+    // If the server rejected the request (no state change), free input now
+    // instead of waiting out the whole window.
+    const ok = (r as { ok?: boolean } | undefined)?.ok ?? false;
+    if (!ok) releaseSuppression();
+  });
+  res.catch(releaseSuppression);
 }
 
 // ---- game loop -----------------------------------------------------------
@@ -299,6 +316,7 @@ async function enterGame(): Promise<void> {
   if (!session) return;
   const sess = session; // stable for the closures below
   renderer.myPlayerId = sess.playerId;
+  releaseSuppression(); // never carry pending transform state across sessions/matches
   prevPlayerState.clear();
   bannerLineCount = 0;
   banner.classList.remove("show");  const token = ++pollToken;

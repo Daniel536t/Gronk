@@ -495,9 +495,16 @@ async function transformProbe(page: Page): Promise<void> {
         await holdKey(page, "w", 1500); // y: 54 -> ~48 (at the Brazier)
         await keepGameAlive(page);
         await page.keyboard.press("e");
-        await page.waitForTimeout(600);
-        const st2 = await getState(page);
-        if (st2.players[0].state === "transformed") {
+        // Wait until the transform actually applies (the POST + next poll are
+        // async), then assert on the rendered char info.
+        let applied = false;
+        for (let w = 0; w < 20 && !applied; w++) {
+          await page.waitForTimeout(120);
+          const st2 = await getState(page);
+          applied = st2.players[0].state === "transformed";
+        }
+        if (applied) {
+          await page.waitForTimeout(300); // a frame or two of the ghost render
           const chars = await getChars(page);
           const mine = chars?.find((c) => c.id === me.id);
           check(
@@ -520,6 +527,13 @@ async function transformProbe(page: Page): Promise<void> {
         }
       }
       if (!done) await page.waitForTimeout(1200); // respawn / match reset cooldown
+    }
+    if (!done) {
+      check(
+        "desktop: transformed-state probe reached the transformed state",
+        false,
+        "all 3 attempts interrupted (Gronk/reset) — transformed rendering never asserted",
+      );
     }
     // Step back down toward spawn row; movementProbes measures x0 itself and
     // the "corner clamp" check only needs the player left of mid-map afterwards.
