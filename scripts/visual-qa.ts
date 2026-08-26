@@ -15,6 +15,7 @@ const VIEW_VERTICAL_UNITS = 36; // must match render.ts
 let server: ChildProcess | null = null;
 let failures: string[] = [];
 let checks = 0;
+let lastIdleDiff = 0; // set by characterProbes, compared in movementProbes
 
 function check(name: string, ok: boolean, detail = ""): void {
   checks++;
@@ -60,6 +61,31 @@ async function getState(page: Page): Promise<any> {
 
 async function getCam(page: Page): Promise<{ x: number; y: number; scale: number } | null> {
   return page.evaluate(() => (window as any).__ghCam?.() ?? null);
+}
+
+async function getChars(page: Page): Promise<any[] | null> {
+  return page.evaluate(() => (window as any).__ghChars?.() ?? null);
+}
+
+// Sum of all channel values over a square box (for frame-diff probes).
+async function regionSum(page: Page, cssX: number, cssY: number, half: number): Promise<number> {
+  return page.evaluate(
+    ([x, y, h]) => {
+      const c = document.getElementById("game-canvas") as HTMLCanvasElement;
+      const ctx = c.getContext("2d")!;
+      const dpr = window.devicePixelRatio || 1;
+      const d = ctx.getImageData(
+        Math.round((x - h) * dpr),
+        Math.round((y - h) * dpr),
+        Math.round(h * 2 * dpr),
+        Math.round(h * 2 * dpr),
+      ).data;
+      let sum = 0;
+      for (let i = 0; i < d.length; i++) sum += d[i];
+      return sum;
+    },
+    [cssX, cssY, half] as [number, number, number],
+  );
 }
 
 // Average RGB over a small square around a CSS-px point (canvas backing pixels).
@@ -253,6 +279,73 @@ async function staticProbes(page: Page, view: { width: number; height: number; n
   }
 }
 
+// ---- character probes (Phase 3): identity, animation, state feedback --------
+async function characterProbes(page: Page, view: { width: number; height: number; name: string }): Promise<void> {
+  const chars = await getChars(page);
+  check(
+    `${view.name}: 4 characters rendered`,
+    !!chars && chars.length === 4,
+    chars ? `got ${chars.length}` : "no __ghChars",
+  );
+  if (!chars || chars.length !== 4) return;
+
+  check(
+    `${view.name}: all characters drawn`,
+    chars.every((c) => c.drawn),
+    chars.map((c) => `${c.id}:${c.drawn}`).join(" "),
+  );
+
+  const colors = Array.from(new Set(chars.map((c) => c.color)));
+  check(
+    `${view.name}: player colors distinguishable`,
+    colors.length === 4,
+    colors.join(" "),
+  );
+
+  // Bounding box sanity: the adventurer is ~1.6 wide x ~3.4 tall (world units).
+  check(
+    `${view.name}: character bounding box sane`,
+    chars.every((c) => c.w > 1.2 && c.w < 2.2 && c.h > 2.8 && c.h < 4.0),
+    chars.map((c) => `${c.id}:${c.w.toFixed(1)}x${c.h.toFixed(1)}`).join(" "),
+  );
+
+  // Character pixels differ from the floor beneath (sampled at the body, not
+  // the shadow/feet).
+  const cam = await getCam(page);
+  if (!cam) return;
+  const st = await getState(page);
+  const me = st.players[0];
+  const bodyS = worldToScreen(me.x, me.y - 1.6, cam, view.width, view.height);
+  const floorS = worldToScreen(me.x, Math.min(59, me.y + 4), cam, view.width, view.height);
+  const px = await sample(page, bodyS.x, bodyS.y, 2);
+  const floor = await sample(page, floorS.x, floorS.y, 2);
+  check(
+    `${view.name}: character pixels distinct from floor`,
+    chanDist(px, floor) >= 8,
+    `char rgb(${px.join(",")}) floor rgb(${floor.join(",")})`,
+  );
+
+  // Idle animation: the animation clock advances even while standing still
+  // (breathing + eye blink), and the idle frame stays visually calm.
+  const t1 = (await getChars(page))?.[0]?.animTick ?? 0;
+  await page.waitForTimeout(260);
+  const t2 = (await getChars(page))?.[0]?.animTick ?? 0;
+  const idleSumA = await regionSum(page, bodyS.x, bodyS.y, 12);
+  await page.waitForTimeout(300);
+  const idleSumB = await regionSum(page, bodyS.x, bodyS.y, 12);
+  check(
+    `${view.name}: idle animation clock runs`,
+    t2 !== t1,
+    `${t1} -> ${t2}`,
+  );
+  lastIdleDiff = Math.abs(idleSumB - idleSumA);
+  check(
+    `${view.name}: idle frame is calm (no jitter)`,
+    lastIdleDiff < 6000,
+    `idle region diff=${lastIdleDiff}`,
+  );
+}
+
 // ---- movement probes: camera follow + clamp + gameplay regression -----------
 async function movementProbes(page: Page, view: { width: number; height: number; name: string }): Promise<void> {
   const vw = view.width;
@@ -264,12 +357,45 @@ async function movementProbes(page: Page, view: { width: number; height: number;
   // so once the player passes viewW/2 - 3 the camera must start tracking; we
   // sample camX while the key is still held (lookahead active).
   await page.keyboard.down("d");
-  await page.waitForTimeout(5000); // x: 9 -> ~29 (target 32 > clamp 28.8)
+  await page.waitForTimeout(900);
+
+  // While walking: facing must point right, and frames must visibly change
+  // (motion + walk cycle). Sample the player's live body region twice.
+  const wchars = await getChars(page);
+  check(
+    `${view.name}: facing right while moving right`,
+    wchars?.[0]?.face === "right",
+    wchars ? `face=${wchars[0]?.face}` : "no chars",
+  );
+  const stWalk = await getState(page);
+  const walkCam = (await getCam(page))!;
+  const wBody = worldToScreen(stWalk.players[0].x, stWalk.players[0].y - 1.6, walkCam, vw, vh);
+  const walkA = await regionSum(page, wBody.x, wBody.y, 24);
+  await page.waitForTimeout(350);
+  const walkB = await regionSum(page, wBody.x, wBody.y, 24);
+  const walkDiff = Math.abs(walkB - walkA);
+  check(
+    `${view.name}: walking produces frame-to-frame change`,
+    walkDiff >= 4000,
+    `walk region diff=${walkDiff}`,
+  );
+  check(
+    `${view.name}: walking changes more than idle`,
+    walkDiff > lastIdleDiff,
+    `walk diff=${walkDiff} idle diff=${lastIdleDiff}`,
+  );
+  await page.screenshot({ path: `${SHOTS}/${view.name}-game-walk.png` });
+
+  await page.waitForTimeout(3500); // x: ~18 -> ~40 (finishes before Gronk's first sniff at 15s)
   const samples: { camX: number; playerX: number }[] = [];
   for (let i = 0; i < 4; i++) {
     const c = await getCam(page);
     const st = await getState(page);
     if (c) samples.push({ camX: c.x, playerX: st.players[0].x });
+    // Best-effort: capture a stunned player if any is stunned right now.
+    if (st.players.some((p: any) => p.state === "stunned")) {
+      await page.screenshot({ path: `${SHOTS}/${view.name}-stunned.png` });
+    }
     await page.waitForTimeout(300);
   }
   await page.keyboard.up("d");
@@ -300,9 +426,12 @@ async function movementProbes(page: Page, view: { width: number; height: number;
   );
   await page.screenshot({ path: `${SHOTS}/${view.name}-game-follow.png` });
 
-  // Walk back to the corner: camera must clamp back to the world edge.
+  // Walk back to the corner: camera must clamp back to the world edge. Give
+  // the exponential smoother a few frames to settle at the clamp before sampling
+  // (the clamp target is hit by every frame; we just wait out the smoothing lag).
   await holdKey(page, "a", 4800);
   await keepGameAlive(page);
+  await page.waitForTimeout(400);
   const cam3 = (await getCam(page))!;
   const viewW2 = vw / (2 * cam3.scale);
   check(
@@ -313,11 +442,24 @@ async function movementProbes(page: Page, view: { width: number; height: number;
   await page.screenshot({ path: `${SHOTS}/${view.name}-game-corner.png` });
 }
 
-// Best-effort screenshots of additional rooms (never fails the suite): walk
-// up the left edge so the Library (Bookshelf + Couch) is framed, then a bit
-// right toward the mid-map. Gronk interference just skips a screenshot.
+// Best-effort screenshots (never fail the suite): a group shot if 3+ players
+// are on screen, then a walk up the left edge so the Library (Bookshelf +
+// Couch) is framed. Gronk interference just skips a screenshot.
 async function furnitureTour(page: Page): Promise<void> {
   try {
+    for (let i = 0; i < 6; i++) {
+      const cam = (await getCam(page))!;
+      const chars = await getChars(page);
+      const onScreen = (chars ?? []).filter((c) => {
+        const s = worldToScreen(c.x, c.y, cam, 1440, 900);
+        return c.drawn && s.x > 0 && s.x < 1440 && s.y > 0 && s.y < 900;
+      });
+      if (onScreen.length >= 3) {
+        await page.screenshot({ path: `${SHOTS}/desktop-group.png` });
+        break;
+      }
+      await page.waitForTimeout(800);
+    }
     await page.keyboard.down("w");
     await page.waitForTimeout(3800);
     await page.keyboard.up("w");
@@ -330,6 +472,73 @@ async function furnitureTour(page: Page): Promise<void> {
     await keepGameAlive(page);
     await page.waitForTimeout(300);
     await page.screenshot({ path: `${SHOTS}/desktop-mid.png` });
+  } catch {
+    // Best-effort only.
+  }
+}
+
+// Deterministic transformed-state probe: walk from spawn to the Brazier
+// (18,48), press E to transform, verify the local player renders as the
+// "absorbed" ghost (drawn:true) while disguised bots render nothing
+// (drawn:false), screenshot, then untransform. Retries up to 3 times — Gronk
+// or a match reset can interrupt a single attempt. Never fails the suite.
+async function transformProbe(page: Page): Promise<void> {
+  try {
+    let done = false;
+    for (let attempt = 0; attempt < 3 && !done; attempt++) {
+      await keepGameAlive(page);
+      const st = await getState(page);
+      const me = st.players[0];
+      if (me.state === "active" && me.x < 30) {
+        await holdKey(page, "d", 2200); // x: 9 -> ~17.8
+        await keepGameAlive(page);
+        await holdKey(page, "w", 1500); // y: 54 -> ~48 (at the Brazier)
+        await keepGameAlive(page);
+        await page.keyboard.press("e");
+        // Wait until the transform actually applies (the POST + next poll are
+        // async), then assert on the rendered char info.
+        let applied = false;
+        for (let w = 0; w < 20 && !applied; w++) {
+          await page.waitForTimeout(120);
+          const st2 = await getState(page);
+          applied = st2.players[0].state === "transformed";
+        }
+        if (applied) {
+          await page.waitForTimeout(300); // a frame or two of the ghost render
+          const chars = await getChars(page);
+          const mine = chars?.find((c) => c.id === me.id);
+          check(
+            "desktop: transformed self renders as ghost (drawn)",
+            !!mine && mine.drawn && mine.state === "transformed",
+            mine ? `state=${mine.state} drawn=${mine.drawn}` : "no info",
+          );
+          const disguisedBots = (chars ?? []).filter((c) => c.state === "transformed" && c.id !== me.id);
+          if (disguisedBots.length > 0) {
+            check(
+              "desktop: disguised opponents draw nothing",
+              disguisedBots.every((c) => !c.drawn),
+              disguisedBots.map((c) => `${c.id}:${c.drawn}`).join(" "),
+            );
+          }
+          await page.screenshot({ path: `${SHOTS}/desktop-transformed.png` });
+          await page.keyboard.press("e"); // untransform
+          await page.waitForTimeout(400);
+          done = true;
+        }
+      }
+      if (!done) await page.waitForTimeout(1200); // respawn / match reset cooldown
+    }
+    if (!done) {
+      check(
+        "desktop: transformed-state probe reached the transformed state",
+        false,
+        "all 3 attempts interrupted (Gronk/reset) — transformed rendering never asserted",
+      );
+    }
+    // Step back down toward spawn row; movementProbes measures x0 itself and
+    // the "corner clamp" check only needs the player left of mid-map afterwards.
+    await holdKey(page, "s", 1500);
+    await keepGameAlive(page);
   } catch {
     // Best-effort only.
   }
@@ -369,8 +578,10 @@ async function main(): Promise<void> {
       await enterSinglePlayer(p);
       await p.screenshot({ path: `${SHOTS}/${view.name}-title.png` });
       await staticProbes(p, view);
+      await characterProbes(p, view);
       await p.screenshot({ path: `${SHOTS}/${view.name}-game-spawn.png` });
       if (view.name === "desktop") {
+        await transformProbe(p);
         await movementProbes(p, view);
         await furnitureTour(p);
       }

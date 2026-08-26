@@ -158,8 +158,9 @@ function formatDuration(secs: number): string {
   return `${mm}:${ss}`;
 }
 
-// Same per-seat crewmate palette as the renderer (wizard-0..3).
-const SEAT_COLORS_HUD = ["#f2765b", "#4aa8e8", "#8ee36b", "#e072f0"];
+// Same per-seat palette as the renderer (wizard-0..3): Player 1 cyan,
+// Player 2 coral, Player 3 green, Player 4 purple.
+const SEAT_COLORS_HUD = ["#4aa8e8", "#f2765b", "#8ee36b", "#e072f0"];
 const playersHudEl = $("players-hud");
 
 function seatColor(playerId: string): string {
@@ -246,18 +247,64 @@ function doAction(): void {
   }
 }
 
+// The engine's move() breaks a disguise, and both the immediate input path and
+// the idle move(0,0) sender can race the transform POST (firing before the next
+// poll reflects the new state and instantly untransforming). So we suppress
+// moves around a transform.
+//
+// Suppression is released on exactly two concrete signals so input can NEVER be
+// permanently disabled, and (crucially) is kept active as long as a slow-but-
+// successful transform is still applying:
+//  1. The transform POST is rejected (stunned/carrying/out-of-range) or errors
+//     -> no state change will happen, so release immediately.
+//  2. A poll observes the requested state (transform/untransform applied).
+// Because a move is re-sent every poll tick once woke, and a slow transform POST
+// that HAS succeeded will show up in the next poll, this both stops the race for
+// the normal case and never pins input when the request fails.
+let wantedState = "" as "active" | "transformed" | ""; // state we asked the server for
+
+function suppressMovesForState(want: "active" | "transformed"): void {
+  wantedState = want;
+}
+
+function releaseSuppression(): void {
+  wantedState = "";
+}
+
+function movesSuppressed(): boolean {
+  if (!wantedState) return false;
+  const me = lastState ? myPlayer(lastState) : undefined;
+  if (!me) {
+    // Player gone / no state — nothing to protect, give input back.
+    wantedState = "";
+    return false;
+  }
+  if (me.state === wantedState) {
+    // Server applied the requested state change — safe to resume moves.
+    wantedState = "";
+    return false;
+  }
+  // Still waiting on the transform to apply (or be rejected) — hold input.
+  return true;
+}
+
 function doTransform(): void {
   if (btnTransform.disabled || !session || !lastState) return;
   const me = myPlayer(lastState);
   if (!me) return;
-  if (me.state === "transformed") {
-    void api
-      .transform(session.roomCode, session.playerId, me.transformedAs ?? "furn-0")
-      .catch(() => {});
-  } else {
-    const near = nearestFurniture(lastState, TRANSFORM_RANGE, me.x, me.y);
-    if (near) void api.transform(session.roomCode, session.playerId, near.id).catch(() => {});
-  }
+  const isTransformed = me.state === "transformed";
+  const targetFurniture = isTransformed ? (me.transformedAs ?? "furn-0") : nearestFurniture(lastState, TRANSFORM_RANGE, me.x, me.y)?.id;
+  if (!targetFurniture) return; // button disabled gate should prevent this
+  const wantState = isTransformed ? "active" : "transformed";
+  suppressMovesForState(wantState);
+  const res = api.transform(session.roomCode, session.playerId, targetFurniture);
+  res.then((r) => {
+    // If the server rejected the request (no state change), free input now
+    // instead of waiting out the whole window.
+    const ok = (r as { ok?: boolean } | undefined)?.ok ?? false;
+    if (!ok) releaseSuppression();
+  });
+  res.catch(releaseSuppression);
 }
 
 // ---- game loop -----------------------------------------------------------
@@ -270,6 +317,7 @@ async function enterGame(): Promise<void> {
   if (!session) return;
   const sess = session; // stable for the closures below
   renderer.myPlayerId = sess.playerId;
+  releaseSuppression(); // never carry pending transform state across sessions/matches
   prevPlayerState.clear();
   bannerLineCount = 0;
   banner.classList.remove("show");  const token = ++pollToken;
@@ -312,6 +360,7 @@ async function enterGame(): Promise<void> {
       clearInterval(sender);
       return;
     }
+    if (movesSuppressed()) return;
     const s = lastState;
     const me = s ? myPlayer(s) : undefined;
     if (me?.state === "active") {
@@ -557,6 +606,7 @@ async function resumeSession(): Promise<void> {
 const input = new InputManager({
   onMove: (x, y) => {
     inputDir = { x, y };
+    if (movesSuppressed()) return;
     // Immediate push for responsiveness; the 10Hz sender keeps it alive.
     const s = lastState;
     const me = s ? myPlayer(s) : undefined;

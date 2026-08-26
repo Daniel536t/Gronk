@@ -1,9 +1,10 @@
-// Canvas 2D renderer. Shapes only — flat "Among Us" cartoon look drawn on our
-// existing 2D x,y plane (no engine changes). Characters are bean-shaped
-// astronaut wizards (rounded body + dome visor + backpack + stubby legs),
-// Gronk is a hulking red troll, furniture is chunky rounded props, and the
-// world is a dark-fantasy interior: gradient floors with per-room patterns,
-// depth-edged walls, soft lighting pools, and a subtle vignette.
+// Canvas 2D renderer. Flat cartoon look drawn on our existing 2D x,y plane
+// (no engine changes). Characters are original hooded fantasy adventurers
+// (cloak + pointed hood with glowing eyes + boots + star-tipped wand — see
+// character.ts), Gronk is a hulking red troll, furniture is chunky rounded
+// props, and the world is a dark-fantasy interior: gradient floors with
+// per-room patterns, depth-edged walls, soft lighting pools, and a subtle
+// vignette.
 //
 // Projection: a game camera follows the local player. The view is zoomed so
 // ~VIEW_VERTICAL_UNITS world units fill the viewport height (a readable player
@@ -17,17 +18,19 @@
 import type { GameState, Player } from "../engine/types";
 import { ROOM_WIDTH, ROOM_HEIGHT, TICKS_PER_SECOND } from "../engine/constants";
 import { drawRoomProps, drawVisualObject, visualObjectsFor, type VisualLayer } from "./objects";
+import { drawCharacter, type CharacterRenderInfo, type Facing } from "./character";
 
 const TEAM_COLORS = ["#4aa8e8", "#f2765b"]; // blue / coral — Among-Us-esque
 const TEAM_DARK = ["#2f6fa3", "#b34a34"];
 const SNAP_DIST = 8; // world units — bigger = teleport, not glide
 const LERP_K = 14; // exponential smoothing constant (dt-based)
 
-// Each seat (wizard-0..3) gets its own distinct crewmate color (Among-Us
-// palette), independent of team. Team identity is still readable via the hat
-// (team-dark) and a small team pip under the feet.
-const SEAT_COLORS = ["#f2765b", "#4aa8e8", "#8ee36b", "#e072f0"]; // coral, sky, leaf, bloom
-const SEAT_DARK = ["#b04b36", "#2f6fa3", "#5ba83f", "#a843bd"];
+// Each seat (wizard-0..3) gets its own adventurer color, independent of team.
+// Order follows the design spec: Player 1 cyan, Player 2 coral, Player 3
+// green, Player 4 purple. Team identity stays readable via the floor pip and
+// the dark secondary material (trim/boots).
+const SEAT_COLORS = ["#4aa8e8", "#f2765b", "#8ee36b", "#e072f0"]; // cyan, coral, leaf, bloom
+const SEAT_DARK = ["#2f6fa3", "#b04b36", "#5ba83f", "#a843bd"];
 
 // ---- camera --------------------------------------------------------------
 const VIEW_VERTICAL_UNITS = 36; // zoom: this many world units fill the viewport height
@@ -115,7 +118,12 @@ export class Renderer {
   private camX = ROOM_WIDTH / 2;
   private camY = ROOM_HEIGHT / 2;
   private lastInputDir = { x: 0, y: 0 };
+  private lastCanMove = true;
   private lastPlayerPos: { x: number; y: number } | null = null;
+  // Per-player walk cycle + facing (driven by movement vectors, not engine).
+  private charPhase = new Map<string, number>();
+  private charFace = new Map<string, Facing>();
+  private charInfos: CharacterRenderInfo[] = [];
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -129,6 +137,9 @@ export class Renderer {
       y: this.camY,
       scale: this.scale,
     });
+    // Debug/QA hook: per-character render info for the previous frame.
+    (window as unknown as { __ghChars?: () => CharacterRenderInfo[] }).__ghChars = () =>
+      this.charInfos;
   }
 
   resize(): void {
@@ -288,9 +299,10 @@ export class Renderer {
     // Pedestals: team-colored glow platform at the corners.
     state.pedestals.forEach((ped, team) => this.drawPedestal(ctx, ped.x, ped.y, team));
 
-    // Players: smoothed bean-shaped wizards. My own wizard is rendered at the
+    // Players: smoothed hooded adventurers. My own wizard is rendered at the
     // locally predicted position (see setLocalPrediction) so it moves at 60fps
     // instead of the choppy 10Hz poll rate.
+    this.charInfos = [];
     for (const p of state.players) {
       const pos = this.step(p.id, p.x, p.y, dt);
       let dx = pos.x;
@@ -302,7 +314,7 @@ export class Renderer {
           dy = this.localOverride.y;
         }
       }
-      this.drawPlayer(ctx, p, dx, dy, timeMs, state);
+      this.drawPlayer(ctx, p, dx, dy, timeMs, dt);
     }
 
     this.drawObjects(ctx, state, timeMs, "front");
@@ -878,7 +890,7 @@ export class Renderer {
     ctx.stroke();
   }
 
-  // ---- players (Among-Us bean crewmates) ---------------------------------
+  // ---- players (hooded fantasy adventurers, Phase 3) ----------------------
 
   private drawPlayer(
     ctx: CanvasRenderingContext2D,
@@ -886,124 +898,79 @@ export class Renderer {
     x: number,
     y: number,
     timeMs: number,
-    state: GameState,
+    dt: number,
   ): void {
-    // Per-player crewmate color (distinct per seat) + team-dark hat.
     const seat = this.seatIndexOf(p.id);
     const col = SEAT_COLORS[seat] ?? TEAM_COLORS[p.team];
     const dark = SEAT_DARK[seat] ?? TEAM_DARK[p.team];
-    const moving = Math.abs(p.moveDx) > 0.01 || Math.abs(p.moveDy) > 0.01;
-    const waddle = moving ? Math.sin(timeMs / 90) * 0.25 : 0;
-    const bob = moving ? Math.abs(Math.sin(timeMs / 90)) * 0.15 : 0;
+    const isMine = p.id === this.myPlayerId;
 
-    // Team ring under the feet (identity stays readable despite per-player colors).
-    ctx.beginPath();
-    ctx.ellipse(x, y + bob + 1.1, 1.0, 0.32, 0, 0, Math.PI * 2);
-    ctx.fillStyle = rgba(TEAM_COLORS[p.team], 0.85);
-    ctx.fill();
+    // Facing + walk phase from the most recent movement vector (the local
+    // player uses the 60fps input; everyone else uses the server's last move).
+    const vx = isMine && this.lastCanMove ? this.lastInputDir.x : p.moveDx;
+    const vy = isMine && this.lastCanMove ? this.lastInputDir.y : p.moveDy;
+    const mag = Math.hypot(vx, vy);
+    const face: Facing =
+      mag > 0.05
+        ? Math.abs(vx) >= Math.abs(vy)
+          ? vx > 0
+            ? "right"
+            : "left"
+          : vy > 0
+            ? "down"
+            : "up"
+        : (this.charFace.get(p.id) ?? "down");
+    this.charFace.set(p.id, face);
+    const phase = (this.charPhase.get(p.id) ?? 0) + dt * (4 + Math.min(1, mag) * 11);
+    this.charPhase.set(p.id, phase);
 
-    // Soft drop shadow.
-    ctx.fillStyle = "rgba(0,0,0,0.35)";
-    ctx.beginPath();
-    ctx.ellipse(x + 0.2, y + 1.6 + bob, 1.5, 0.5, 0, 0, Math.PI * 2);
-    ctx.fill();
+    this.charInfos.push({
+      id: p.id,
+      drawn: p.state !== "transformed" || isMine,
+      x,
+      y,
+      w: 1.6,
+      h: 3.4,
+      state: p.state,
+      face,
+      color: col,
+      animTick: Math.floor(timeMs / 16),
+    });
 
-    // Carrier glow (gold) behind the wizard.
-    if (p.carrying) {
-      const pulse = 1 + 0.15 * Math.sin(timeMs / 120);
+    // Disguised opponents ARE the furniture — draw nothing (only the local
+    // player sees their own "absorbed" ghost feedback).
+    if (p.state === "transformed" && !isMine) return;
+
+    drawCharacter(ctx, {
+      x,
+      y,
+      bodyColor: col,
+      darkColor: dark,
+      teamColor: TEAM_COLORS[p.team],
+      state: p.state,
+      carrying: p.carrying,
+      walkPhase: phase,
+      speed: Math.min(1, mag),
+      facing: face,
+      timeMs,
+      ghost: p.state === "transformed" && isMine,
+    });
+
+    // Own wizard: white ring (position feedback).
+    if (isMine) {
       ctx.beginPath();
-      ctx.arc(x, y, 2.4 * pulse, 0, Math.PI * 2);
-      ctx.fillStyle = "rgba(255, 209, 102, 0.25)";
-      ctx.fill();
-    }
-
-    // Stunned flash.
-    const flashing = p.state === "stunned" && Math.floor(timeMs / 90) % 2 === 0;
-    const closeted = p.state === "in_closet";
-    const bodyCol = flashing ? "#ffffff" : closeted ? "#6b7688" : col;
-    const visorCol = "#8fd8f2";
-
-    const h = 2.6; // body height (world units)
-    const wBody = 1.8;
-    const tilt = flashing || closeted ? 0 : waddle * 0.15;
-
-    ctx.save();
-    ctx.translate(x, y + bob);
-    ctx.rotate(tilt);
-
-    // --- body: rounded rectangle "bean" ---
-    ctx.fillStyle = flashing ? "#ffffff" : bodyCol;
-    ctx.strokeStyle = rgba(bodyCol, 0.35);
-    ctx.lineWidth = 0.4;
-    ctx.beginPath();
-    ctx.roundRect(-wBody / 2, -h, wBody, h + 0.4, 0.9);
-    ctx.fill();
-    ctx.stroke();
-
-    // --- backpack: rounded square on the left (always same side = simple) ---
-    ctx.fillStyle = rgba(flashing ? "#ffffff" : bodyCol, 0.25);
-    ctx.strokeStyle = rgba(flashing ? "#ffffff" : bodyCol, 0.4);
-    ctx.lineWidth = 0.3;
-    ctx.beginPath();
-    ctx.roundRect(-wBody / 2 - 0.7, -h + 0.7, 0.9, 1.1, 0.3);
-    ctx.fill();
-    ctx.stroke();
-
-    // --- dome visor (glass look with glare) ---
-    ctx.beginPath();
-    ctx.ellipse(wBody * 0.18, -h + 1.05, 0.9, 0.62, 0, 0, Math.PI * 2);
-    ctx.fillStyle = visorCol;
-    ctx.fill();
-    ctx.strokeStyle = "rgba(0,0,0,0.35)";
-    ctx.lineWidth = 0.25;
-    ctx.stroke();
-    // glare band
-    ctx.beginPath();
-    ctx.ellipse(wBody * 0.32, -h + 0.82, 0.45, 0.28, 0, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(255,255,255,0.75)";
-    ctx.fill();
-
-    // --- legs (two stubby feet) ---
-    const stepL = moving ? (Math.sin(timeMs / 90) > 0 ? 0.25 : -0.35) : -0.05;
-    const stepR = moving ? (Math.sin(timeMs / 90) > 0 ? -0.35 : 0.25) : -0.05;
-    this.leg(ctx, -0.45, h + stepL * 0.3, flashing ? "#ffffff" : bodyCol);
-    this.leg(ctx, 0.45, h + stepR * 0.3, flashing ? "#ffffff" : bodyCol);
-
-    // --- team hat (a little wizard cap, team-dark) ---
-    if (!flashing && !closeted) {
-      ctx.fillStyle = dark;
-      ctx.beginPath();
-      ctx.moveTo(-wBody * 0.35, -h + 0.7);
-      ctx.quadraticCurveTo(0, -h - 1.2 + waddle * 0.2, wBody * 0.35, -h + 0.7);
-      ctx.lineTo(-wBody * 0.35, -h + 0.7);
-      ctx.closePath();
-      ctx.fill();
-    }
-
-    ctx.restore();
-
-    // Own wizard: white ring.
-    if (p.id === this.myPlayerId) {
-      ctx.beginPath();
-      ctx.arc(x, y + bob, 1.9, 0, Math.PI * 2);
+      ctx.arc(x, y, 1.9, 0, Math.PI * 2);
       ctx.lineWidth = 0.3;
       ctx.strokeStyle = "rgba(255,255,255,0.8)";
       ctx.stroke();
     }
 
-    // Name tag.
+    // Name tag (secondary to the character itself).
     ctx.fillStyle = "#cfd8e8";
-    ctx.font = `600 0.85px system-ui`;
+    ctx.font = "600 0.85px system-ui";
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
-    ctx.fillText(p.name, x, y - h - 1.1);
-  }
-
-  private leg(ctx: CanvasRenderingContext2D, cx: number, y: number, color: string): void {
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.roundRect(cx - 0.3, y, 0.6, 0.45, 0.2);
-    ctx.fill();
+    ctx.fillText(p.name, x, y - 3.5);
   }
 
   /** seat color index from a player id like "wizard-3" (fallback: team). */
@@ -1108,6 +1075,7 @@ export class Renderer {
     const dt = Math.min(0.1, (now - this.localT) / 1000);
     this.localT = now;
     this.lastInputDir = inputDir ?? { x: 0, y: 0 };
+    this.lastCanMove = canMove;
     const moving = !!inputDir && (inputDir.x !== 0 || inputDir.y !== 0) && canMove && !!serverPos;
     if (!moving) {
       // No input (or can't move): stop predicting and let server smoothing take over.
