@@ -158,8 +158,9 @@ function formatDuration(secs: number): string {
   return `${mm}:${ss}`;
 }
 
-// Same per-seat crewmate palette as the renderer (wizard-0..3).
-const SEAT_COLORS_HUD = ["#f2765b", "#4aa8e8", "#8ee36b", "#e072f0"];
+// Same per-seat palette as the renderer (wizard-0..3): Player 1 cyan,
+// Player 2 coral, Player 3 green, Player 4 purple.
+const SEAT_COLORS_HUD = ["#4aa8e8", "#f2765b", "#8ee36b", "#e072f0"];
 const playersHudEl = $("players-hud");
 
 function seatColor(playerId: string): string {
@@ -246,10 +247,38 @@ function doAction(): void {
   }
 }
 
+// The engine's move() breaks a disguise, and the idle move(0,0) sender races
+// with the transform POST (it can fire before the next poll reflects the new
+// state and instantly untransform). Suppress idle moves until a poll confirms
+// the local player's state actually changed (i.e. the server applied the
+// transform), plus a safety margin for the POST round-trip.
+let suppressMoveUntil = 0; // performance.now() deadline
+let wantedState = "" as "active" | "transformed" | ""; // state we asked the server for
+
+function suppressMovesForState(want: "active" | "transformed"): void {
+  wantedState = want;
+  suppressMoveUntil = performance.now() + 350; // fallback safety cap
+}
+
+function movesSuppressed(): boolean {
+  const now = performance.now();
+  if (now < suppressMoveUntil) return true;
+  // If we're waiting to confirm the server applied a transform/untransform,
+  // keep suppressing until lastState reflects it.
+  if (wantedState && lastState) {
+    const me = myPlayer(lastState);
+    const applied = me && me.state === wantedState;
+    if (!applied) return true; // still waiting for acknowledgment
+  }
+  wantedState = "";
+  return false;
+}
+
 function doTransform(): void {
   if (btnTransform.disabled || !session || !lastState) return;
   const me = myPlayer(lastState);
   if (!me) return;
+  suppressMovesForState(me.state === "transformed" ? "active" : "transformed");
   if (me.state === "transformed") {
     void api
       .transform(session.roomCode, session.playerId, me.transformedAs ?? "furn-0")
@@ -312,6 +341,7 @@ async function enterGame(): Promise<void> {
       clearInterval(sender);
       return;
     }
+    if (movesSuppressed()) return;
     const s = lastState;
     const me = s ? myPlayer(s) : undefined;
     if (me?.state === "active") {
@@ -557,6 +587,7 @@ async function resumeSession(): Promise<void> {
 const input = new InputManager({
   onMove: (x, y) => {
     inputDir = { x, y };
+    if (movesSuppressed()) return;
     // Immediate push for responsiveness; the 10Hz sender keeps it alive.
     const s = lastState;
     const me = s ? myPlayer(s) : undefined;
