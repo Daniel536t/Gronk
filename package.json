@@ -20,6 +20,7 @@
     "provision": "tsx scripts/provision.ts",
     "verify:mode-a": "tsx scripts/verify-mode-a.ts",
     "tf:smoke": "tsx scripts/tf-smoke.ts",
+    "live:demo": "tsx scripts/live-demo.ts",
     "mock:trueforge": "tsx scripts/mock-trueforge.ts"
   },
   "devDependencies": {

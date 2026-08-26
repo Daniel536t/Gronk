@@ -204,6 +204,28 @@ export class LobbyManager {
     if (gronk) l.runtime.setGronk(gronk);
 
     l.engine.startMatch();
+
+    // Seed bot seats with an immediate intent so they act while their first
+    // (slow, real-LLM) decision is still computing — otherwise they stand at
+    // spawn and get caught instantly. Engine public API only.
+    for (const id of SEAT_PLAYER_IDS) {
+      if (taken.has(id)) continue;
+      const p = l.engine.state.players.find((q) => q.id === id);
+      const furn = l.engine.state.furniture;
+      if (p && furn.length > 0) {
+        let best = furn[0];
+        let bestD = Infinity;
+        for (const f of furn) {
+          const d = (f.x - p.x) ** 2 + (f.y - p.y) ** 2;
+          if (d < bestD) {
+            bestD = d;
+            best = f;
+          }
+        }
+        l.intentExec.setIntent(id, { intent: "SEARCH_FURNITURE", targetId: best.id });
+      }
+    }
+
     l.status = "playing";
     if (this.autoTick) {
       l.startTicking(() => this.tickOnce(roomCode));
