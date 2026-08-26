@@ -24,8 +24,12 @@ export interface TrueForgeConfig {
   mcpServerUrl?: string;
 }
 
-export const GRONK_AGENT_NAME = "Gronk";
-export const BOT_WIZARD_NAMES = ["BotWizard-A", "BotWizard-B", "BotWizard-C"];
+// TrueForge resource names must be 2-64 lowercase chars (ResourceName).
+export const GRONK_AGENT_NAME = "gronk";
+export const BOT_WIZARD_NAMES = ["botwizard-a", "botwizard-b", "botwizard-c"];
+export const GAME_MASTER_AGENT_NAME = "gamemaster";
+/** MCP connector name (registered in TrueForge settings). */
+export const MCP_CONNECTOR_NAME = "gronks-hoard-mcp";
 
 export class TrueForgeBackendError extends Error {}
 
@@ -57,7 +61,7 @@ interface TurnDoneState {
   status: "done" | "cancelled" | "error";
   output?: {
     content?: unknown;
-    toolCalls?: { function?: { name?: string; arguments?: string } }[];
+    tool_calls?: { function?: { name?: string; arguments?: string } }[];
   } | null;
 }
 
@@ -122,7 +126,8 @@ export class TrueForgeBackend implements AgentBackend {
       headers: this.headers(),
       body: JSON.stringify({
         input: [{ type: "user.message", content: prompt }],
-        previousTurnId: "auto",
+        previous_turn_id: "auto",
+        stream: false, // poll via GET; avoid SSE handling
       }),
     });
     if (!res.ok) {
@@ -162,7 +167,7 @@ export class TrueForgeBackend implements AgentBackend {
  *  an `intent` key. Never throws a plain Error — wraps as backend error. */
 export function parseDecision(output: TurnDoneState["output"]): AgentDecision {
   // 1) agent_intent tool call arguments.
-  const toolCalls = output?.toolCalls ?? [];
+  const toolCalls = output?.tool_calls ?? [];
   for (const tc of toolCalls) {
     if (tc?.function?.name === "agent_intent" && tc.function.arguments) {
       try {
@@ -221,24 +226,18 @@ export async function provisionTrueForgeAgents(
 ): Promise<{ name: string; status: string }[]> {
   const out: { name: string; status: string }[] = [];
   for (const a of agents) {
-    const body: Record<string, unknown> = {
-      name: a.name,
-      spec: {
-        model: a.model,
-        instructions: a.instructions,
-      },
+    // v0.1.4 API: { name, manifest: { model, instructions, mcp_servers, skills, config } }.
+    const manifest: Record<string, unknown> = {
+      model: { name: a.model.name },
+      instructions: a.instructions,
     };
     if (a.mcpServers && a.mcpServers.length > 0) {
-      body.spec = {
-        ...(body.spec as object),
-        mcpServers: a.mcpServers.map((m) => ({
-          name: m.name,
-          url: m.url,
-        })),
-      };
+      manifest.mcp_servers = a.mcpServers.map((m) => ({ name: m.name, enable_tools: ["@all"] }));
     }
     if (a.skills && a.skills.length > 0) {
-      body.spec = { ...(body.spec as object), skills: a.skills.map((s) => ({ name: s })) };
+      manifest.skills = a.skills.map((s) => ({ name: s }));
+      // Skills require the sandbox to be enabled on the agent.
+      manifest.config = { sandbox: { enabled: true } };
     }
 
     const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -246,9 +245,38 @@ export async function provisionTrueForgeAgents(
     const res = await fetch(`${cfg.baseUrl}/api/v1/agents`, {
       method: "POST",
       headers,
-      body: JSON.stringify(body),
+      body: JSON.stringify({ name: a.name, manifest }),
     });
     out.push({ name: a.name, status: res.ok ? `created (${res.status})` : `error (${res.status}): ${await res.text()}` });
   }
   return out;
+}
+
+/**
+ * Register this game's MCP server as a TrueForge connector (Settings ->
+ * Connectors) so agents can use its tools. Idempotent: existing connectors are
+ * reused. Returns the registered name or an error string.
+ */
+export async function registerMcpConnector(
+  cfg: TrueForgeConfig,
+): Promise<{ name: string; status: string }> {
+  const url = cfg.mcpServerUrl ?? "http://localhost:8787/mcp";
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (cfg.apiKey) headers.Authorization = `Bearer ${cfg.apiKey}`;
+  const res = await fetch(`${cfg.baseUrl}/api/v1/settings/mcp-servers`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      manifest: {
+        type: "remote",
+        name: MCP_CONNECTOR_NAME,
+        url,
+        description: "Gronk's Hoard game MCP server (lobby, state, movement, action, bank).",
+      },
+    }),
+  });
+  return {
+    name: MCP_CONNECTOR_NAME,
+    status: res.ok ? `registered (${res.status})` : `error (${res.status}): ${await res.text()}`,
+  };
 }

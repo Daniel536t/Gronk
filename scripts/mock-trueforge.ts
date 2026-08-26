@@ -31,7 +31,7 @@ interface Turn {
 
 /** Pick a decision for one named agent from the public view. */
 function decide(agentName: string, view: AgentView, cycle: number): AgentDecision {
-  if (agentName === "Gronk") {
+  if (agentName === "gronk") {
     // Spec priority: noise > stunned > visible (non-transformed).
     if (view.latestNoise) return { intent: "HUNT_NEAREST", targetId: "noise" };
     const stunned = view.players.filter((p) => p.state === "stunned");
@@ -52,8 +52,8 @@ function decide(agentName: string, view: AgentView, cycle: number): AgentDecisio
     return { intent: "HUNT_NEAREST" };
   }
 
-  // Bot wizards: seat wizard-1..3 -> BotWizard-A/B/C.
-  const seat = { "BotWizard-A": 1, "BotWizard-B": 2, "BotWizard-C": 3 }[agentName] ?? 1;
+  // Bot wizards: seat wizard-1..3 -> botwizard-a/b/c (lowercase resource names).
+  const seat = { "botwizard-a": 1, "botwizard-b": 2, "botwizard-c": 3 }[agentName] ?? 1;
   const self = view.players.find((p) => p.id === `wizard-${seat}`);
   if (self) {
     if (self.carrying) return { intent: "GO_TO_PEDESTAL" };
