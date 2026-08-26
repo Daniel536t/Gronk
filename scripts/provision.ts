@@ -70,9 +70,11 @@ void (async () => {
   console.error(`Provisioning ${agents.length} agents against ${cfg.baseUrl} ...`);
   let results = await provisionTrueForgeAgents(cfg, agents);
 
-  // Attaching skills requires a sandbox provider (Docker). If GameMaster fails
-  // for that reason, create it without the skill pack so all 5 agents exist
-  // (riddles are still revealed by the engine; the skill is a harness flourish).
+  // Attaching skills requires a working sandbox (local bwrap runtime with
+  // socat + ripgrep + python3-venv installed, or a Daytona provider). If
+  // GameMaster fails for that reason, create it without the skill pack so all
+  // 5 agents exist (riddles are still revealed by the engine; the skill is a
+  // harness flourish).
   const gm = results.find((r) => r.name === GAME_MASTER_AGENT_NAME);
   if (gm && gm.status.includes("sandbox provider")) {
     console.error("  (skills need a sandbox provider — creating gamemaster without the skill pack)");
