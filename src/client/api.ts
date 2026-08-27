@@ -16,6 +16,10 @@ export interface Session {
 }
 
 const SESSION_KEY = "gh-session";
+// Hard cap on a state fetch. Far beyond any plausible round trip; exists only
+// to convert a hung request into a completable failure so client-side
+// reconciliation evidence stays bounded.
+const STATE_FETCH_TIMEOUT_MS = 8000;
 
 export function loadSession(): Session | null {
   try {
@@ -49,9 +53,21 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 }
 
 export async function getState(roomCode: string, playerId: string): Promise<GameState> {
-  const res = await fetch(`${BASE}/state?room=${encodeURIComponent(roomCode)}&player=${encodeURIComponent(playerId)}`);
-  if (!res.ok) throw new Error(`state HTTP ${res.status}`);
-  return (await res.json()) as GameState;
+  // Explicit timeout so a hung fetch cannot pend forever: the game loop treats
+  // completion (any completion) as evidence, and an unbounded request would
+  // leave client-side reconciliation without a bound (Qodo PR #11).
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), STATE_FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(
+      `${BASE}/state?room=${encodeURIComponent(roomCode)}&player=${encodeURIComponent(playerId)}`,
+      { signal: ac.signal },
+    );
+    if (!res.ok) throw new Error(`state HTTP ${res.status}`);
+    return (await res.json()) as GameState;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export interface CreateResult extends Session {

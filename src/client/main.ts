@@ -273,7 +273,15 @@ let wantedState = "" as "active" | "transformed" | ""; // state we asked the ser
 // how we know a poll has actually seen the server's post-toggle state, rather
 // than a stale request racing it.
 let pollGeneration = 0; // monotonically incremented each poll start
-let lastObservedPollG = 0; // generation of the most recently completed poll
+let lastObservedPollG = 0; // generation of the most recently completed SUCCESSFUL poll
+// Completed polls (success OR failure), per game session — the renderer's
+// release-freeze stall evidence. A failed poll delivers no new server
+// position, but it IS evidence the stream produced nothing new; counting it
+// keeps client-side reconciliation bounded when polling is unavailable
+// (Qodo PR #11: poll failures must not freeze the override forever).
+// Deliberately separate from lastObservedPollG, whose reset semantics belong
+// to the transform-suppression lifecycle.
+let pollCompletions = 0;
 let transformInFlight = 0; // unresolved transform POSTs (overlapping presses)
 let settledAtG = 0; // a poll of generation > settledAtG is post-settle
 // Suppression CYCLE token. Every transform captures `cycle` when it is born;
@@ -392,6 +400,7 @@ async function enterGame(): Promise<void> {
         if (pollToken !== token) return;
         lastState = s;
         lastObservedPollG = myG; // this poll (started at myG) completed
+        pollCompletions++; // completed (successful) — stall evidence advances
         failStreak = 0;
         hideReconnect();
         updateRiddle(s);
@@ -407,6 +416,7 @@ async function enterGame(): Promise<void> {
       } catch (e) {
         // Server restart / network blip: show the reconnect overlay (M5).
         failStreak++;
+        pollCompletions++; // completed (failed) — stall evidence advances too
         const is404 = (e as { message?: string })?.message?.includes("404");
         showReconnect(is404 && failStreak > 2 ? "gone" : "retry");
       }
@@ -445,6 +455,7 @@ async function enterGame(): Promise<void> {
         me && moving ? inputDir : null,
         speed,
         !!moving,
+        pollCompletions, // poll identity — lets the renderer judge release-freeze stalling by poll evidence (success or failure), not frames
       );
       renderer.draw(lastState, dt, now);
     }

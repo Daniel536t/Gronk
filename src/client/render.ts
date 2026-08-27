@@ -62,13 +62,17 @@ const RELEASE_RECONCILE_DIST = 0.5;
 // A released gap larger than this means a real authoritative teleport
 // (respawn, match reset) — trust the server immediately.
 const RELEASE_TELEPORT_DIST = 3;
-// How long the released freeze may persist while the authoritative gap sits
-// in the 0.5–3u band before we ease back to the server position. Move POSTs
-// can fail (HTTP errors are swallowed by the caller), leaving the server
-// stationary forever; without this bound the avatar would render at a false
-// location indefinitely. 1.5s ≈ several 10Hz ticks — a healthy round trip +
-// convergence window, after which the residual <3u gap lerps back smoothly.
-const RELEASE_FREEZE_MAX = 1.5;
+// How many consecutive COMPLETED polls may fail to demonstrate convergence
+// in the 0.5–3u band before we ease back to the authoritative position.
+// Stall is judged by poll evidence, never frame time: setLocalPrediction runs
+// at 60fps but serverPos only changes when a poll completes, so a single
+// slow poll must not exhaust the bound before it can prove convergence. A
+// poll that completes without showing a moved position counts — that covers
+// move POSTs that failed (server stationary forever, errors swallowed by the
+// caller) AND failed/aborted state polls (no new position delivered, stream
+// unavailable). 15 polls ≈ 1.5s at the healthy 10Hz rate — far past any real
+// convergence window — after which the residual <3u gap lerps back smoothly.
+const RELEASE_FREEZE_POLLS = 15;
 
 // Phase 4 hide animation: how long entering/exiting a hiding object takes.
 // Purely visual — the server state is authoritative and changes instantly;
@@ -206,10 +210,20 @@ export class Renderer {
   private camY = ROOM_HEIGHT / 2;
   private lastInputDir = { x: 0, y: 0 };
   private lastCanMove = true;
-  // Seconds the released position has been frozen in the mid-gap band
-  // (0.5–3u). Resets whenever movement input is active; guards against
-  // non-convergence after failed move requests (bounded reconciliation).
-  private releaseFreezeT = 0;
+  // Consecutive completed polls whose server position was unchanged while the
+  // released position is frozen in the mid-gap band (0.5–3u). Resets whenever
+  // movement input is active or a poll delivers a moved position (convergence
+  // in flight). Guards against non-convergence after failed move requests
+  // (bounded reconciliation) without penalizing slow-but-successful polls.
+  private releaseStallPolls = 0;
+  // Server position observed at the last poll-delivered evaluation — the
+  // progress signal for the bounded reconciliation. Any movement means the
+  // connection is alive and the server is converging toward the released spot.
+  private releasePrevServer: { x: number; y: number } | null = null;
+  // Poll identity (generation of the last completed poll) used to detect new
+  // poll evidence; frames between polls re-deliver the same value and must
+  // never advance the stall counter.
+  private releasePrevPollSeq = -1;
   private lastPlayerPos: { x: number; y: number } | null = null;
   // Per-player walk cycle + facing (driven by movement vectors, not engine).
   private charPhase = new Map<string, number>();
@@ -1855,6 +1869,7 @@ export class Renderer {
     inputDir: { x: number; y: number } | null,
     speed: number,
     canMove: boolean,
+    pollSeq: number,
   ): void {
     const now = performance.now();
     const dt = Math.min(0.1, (now - this.localT) / 1000);
@@ -1894,12 +1909,28 @@ export class Renderer {
           this.localY = serverPos.y;
           this.localOverride = null;
         } else {
-          // Mid-gap: the server should be catching up. Bound the freeze — if
-          // convergence stalls (e.g. move POSTs failed and the server never
-          // moved), ease back to the authoritative position so the avatar
-          // never renders at a false location indefinitely.
-          this.releaseFreezeT += dt;
-          if (this.releaseFreezeT > RELEASE_FREEZE_MAX) {
+          // Mid-gap: the server should be catching up. Judge stalling by POLL
+          // evidence, never frames: this method runs at 60fps but serverPos
+          // only changes when a poll completes, so frame dt must not advance
+          // the stall clock (a single slow poll would exhaust a wall-clock
+          // bound before it could prove convergence). Count DISTINCT completed
+          // polls: any position change resets the stall counter (convergence
+          // in flight); consecutive identical poll-delivered positions accrue.
+          // A slow-but-successful connection therefore never rewinds
+          // mid-convergence, while move POSTs that genuinely failed (polls
+          // keep confirming a stationary server) still ease back at the bound.
+          if (pollSeq !== this.releasePrevPollSeq) {
+            this.releasePrevPollSeq = pollSeq;
+            const firstObservation = this.releasePrevServer == null;
+            const serverMoved =
+              !firstObservation &&
+              (Math.abs(serverPos.x - this.releasePrevServer!.x) > 1e-6 ||
+                Math.abs(serverPos.y - this.releasePrevServer!.y) > 1e-6);
+            this.releasePrevServer = { x: serverPos.x, y: serverPos.y };
+            this.releaseStallPolls =
+              firstObservation || serverMoved ? 0 : this.releaseStallPolls + 1;
+          }
+          if (this.releaseStallPolls >= RELEASE_FREEZE_POLLS) {
             this.seedSmooth(this.myPlayerId!, this.localOverride.x, this.localOverride.y);
             this.localX = serverPos.x;
             this.localY = serverPos.y;
@@ -1928,8 +1959,10 @@ export class Renderer {
     this.localX = Math.min(ROOM_WIDTH - 1.2, Math.max(1.2, this.localX! + nx * speed * dt));
     this.localY = Math.min(ROOM_HEIGHT - 1.2, Math.max(1.2, this.localY! + ny * speed * dt));
     this.localOverride = { x: this.localX!, y: this.localY! };
-    // Fresh predicted movement — restart the bounded-freeze clock.
-    this.releaseFreezeT = 0;
+    // Fresh predicted movement — restart the bounded-freeze evidence.
+    this.releaseStallPolls = 0;
+    this.releasePrevServer = null;
+    this.releasePrevPollSeq = -1;
   }
 
   /** Seed the per-player smoothing state so step() continues from here. */
