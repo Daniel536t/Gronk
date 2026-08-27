@@ -581,7 +581,14 @@ async function waitForActive(page: Page, maxMs = 26000): Promise<void> {
 // target, so this walks one axis at a time (the larger delta first), polling
 // until that axis lands inside tolerance. Returns true if we end close while
 // staying active.
-async function walkToXY(page: Page, tx: number, ty: number, tol = 1.5): Promise<boolean> {
+async function walkToXY(
+  page: Page,
+  tx: number,
+  ty: number,
+  tol = 1.5,
+  maxIter = 80,
+  stopDist = 2.6,
+): Promise<boolean> {
   const st = await getState(page);
   const m = st.players[0];
   if (m.state !== "active") return false;
@@ -598,7 +605,7 @@ async function walkToXY(page: Page, tx: number, ty: number, tol = 1.5): Promise<
   for (const stage of stages) {
     await page.keyboard.down(stage.key);
     let ok = false;
-    for (let i = 0; i < 80 && !ok; i++) {
+    for (let i = 0; i < maxIter && !ok; i++) {
       await page.waitForTimeout(150);
       const st2 = await getState(page);
       const m2 = st2.players[0];
@@ -617,7 +624,7 @@ async function walkToXY(page: Page, tx: number, ty: number, tol = 1.5): Promise<
   }
   const stFinal = await getState(page);
   const mf = stFinal.players[0];
-  return mf.state === "active" && Math.hypot(mf.x - tx, mf.y - ty) <= 2.6;
+  return mf.state === "active" && Math.hypot(mf.x - tx, mf.y - ty) <= stopDist;
 }
 
 async function walkToBookshelf(page: Page): Promise<boolean> {
@@ -1007,6 +1014,7 @@ async function gameFeelProbes(page: Page): Promise<void> {
     check("desktop: effects system present", !!e0 && typeof e0.shake === "number", "");
     let minSeen = Number.POSITIVE_INFINITY;
     for (let i = 0; i < 12; i++) {
+      await keepGameAlive(page); // bots may bank / match may end mid-poll
       await page.waitForTimeout(400);
       const e = await page.evaluate(() => (window as any).__ghEffects?.() ?? null);
       if (e && typeof e.shake === "number") minSeen = Math.min(minSeen, e.shake);
@@ -1030,6 +1038,10 @@ async function gameFeelProbes(page: Page): Promise<void> {
 
     // 8) Ambient life: brazier embers spawn while it's on screen. A failed
     //    walk is an explicit FAILED check — never a silent skip (Qodo #6).
+    //    The match may have ended / the player closeted during the long
+    //    section above — approve/restart and wait for an active spawn first.
+    await keepGameAlive(page);
+    await waitForActive(page);
     if (!(await walkToXY(page, BRAZIER.x, BRAZIER.y))) {
       check("desktop: brazier emits ambient embers", false, "walk to brazier failed");
     } else {
@@ -1045,8 +1057,12 @@ async function gameFeelProbes(page: Page): Promise<void> {
       await page.screenshot({ path: `${SHOTS}/desktop-reactor-brazier.png` });
     }
 
-    // 9) Ambient life: cauldron vapor while on screen.
-    if (!(await walkToXY(page, CAULDRON.x, CAULDRON.y))) {
+    // 9) Ambient life: cauldron vapor while on screen. The cauldron is far
+    //    across the map, so give the walk a generous iteration budget and stop
+    //    once within camera range (the vapor spawner only needs on-screen).
+    await keepGameAlive(page);
+    await waitForActive(page);
+    if (!(await walkToXY(page, CAULDRON.x, CAULDRON.y, 1.5, 180, 16))) {
       check("desktop: cauldron emits ambient vapor", false, "walk to cauldron failed");
     } else {
       await page.waitForTimeout(400);

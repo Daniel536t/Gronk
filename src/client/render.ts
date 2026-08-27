@@ -321,9 +321,11 @@ export class Renderer {
   // Install the world->screen transform for the current frame. camX/camY stay
   // the authoritative (clamped) follow-camera; presentation effects are applied
   // ONLY here as temporary offsets:
-  //   - camera impulse: a decaying world-unit nudge, clamped back to world
-  //     bounds so a bump at the map edge never shows outside the world.
+  //   - camera impulse: a decaying world-unit nudge.
   //   - screen shake: a small CSS-px jitter that decays (halved on touch).
+  // BOTH are folded into the EFFECTIVE camera center before it is clamped to
+  // world bounds, so neither a bump nor a shaken frame can ever expose the
+  // background outside the map (Qodo #12).
   private applyWorldProjection(): void {
     const dpr = window.devicePixelRatio || 1;
     const vw = window.innerWidth;
@@ -331,19 +333,17 @@ export class Renderer {
     const viewW = vw / this.scale;
     const viewH = vh / this.scale;
     const imp = this.effects.camOffset;
-    let cx = this.camX + imp.x;
-    let cy = this.camY + imp.y;
+    const sh = this.effects.shake;
+    const shX = sh > 0.02 ? (Math.random() * 2 - 1) * sh : 0;
+    const shY = sh > 0.02 ? (Math.random() * 2 - 1) * sh : 0;
+    let cx = this.camX + imp.x + shX / this.scale;
+    let cy = this.camY + imp.y + shY / this.scale;
     if (viewW >= ROOM_WIDTH) cx = ROOM_WIDTH / 2;
     else cx = Math.min(ROOM_WIDTH - viewW / 2, Math.max(viewW / 2, cx));
     if (viewH >= ROOM_HEIGHT) cy = ROOM_HEIGHT / 2;
     else cy = Math.min(ROOM_HEIGHT - viewH / 2, Math.max(viewH / 2, cy));
-    let ox = vw / 2 - cx * this.scale;
-    let oy = vh / 2 - cy * this.scale;
-    const sh = this.effects.shake;
-    if (sh > 0.02) {
-      ox += (Math.random() * 2 - 1) * sh;
-      oy += (Math.random() * 2 - 1) * sh;
-    }
+    const ox = vw / 2 - cx * this.scale;
+    const oy = vh / 2 - cy * this.scale;
     this.ctx.setTransform(dpr * this.scale, 0, 0, dpr * this.scale, dpr * ox, dpr * oy);
   }
 

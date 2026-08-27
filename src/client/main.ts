@@ -344,21 +344,27 @@ function doTransform(): void {
     transformInFlight = Math.max(0, transformInFlight - 1);
     if (transformInFlight === 0) settledAtG = pollGeneration;
   };
-  res.then((r) => {
-    settle();
-    if (cycle !== suppressCycle) return;
-    // If the server rejected the request (no state change), free input now
-    // instead of waiting out the whole window — but only when this was the
-    // last unresolved request: an earlier rejection must not release while a
-    // later toggle is still in flight.
-    const ok = (r as { ok?: boolean } | undefined)?.ok ?? false;
-    if (!ok && transformInFlight === 0) releaseSuppression();
-  });
-  res.catch(() => {
-    settle();
-    if (cycle !== suppressCycle) return;
-    if (transformInFlight === 0) releaseSuppression();
-  });
+  // NOTE: `.then(onOk)` and `.catch(onErr)` are CHAINED (not attached in
+  // parallel) — attaching them separately leaves the derived promise from
+  // `.then` without a rejection handler, so a rejected transform (e.g. the
+  // player got stunned mid-request) surfaces as an unhandled promise
+  // rejection in the browser.
+  res
+    .then((r) => {
+      settle();
+      if (cycle !== suppressCycle) return;
+      // If the server rejected the request (no state change), free input now
+      // instead of waiting out the whole window — but only when this was the
+      // last unresolved request: an earlier rejection must not release while a
+      // later toggle is still in flight.
+      const ok = (r as { ok?: boolean } | undefined)?.ok ?? false;
+      if (!ok && transformInFlight === 0) releaseSuppression();
+    })
+    .catch(() => {
+      settle();
+      if (cycle !== suppressCycle) return;
+      if (transformInFlight === 0) releaseSuppression();
+    });
 }
 
 // ---- game loop -----------------------------------------------------------
