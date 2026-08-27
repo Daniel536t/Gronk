@@ -269,9 +269,27 @@ creature transform). This is **intentionally deferred** as out of scope for a vi
 engine/API ordering tokens, which this repo's Phase 3 brief reserves for a later milestone) and is
 documented in the PR thread with that rationale.
 
+### Phase 4 — hiding & occlusion (also Qodo-reviewed)
+- **PR: [Phase 4 — hiding, occlusion & environmental interaction](https://github.com/Daniel536t/Gronk/pull/3)** (#3, merged)
+
+Phase 4 (hide enter/exit animation, furniture front-cover occlusion, interaction
+affordance, and a fix for a rapid-toggle input lock) went through a full Qodo
+agentic review that closed **6 bugs over two follow-up rounds to 0**:
+1. Overlapping transform posts needed a per-request counter (not a single boolean).
+2. A shared hiding spot could lose occlusion when another player animated. 
+3. Floor markers (pip/shadow/aura) ignored the hide fade.
+4. QA must fail (not silently pass) when a probe throws or a fixture is unreachable.
+5. A stale in-flight poll could release movement before the toggle state was observed
+   (fixed with a poll-generation barrier).
+6. A pre-reset transform callback could settle a new suppression cycle
+   (fixed with a suppression-cycle token).
+
+Public thread: https://github.com/Daniel536t/Gronk/pull/3 — Qodo Code Review comment
+with each finding marked `✓ Resolved` at the final commit (`Bugs (0)`).
+
 ### Review history (public)
 The Qodo review and follow-up re-reviews on the updated commits are public on PR #1:
-https://github.com/Daniel536t/Gronk/pull/1 (Qodo Code Review comment + review markers at each commit).
+https://github.com/Daniel536t/Gronk/pull/1 (Qodo Code Review comment + review markers at each commit), and on PR #3 (Phase 4, `Bugs (0)` at the final commit).
 
 ### Workflow
 branch → push → open PR → `\`/agentic_review\`` → fix/dismiss findings → re-review → merge.
