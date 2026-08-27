@@ -26,7 +26,13 @@ import {
   type VisualLayer,
   type VisualObject,
 } from "./objects";
-import { drawCharacter, type CharacterRenderInfo, type Facing } from "./character";
+import {
+  drawCharacter,
+  computePose,
+  type CharacterOpts,
+  type CharacterRenderInfo,
+  type Facing,
+} from "./character";
 import { audio } from "./audio";
 import {
   ParticleSystem,
@@ -184,6 +190,9 @@ export class Renderer {
   // Per-player walk cycle + facing (driven by movement vectors, not engine).
   private charPhase = new Map<string, number>();
   private charFace = new Map<string, Facing>();
+  private stunMs = new Map<string, number>(); // last time each player was stunned(ms)
+  private reactT = new Map<string, number>(); // furniture settle reaction timer (sec)
+  private lungeT = -10; // Gronk catch-lunge animation timer (sec)
   private charInfos: CharacterRenderInfo[] = [];
   // ---- Phase 4 hide animation state (client-side, presentation only) ------
   private hideAnims = new Map<string, HideAnim>();
@@ -394,6 +403,13 @@ export class Renderer {
   draw(state: GameState, dt: number, timeMs: number): void {
     // Phase 5: decay camera impulse / shake / flash for this frame.
     this.effects.step(dt);
+    // Phase 6A: decay furniture settle reactions and the Gronk catch lunge.
+    for (const [fid, t] of this.reactT) {
+      const next = t - dt;
+      if (next <= 0) this.reactT.delete(fid);
+      else this.reactT.set(fid, next);
+    }
+    this.lungeT -= dt;
     this.updateCamera(dt);
     // Camera micro-feedback: the decaying impulse is applied as a temporary
     // presentation offset inside applyWorldProjection() (never integrated into
@@ -526,12 +542,16 @@ export class Renderer {
           spawnMotes(this.particles, dx, dy - 1, 9);
           this.effects.addShake(0.4);
           this.effects.bumpCamera(-(p.moveDx || 0) * 0.3, -(p.moveDy || 0) * 0.3, 0.5);
+          // Phase 6A: the entered furniture gives a tiny settle reaction.
+          if (p.transformedAs) this.reactT.set(p.transformedAs, 0.3);
           this.hideCompletePlayed.delete(p.id);
         } else if (was === "transformed") {
-          // Emerging: whoosh up + motes.
+          // Emerging: whoosh up + motes + the furniture reacts (emergence).
           audio.playEmerge();
           spawnMotes(this.particles, dx, dy - 1, 7);
           this.effects.addShake(0.4);
+          const fid = this.prevTransAs.get(p.id);
+          if (fid) this.reactT.set(fid, 0.3);
         }
         if (p.state === "stunned") {
           // Revealed + stunned (a search found an enemy hiding here): the
@@ -541,6 +561,11 @@ export class Renderer {
           spawnStars(this.particles, dx, dy - 1, 10);
           this.effects.flash("#ffffff", 0.22);
           this.effects.addShake(1.2);
+        }
+        if (p.state === "in_closet" && was !== "in_closet") {
+          // Catch event: Gronk lunges/reaches — a visually obvious "caught"
+          // beat (feeds the commentator/analyst story). Presentation only.
+          this.lungeT = 0.3;
         }
       }
 
@@ -1225,6 +1250,16 @@ export class Renderer {
   // Draw one layer of the visual objects. Labels fade in near the local player
   // only — the environment itself carries the information, the label is a
   // secondary reference.
+  /** Furniture settle reaction: a short 0..1 dip that can be applied to the
+   *  back/front passes of the object being entered/exited, so hiding feels
+   *  physical (DESIGN.md — furniture reactions). Decays over ~300ms. */
+  private reactionFor(fid: string): number {
+    const t = this.reactT.get(fid);
+    if (t == null || t <= 0) return 0;
+    // quick attack (~80ms) then a soft settle overshoot-decay.
+    return Math.max(0, Math.sin(Math.min(1, t / 0.08) * Math.PI) * Math.exp(-t * 9));
+  }
+
   private drawObjects(
     ctx: CanvasRenderingContext2D,
     objs: VisualObject[],
@@ -1239,7 +1274,15 @@ export class Renderer {
         const d = Math.hypot(obj.x - me.x, obj.y - me.y);
         labelAlpha = d > 16 ? 0 : 0.18 + 0.32 * Math.max(0, 1 - d / 16);
       }
+      ctx.save();
+      // Subtle vertical dip + tiny squash while the object settles.
+      const r = this.reactionFor(obj.id);
+      if (r > 0) {
+        ctx.translate(0, r * 0.04);
+        ctx.scale(1 + r * 0.02, 1 - r * 0.03);
+      }
       drawVisualObject(ctx, obj, timeMs, labelAlpha);
+      ctx.restore();
     }
   }
 
@@ -1254,7 +1297,14 @@ export class Renderer {
       if (!isCoverKind(obj.kind)) continue;
       const alpha = this.lastCoverMap.get(obj.id) ?? 0;
       if (alpha <= 0.02) continue;
+      ctx.save();
+      const r = this.reactionFor(obj.id);
+      if (r > 0) {
+        ctx.translate(0, r * 0.04);
+        ctx.scale(1 + r * 0.02, 1 - r * 0.03);
+      }
       drawVisualObjectFront(ctx, obj, timeMs, alpha);
+      ctx.restore();
     }
   }
 
@@ -1482,27 +1532,19 @@ export class Renderer {
             : "up"
         : (this.charFace.get(p.id) ?? "down");
     this.charFace.set(p.id, face);
-    const phase = (this.charPhase.get(p.id) ?? 0) + dt * (4 + Math.min(1, mag) * 11);
+    // Phase 6A: advance the walk phase ONLY while actually moving, so a
+    // stationary character has zero stride (fixes DESIGN.md inconsistency #20).
+    const moving = p.state === "active" && mag > 0.05;
+    const phase =
+      (this.charPhase.get(p.id) ?? 0) + (moving ? dt * (4 + Math.min(1, mag) * 11) : 0);
     this.charPhase.set(p.id, phase);
 
-    this.charInfos.push({
-      id: p.id,
-      drawn: p.state !== "transformed" || isMine,
-      x,
-      y,
-      w: 1.6,
-      h: 3.4,
-      state: p.state,
-      face,
-      color: col,
-      animTick: Math.floor(timeMs / 16),
-    });
+    // Track when each player most recently entered the stunned state so the
+    // rig can play a short impact-flinch. Presentation only.
+    const wasState = this.prevState.get(p.id);
+    if (p.state === "stunned" && wasState !== "stunned") this.stunMs.set(p.id, timeMs);
 
-    // Disguised opponents ARE the furniture — draw nothing (only the local
-    // player sees their own "absorbed" ghost feedback).
-    if (p.state === "transformed" && !isMine) return;
-
-    drawCharacter(ctx, {
+    const opts: CharacterOpts = {
       x,
       y,
       bodyColor: col,
@@ -1515,9 +1557,39 @@ export class Renderer {
       facing: face,
       timeMs,
       ghost: p.state === "transformed" && isMine,
+      stunMs: this.stunMs.get(p.id),
       alphaMul,
       scaleMul,
+    };
+    // Compute the pose separately so QA can assert the rig actually articulates.
+    const pose = computePose(opts);
+
+    this.charInfos.push({
+      id: p.id,
+      mine: isMine,
+      drawn: p.state !== "transformed" || isMine,
+      x,
+      y,
+      w: 1.6,
+      h: 3.4,
+      state: p.state,
+      face,
+      color: col,
+      animTick: Math.floor(timeMs / 16),
+      // Phase 6A pose params for deterministic articulation checks.
+      stride: pose.strideAmp,
+      torsoLean: Math.abs(pose.lean),
+      leanSigned: pose.lean,
+      droop: pose.droop,
+      hunch: pose.hunch,
+      cloakSway: Math.abs(pose.cloakSway),
     });
+
+    // Disguised opponents ARE the furniture — draw nothing (only the local
+    // player sees their own "absorbed" ghost feedback).
+    if (p.state === "transformed" && !isMine) return;
+
+    drawCharacter(ctx, opts, pose);
 
     // Own wizard: white ring (position feedback). Hidden players don't get a
     // ring or name — they are the furniture, and the marker would give them away.
@@ -1553,6 +1625,10 @@ export class Renderer {
   }
 
   // ---- Gronk (huge red troll) --------------------------------------------
+  private gronkPrevX = -1;
+  private gronkPrevY = -1;
+  private gronkFace: Facing = "down";
+  private gronkStepAcc = 0;
 
   private drawGronk(
     ctx: CanvasRenderingContext2D,
@@ -1564,57 +1640,138 @@ export class Renderer {
     const g = state.gronk;
     const enraged = g.enraged;
     const moving = state.gronk.mode === "chase";
-    const waddle = moving ? Math.sin(timeMs / 120) * 0.2 : 0;
+    // Derive facing from the smoothed position delta.
+    const dx = x - this.gronkPrevX;
+    const dy = y - this.gronkPrevY;
+    if (Math.hypot(dx, dy) > 0.02) {
+      this.gronkFace =
+        Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? "right" : "left") : dy > 0 ? "down" : "up";
+    }
+    this.gronkPrevX = x;
+    this.gronkPrevY = y;
+    const face = this.gronkFace;
+    const FDX = face === "left" ? -1 : face === "right" ? 1 : 0;
+    const FDY = face === "up" ? -1 : face === "down" ? 1 : 0;
+    // Gutless but grounded waddle: heavy alternating stride + swaying belly.
+    const stepPh = moving ? timeMs / 140 : 0;
+    const stride = moving ? Math.sin(stepPh) * 0.5 : 0;
+    const bob = moving ? Math.abs(Math.cos(stepPh)) * 0.16 : 0;
+
+    // Nose flare (the tell): 0.5s before each sniff, Gronk pulses, lifts his
+    // head, and flares his nostrils — the readable "freeze!" cue.
+    const preSniff = g.nextSniffTick - state.tick;
+    const flaring = preSniff > 0 && preSniff <= 0.5 * TICKS_PER_SECOND;
+    const pulse = flaring ? 1 + 0.2 * Math.abs(Math.sin(timeMs / 55)) : 1;
+    const headLift = flaring ? 0.3 : 0;
+
+    const col = enraged ? "#8a1414" : "#c8322b";
+    const bodyW = 3.0;
+    const bodyH = 3.4;
+    const scale = pulse;
+
+    ctx.save();
+    ctx.translate(x, y + Math.abs(Math.sin(stepPh)) * 0.15);
+    ctx.scale(scale, scale);
+    // forward lean when chasing.
+    ctx.rotate(moving ? FDX * 0.12 : 0);
 
     // Shadow.
     ctx.fillStyle = "rgba(0,0,0,0.4)";
     ctx.beginPath();
-    ctx.ellipse(x + 0.3, y + 2.4 + Math.abs(Math.sin(timeMs / 120)) * 0.2, 2.4, 0.7, 0, 0, Math.PI * 2);
+    ctx.ellipse(0.2, 2.3 + bob, bodyW * 0.75, 0.62, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Nose flare: 0.5s before each sniff, Gronk pulses and glows.
-    const preSniff = g.nextSniffTick - state.tick;
-    const flaring = preSniff > 0 && preSniff <= 0.5 * TICKS_PER_SECOND;
-    const pulse = flaring ? 1 + 0.2 * Math.abs(Math.sin(timeMs / 55)) : 1;
+    // Feet: heavy stomping, alternating stride along the facing axis.
+    ctx.fillStyle = shade(col, 0.72);
+    for (const s of [-1, 1]) {
+      const lift = moving ? Math.max(0, Math.sin(stepPh + (s > 0 ? 0 : Math.PI))) * 0.18 : 0;
+      const fx = stride * s + (s * 0.5) * FDY;
+      const fy = 0.6 - lift + (s * 0.5) * FDX;
+      ctx.beginPath();
+      ctx.roundRect(fx - 0.4, fy, 0.8, 0.5, 0.22);
+      ctx.fill();
+    }
 
-    const col = enraged ? "#8a1414" : "#c8322b";
-    const s = 3.2 * pulse;
-    const h = 4.6;
-
+    // Legs/body: heavy torso, belly swaying with his weight.
+    const bellySway = moving ? Math.sin(stepPh) * 0.18 : Math.sin(timeMs / 600) * 0.06;
     ctx.save();
-    ctx.translate(x, y + Math.abs(Math.sin(timeMs / 120)) * 0.2);
-    ctx.rotate(waddle * 0.1);
-
-    // Body: a big round troll.
+    ctx.translate(bellySway * 0.3, -bob);
     ctx.fillStyle = col;
     ctx.strokeStyle = rgba(col, 0.4);
     ctx.lineWidth = 0.5;
     ctx.beginPath();
-    ctx.ellipse(0, -h / 2, s / 2, h / 2, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, -bodyH / 2 + 0.3, bodyW / 2, bodyH / 2, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
-
-    // Belly highlight.
+    // Bigger lower belly (comic weight).
     ctx.beginPath();
-    ctx.ellipse(0.3, -h * 0.35, s * 0.28, h * 0.22, 0, 0, Math.PI * 2);
-    ctx.fillStyle = rgba(col, 0.18);
+    ctx.ellipse(bellySway, -bodyH * 0.22, bodyW * 0.4, bodyH * 0.32, 0, 0, Math.PI * 2);
+    ctx.fillStyle = rgba(col, 0.2);
     ctx.fill();
 
-    // Ear/face: two glowing eyes + big nose.
+    // Arms: swing heavily; on a catch lunge they reach forward.  --
+    ctx.fillStyle = shade(col, 0.85);
+    const armSwing = moving ? Math.sin(stepPh) * 0.5 : 0;
+    const lunge = this.lungeT > 0 ? (this.lungeT / 0.3) : 0; // 1..0 over the lunge
+    const reach = lunge * 1.6; // how far the arms reach toward the target
+    ctx.save();
+    ctx.translate(0, -bodyH * 0.55);
+    // near arm
+    ctx.beginPath();
+    ctx.ellipse(-bodyW * 0.42 + armSwing * FDY, armSwing * 0.5, 0.34, 0.8, FDX * 0.2 + reach * 0.1, 0, Math.PI * 2);
+    ctx.fill();
+    // far arm
+    ctx.beginPath();
+    ctx.ellipse(bodyW * 0.42 - armSwing * FDY, -armSwing * 0.5, 0.34, 0.8, FDX * 0.2, 0, Math.PI * 2);
+    ctx.fill();
+    // Reach hands on lunge (drawn forward along the facing axis).
+    if (lunge > 0.05) {
+      ctx.fillStyle = shade(col, 0.7);
+      ctx.beginPath();
+      ctx.arc(FDX * (bodyW * 0.35 + reach), FDY * (bodyW * 0.35 + reach) + 0.4, 0.3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // Head: separate from body, bobbing; nostrils + eyes.
+    const hx = FDX * 0.15;
+    const hy = -bodyH - 0.1 - headLift - bob;
+    ctx.save();
+    ctx.translate(hx, hy);
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 1.05, 0.85, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = shade(col, 0.8);
+    ctx.beginPath();
+    ctx.ellipse(FDX * 0.2, 0.05, 0.72, 0.6, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Eyes: two glowing points.
     ctx.fillStyle = "#ffe08a";
     ctx.shadowColor = "#ffdd66";
-    ctx.shadowBlur = 1.2;
-    ctx.beginPath();
-    ctx.arc(-0.7, -h * 0.75, 0.32, 0, Math.PI * 2);
-    ctx.arc(0.7, -h * 0.75, 0.32, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.shadowBlur = 0.9;
+    for (const ey of [-0.42, 0.42]) {
+      ctx.beginPath();
+      ctx.arc(FDX * 0.1 + ey, -0.22, 0.15, 0, Math.PI * 2);
+      ctx.fill();
+    }
     ctx.shadowBlur = 0;
+    // Nostrils — flare with the sniff tell.
+    ctx.fillStyle = shade(col, 0.55);
+    const nostW = flaring ? 0.55 : 0.3;
+    for (const ny of [-0.22, 0.22]) {
+      ctx.beginPath();
+      ctx.ellipse(FDX * 0.45 + ny, 0.42, 0.2, nostW * 0.28, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
 
+    // Sniff ring (kept): the readable flare cue.
     if (flaring) {
       ctx.strokeStyle = "rgba(255, 209, 102, 0.85)";
       ctx.lineWidth = 0.4;
       ctx.beginPath();
-      ctx.arc(0, -h * 0.45, 1.8 * pulse, 0, Math.PI * 2);
+      ctx.arc(0, -bodyH * 0.4, 1.8 * pulse, 0, Math.PI * 2);
       ctx.stroke();
     }
 
@@ -1623,7 +1780,7 @@ export class Renderer {
     ctx.font = "700 0.9px system-ui";
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
-    ctx.fillText("GRONK", 0, h * 0.15);
+    ctx.fillText("GRONK", 0, -bodyH - 1.1 - headLift);
     ctx.restore();
   }
 
@@ -1675,7 +1832,16 @@ export class Renderer {
   myPlayerId: string | null = null;
 }
 
-// ---- tiny color helper (hex -> rgba with alpha) ---------------------------
+// ---- tiny color helpers ------------------------------------------------
+/** lighten (f>1) or darken (f<1) a hex color. */
+function shade(hex: string, f: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  const r = Math.min(255, Math.round(((n >> 16) & 255) * f));
+  const g = Math.min(255, Math.round(((n >> 8) & 255) * f));
+  const b = Math.min(255, Math.round((n & 255) * f));
+  return `rgb(${r},${g},${b})`;
+}
+
 function rgba(hex: string, a: number): string {
   const n = parseInt(hex.slice(1), 16);
   const r = (n >> 16) & 255;
