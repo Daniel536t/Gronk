@@ -266,15 +266,20 @@ function doAction(): void {
 //     the active/transformed gates take over correctly and holding longer would
 //     only risk a permanent lock.
 let wantedState = "" as "active" | "transformed" | ""; // state we asked the server for
-// Poll generations: every poll_() records the generation it STARTED, and we
+// Poll generations: every poll records the generation it STARTED, and we
 // remember the most recent one that COMPLETED (lastObservedPollG) plus the
-// earliest generation after which a settle is considered "observed"
-// (settledAtG). This is how we know a poll has actually seen the server's
-// post-toggle state, rather than a stale request racing it.
+// generation at which the last transform cycle settled (settledAtG). This is
+// how we know a poll has actually seen the server's post-toggle state, rather
+// than a stale request racing it.
 let pollGeneration = 0; // monotonically incremented each poll start
 let lastObservedPollG = 0; // generation of the most recently completed poll
 let transformInFlight = 0; // unresolved transform POSTs (overlapping presses)
 let settledAtG = 0; // a poll of generation > settledAtG is post-settle
+// Suppression CYCLE token. Every transform captures `cycle` when it is born;
+// its callback no-ops if the current cycle differs. This stops a promise
+// created before a releaseSuppression()/enterGame() reset from mutating the
+// bookkeeping of a newer lifecycle (Qodo: "old callback settles new cycle").
+let suppressCycle = 0;
 
 function suppressMovesForState(_want: "active" | "transformed"): void {
   wantedState = _want;
@@ -283,6 +288,7 @@ function suppressMovesForState(_want: "active" | "transformed"): void {
 }
 
 function releaseSuppression(): void {
+  suppressCycle++; // invalidate any in-flight transform callback from a prior cycle
   wantedState = "";
   transformInFlight = 0;
   settledAtG = 0;
@@ -324,8 +330,13 @@ function doTransform(): void {
   if (!targetFurniture) return; // button disabled gate should prevent this
   const wantState = isTransformed ? "active" : "transformed";
   suppressMovesForState(wantState);
+  const cycle = suppressCycle; // the lifecycle this request belongs to
   const res = api.transform(session.roomCode, session.playerId, targetFurniture);
   const settle = (): void => {
+    // A stale callback from a previous cycle must never touch the new cycle's
+    // bookkeeping (Qodo: an old promise shouldn't settle bookkeeping created
+    // after it).
+    if (cycle !== suppressCycle) return;
     // Decrement per request. When the LAST one settles, record the poll
     // generation that must be exceeded before movement can un-suppress —
     // i.e. a poll must start after this point and complete.
@@ -334,6 +345,7 @@ function doTransform(): void {
   };
   res.then((r) => {
     settle();
+    if (cycle !== suppressCycle) return;
     // If the server rejected the request (no state change), free input now
     // instead of waiting out the whole window — but only when this was the
     // last unresolved request: an earlier rejection must not release while a
@@ -343,6 +355,7 @@ function doTransform(): void {
   });
   res.catch(() => {
     settle();
+    if (cycle !== suppressCycle) return;
     if (transformInFlight === 0) releaseSuppression();
   });
 }
