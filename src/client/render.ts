@@ -15,7 +15,7 @@
 // happens in WORLD units on top of the camera transform so nothing depends on
 // window size. Positions are exponentially smoothed toward the latest 10Hz poll
 // (see step()); teleports (respawn, transform snap) jump instantly.
-import type { GameState, Player } from "../engine/types";
+import type { GameState, GronkState, Player } from "../engine/types";
 import { ROOM_WIDTH, ROOM_HEIGHT, TICKS_PER_SECOND, TRANSFORM_RANGE } from "../engine/constants";
 import {
   drawRoomProps,
@@ -27,6 +27,19 @@ import {
   type VisualObject,
 } from "./objects";
 import { drawCharacter, type CharacterRenderInfo, type Facing } from "./character";
+import { audio } from "./audio";
+import {
+  ParticleSystem,
+  installParticlesQaHook,
+  spawnDust,
+  spawnEmbers,
+  spawnMotes,
+  spawnRage,
+  spawnSparkles,
+  spawnStars,
+  spawnVapor,
+} from "./particles";
+import { Effects } from "./effects";
 
 const TEAM_COLORS = ["#4aa8e8", "#f2765b"]; // blue / coral — Among-Us-esque
 const TEAM_DARK = ["#2f6fa3", "#b34a34"];
@@ -183,6 +196,23 @@ export class Renderer {
   private isTouchDevice =
     typeof window !== "undefined" &&
     ("ontouchstart" in window || navigator.maxTouchPoints > 0);
+  // ---- Phase 5: game-feel state (presentation only) ----------------------
+  private particles = new ParticleSystem();
+  private effects = new Effects();
+  private prevCarry = new Map<string, boolean>();
+  private prevGronkTarget = "";
+  private prevEnraged = false;
+  private prevMatchId = "";
+  private eventBaseline = false; // first snapshot seeds trackers, emits nothing
+  private stepAcc = new Map<string, number>(); // footstep accumulator per player
+  private walkDustAcc = 0;
+  private emberAcc = 0;
+  private vaporAcc = 0;
+  private rageAcc = 0;
+  private interactShown = false;
+  private interactAppearT = 0; // seconds since the affordance appeared (scale-in)
+  private footstepCount = 0; // QA hook: footsteps actually played
+  private hideCompletePlayed = new Set<string>(); // one muffled confirm per hide
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -210,6 +240,13 @@ export class Renderer {
       Array.from(this.hideAnims.values());
     (window as unknown as { __ghCover?: (fid: string) => number }).__ghCover = (fid) =>
       this.lastCoverMap.get(fid) ?? 0;
+    // Phase 5 QA hooks (read-only, not gameplay): particle stats, footstep
+    // count, and live effect magnitudes.
+    installParticlesQaHook(this.particles);
+    (window as unknown as { __ghSteps?: () => number }).__ghSteps = () => this.footstepCount;
+    (window as unknown as { __ghEffects?: () => { shake: number; flash: number } }).__ghEffects =
+      () => ({ shake: this.effects.shake, flash: this.effects.flashAmount });
+    this.effects.setTouchScale(this.isTouchDevice);
   }
 
   resize(): void {
@@ -281,9 +318,33 @@ export class Renderer {
 
   // Build the DPR-correct transform: cssPx -> backing pixels via dpr, then world
   // -> cssPx via (scale, ox, oy).
-  private setProjection(): void {
+  // Install the world->screen transform for the current frame. camX/camY stay
+  // the authoritative (clamped) follow-camera; presentation effects are applied
+  // ONLY here as temporary offsets:
+  //   - camera impulse: a decaying world-unit nudge.
+  //   - screen shake: a small CSS-px jitter that decays (halved on touch).
+  // BOTH are folded into the EFFECTIVE camera center before it is clamped to
+  // world bounds, so neither a bump nor a shaken frame can ever expose the
+  // background outside the map (Qodo #12).
+  private applyWorldProjection(): void {
     const dpr = window.devicePixelRatio || 1;
-    this.ctx.setTransform(dpr * this.scale, 0, 0, dpr * this.scale, dpr * this.ox, dpr * this.oy);
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const viewW = vw / this.scale;
+    const viewH = vh / this.scale;
+    const imp = this.effects.camOffset;
+    const sh = this.effects.shake;
+    const shX = sh > 0.02 ? (Math.random() * 2 - 1) * sh : 0;
+    const shY = sh > 0.02 ? (Math.random() * 2 - 1) * sh : 0;
+    let cx = this.camX + imp.x + shX / this.scale;
+    let cy = this.camY + imp.y + shY / this.scale;
+    if (viewW >= ROOM_WIDTH) cx = ROOM_WIDTH / 2;
+    else cx = Math.min(ROOM_WIDTH - viewW / 2, Math.max(viewW / 2, cx));
+    if (viewH >= ROOM_HEIGHT) cy = ROOM_HEIGHT / 2;
+    else cy = Math.min(ROOM_HEIGHT - viewH / 2, Math.max(viewH / 2, cy));
+    const ox = vw / 2 - cx * this.scale;
+    const oy = vh / 2 - cy * this.scale;
+    this.ctx.setTransform(dpr * this.scale, 0, 0, dpr * this.scale, dpr * ox, dpr * oy);
   }
 
   clear(): void {
@@ -305,7 +366,7 @@ export class Renderer {
       ctx.fill();
     }
     ctx.globalAlpha = 1;
-    ctx.setTransform(dpr * this.scale, 0, 0, dpr * this.scale, dpr * this.ox, dpr * this.oy);
+    this.applyWorldProjection();
   }
 
   /** Exponential smoothing toward the latest polled target. */
@@ -331,10 +392,40 @@ export class Renderer {
   }
 
   draw(state: GameState, dt: number, timeMs: number): void {
+    // Phase 5: decay camera impulse / shake / flash for this frame.
+    this.effects.step(dt);
     this.updateCamera(dt);
+    // Camera micro-feedback: the decaying impulse is applied as a temporary
+    // presentation offset inside applyWorldProjection() (never integrated into
+    // the persistent follow-camera — that would drift with frame rate).
     this.clear();
     const ctx = this.ctx;
     const lw = 0.5; // world-unit line width
+
+    // Game start: a NEW match id fires the confirm flash + magical cue — but
+    // only when the match is genuinely starting (elapsed < 2s). A page-load
+    // resume into an in-progress match also sees a fresh matchId here (the
+    // renderer was just constructed), and must stay quiet (Qodo #11).
+    //
+    // A new match ALSO resets every event-transition tracker so the first
+    // snapshot of THIS match seeds a clean baseline: player ids are reused
+    // across matches (wizard-0..3), so without a reset the previous match's
+    // states would be misread as transitions (false emerge/drop/stun/alert
+    // cues at the next match's start — Qodo #2).
+    if (state.matchId !== this.prevMatchId) {
+      this.prevMatchId = state.matchId;
+      this.prevState.clear();
+      this.prevCarry.clear();
+      this.stepAcc.clear();
+      this.prevGronkTarget = "";
+      this.prevEnraged = false;
+      this.eventBaseline = false;
+      this.hideCompletePlayed.clear();
+      if (state.status === "playing" && state.elapsed < 2) {
+        this.effects.flash("#ffe08a", 0.45);
+        audio.playGameStart();
+      }
+    }
 
     this.drawFloorBase(ctx);
     this.drawRoomFloors(ctx);
@@ -374,6 +465,22 @@ export class Renderer {
     // Pedestals: team-colored glow platform at the corners.
     state.pedestals.forEach((ped, team) => this.drawPedestal(ctx, ped.x, ped.y, team));
 
+    // Event-feedback baseline (Qodo #9): the FIRST authoritative snapshot must
+    // seed the transition trackers WITHOUT emitting anything — otherwise a
+    // resume/reconnect into a match where players are already transformed,
+    // stunned, or carrying (or Gronk is already chasing/enraged) would be
+    // misread as fresh hide/stun/pickup/alert events.
+    if (!this.eventBaseline) {
+      this.eventBaseline = true;
+      for (const p of state.players) {
+        this.prevState.set(p.id, p.state);
+        this.prevCarry.set(p.id, p.carrying);
+        this.stepAcc.set(p.id, 0);
+      }
+      this.prevGronkTarget = this.gronkTargetKey(state.gronk);
+      this.prevEnraged = state.gronk.enraged;
+    }
+
     // Players: smoothed hooded adventurers. My own wizard is rendered at the
     // locally predicted position (see setLocalPrediction) so it moves at 60fps
     // instead of the choppy 10Hz poll rate. Enter/exit of hiding objects runs a
@@ -411,6 +518,90 @@ export class Renderer {
         this.hideAnims.delete(p.id);
       }
 
+      // ---- Phase 5 event feedback (detected from authoritative transitions) --
+      if (was !== p.state) {
+        if (p.state === "transformed") {
+          // Entering a hide object: whoosh + motes + tiny camera bump.
+          audio.playHideStart();
+          spawnMotes(this.particles, dx, dy - 1, 9);
+          this.effects.addShake(0.4);
+          this.effects.bumpCamera(-(p.moveDx || 0) * 0.3, -(p.moveDy || 0) * 0.3, 0.5);
+          this.hideCompletePlayed.delete(p.id);
+        } else if (was === "transformed") {
+          // Emerging: whoosh up + motes.
+          audio.playEmerge();
+          spawnMotes(this.particles, dx, dy - 1, 7);
+          this.effects.addShake(0.4);
+        }
+        if (p.state === "stunned") {
+          // Revealed + stunned (a search found an enemy hiding here): the
+          // engine's reveal happens just before the stun, so sound both cues.
+          audio.playReveal();
+          audio.playStun();
+          spawnStars(this.particles, dx, dy - 1, 10);
+          this.effects.flash("#ffffff", 0.22);
+          this.effects.addShake(1.2);
+        }
+      }
+
+      // Hide-complete: one muffled confirmation once the cover is fully up.
+      if (
+        p.state === "transformed" &&
+        anim &&
+        !anim.done &&
+        anim.phase === "enter" &&
+        anim.cover >= 0.9 &&
+        !this.hideCompletePlayed.has(p.id)
+      ) {
+        this.hideCompletePlayed.add(p.id);
+        audio.playHideComplete();
+      }
+
+      // Carrying transitions: pickup (sparkles + shimmer) vs drop (dull clink).
+      const wasCarrying = this.prevCarry.get(p.id) ?? false;
+      if (wasCarrying !== p.carrying) {
+        this.prevCarry.set(p.id, p.carrying);
+        if (p.carrying) {
+          audio.playTreasurePickup();
+          spawnSparkles(this.particles, dx, dy - 1, 12);
+          this.effects.bumpCamera(0, -1, 0.2);
+        } else {
+          audio.playTreasureDrop();
+          this.effects.addShake(0.6);
+        }
+      }
+
+      // Footsteps tied to the walk cycle — only the LOCAL player's own steps
+      // are audible. Rate scales with movement magnitude; a stationary player
+      // never generates steps (spec #6: tied to animation, not an arbitrary
+      // timer).
+      if (p.id === this.myPlayerId) {
+        const mv = this.lastCanMove
+          ? Math.hypot(this.lastInputDir.x, this.lastInputDir.y)
+          : Math.hypot(p.moveDx, p.moveDy);
+        const moving = p.state === "active" && mv > 0.05;
+        if (moving) {
+          const acc = this.stepAcc.get(p.id) ?? 0;
+          const next = acc + dt * 2.4 * (0.4 + 0.6 * Math.min(1, mv));
+          this.stepAcc.set(p.id, next >= 1 ? next - Math.floor(next) : next);
+          for (let i = 0; i < Math.floor(next); i++) {
+            audio.playFootstep();
+            this.footstepCount++;
+            if (Math.random() < 0.4) spawnDust(this.particles, dx, dy, 1);
+          }
+        } else {
+          this.stepAcc.set(p.id, 0);
+        }
+        // Throttled walking dust (local player only).
+        if (moving) {
+          this.walkDustAcc += dt;
+          if (this.walkDustAcc > 0.28) {
+            this.walkDustAcc = 0;
+            spawnDust(this.particles, dx, dy, 1);
+          }
+        }
+      }
+
       this.prevDrawn.set(p.id, { x: dx, y: dy });
       this.prevState.set(p.id, p.state);
       this.drawPlayer(ctx, p, dx, dy, timeMs, dt, scaleMul, alphaMul);
@@ -441,7 +632,18 @@ export class Renderer {
     this.drawObjectFronts(ctx, objs, timeMs);
 
     // Interaction affordance: soft highlight on the nearest hideable object.
+    // The chip scales in once per approach and plays a single subtle tick
+    // (never every frame — spec #20).
     this.updateInteractTarget(state);
+    const targetNow = this.interactTarget !== null;
+    if (targetNow && !this.interactShown) {
+      this.interactShown = true;
+      this.interactAppearT = 0;
+      audio.playInteraction();
+    } else if (!targetNow) {
+      this.interactShown = false;
+    }
+    this.interactAppearT += dt;
     this.drawInteractAffordance(ctx, objs, timeMs);
 
     // Gronk: the big red troll.
@@ -449,7 +651,65 @@ export class Renderer {
     const gpos = this.step("gronk", g.x, g.y, dt);
     this.drawGronk(ctx, state, gpos.x, gpos.y, timeMs);
 
-    // Screen-space lighting: vignette + enrage edge pulse.
+    // ---- Phase 5: Gronk event feedback (existing state only) ---------------
+    // Growl + tiny shake when Gronk picks a chase target (sniff result).
+    const gKey = this.gronkTargetKey(g);
+    if (gKey !== this.prevGronkTarget && g.mode === "chase") {
+      audio.playGronkAlert(); // has its own 2s cooldown
+      this.effects.addShake(0.8);
+    }
+    this.prevGronkTarget = gKey;
+    if (g.enraged !== this.prevEnraged) {
+      if (g.enraged) {
+        audio.playGronkAlert();
+        this.effects.flash("#ff2a2a", 0.2);
+      }
+      this.prevEnraged = g.enraged;
+    }
+
+    // ---- Phase 5: ambient life (restrained, throttled, on-screen only) -----
+    const viewW = window.innerWidth / this.scale;
+    const viewH = window.innerHeight / this.scale;
+    const onScreen = (x: number, y: number): boolean =>
+      Math.abs(x - this.camX) < viewW / 2 + 3 && Math.abs(y - this.camY) < viewH / 2 + 3;
+    const brazier = state.furniture.find((f) => f.id === "furn-6");
+    const cauldron = state.furniture.find((f) => f.id === "furn-8");
+    this.emberAcc += dt;
+    if (brazier && onScreen(brazier.x, brazier.y) && this.emberAcc > 0.16) {
+      this.emberAcc = 0;
+      spawnEmbers(this.particles, brazier.x, brazier.y, 1);
+    }
+    this.vaporAcc += dt;
+    if (cauldron && onScreen(cauldron.x, cauldron.y) && this.vaporAcc > 0.38) {
+      this.vaporAcc = 0;
+      spawnVapor(this.particles, cauldron.x, cauldron.y, 1);
+    }
+    this.rageAcc += dt;
+    if (g.enraged && this.rageAcc > 0.3) {
+      this.rageAcc = 0;
+      spawnRage(this.particles, gpos.x, gpos.y, 1);
+    }
+
+    // Room ambience: swap the ambient bed when the local player crosses rooms.
+    // The decorative room rectangles leave gaps (e.g. the corridor rows between
+    // Cafeteria and Library) — outside every rectangle we retain the previous
+    // bed instead of defaulting to one room (Qodo #10).
+    const mePos = this.localOverride ?? this.lastPlayerPos;
+    if (mePos) {
+      const room = ROOMS.find((r) => mePos.x >= r.x && mePos.x <= r.x + r.w && mePos.y >= r.y && mePos.y <= r.y + r.h);
+      if (room) {
+        const kind =
+          room.kind === "tile" ? "cafeteria" : room.kind === "plank" ? "library" : room.kind === "panel" ? "reactor" : "storage";
+        audio.setRoom(kind);
+      }
+    }
+
+    // Particles: advance + draw in world space (after characters, before
+    // screen-space lighting).
+    this.particles.update(dt);
+    this.particles.draw(ctx);
+
+    // Screen-space lighting: vignette + enrage edge pulse + effect flashes.
     this.postLighting(ctx, state, timeMs);
   }
 
@@ -931,6 +1191,16 @@ export class Renderer {
       ctx.restore();
     }
 
+    // Phase 5 flash overlay (hide/reveal/game-start micro-feedback).
+    const fl = this.effects.flashAmount;
+    if (fl > 0.01) {
+      ctx.save();
+      ctx.globalAlpha = Math.min(0.55, fl * 0.55);
+      ctx.fillStyle = this.effects.flashColorValue;
+      ctx.fillRect(0, 0, w, h);
+      ctx.restore();
+    }
+
     // Enrage: pulsing red edge glow (screen-space, so it reads at any zoom).
     if (state.enraged) {
       const a = 0.10 + 0.08 * Math.sin(timeMs / 180);
@@ -1026,6 +1296,14 @@ export class Renderer {
     ctx.font = "700 0.8px system-ui";
     const tw = ctx.measureText(label).width;
     const cw = tw + 1.0;
+    // Soft scale-in on approach (0.25s); the pulse below keeps it alive.
+    const appear = Math.min(1, this.interactAppearT / 0.25);
+    const s = 0.55 + 0.45 * (appear <= 0 ? 0 : 1 - Math.pow(1 - appear, 3));
+    ctx.save();
+    ctx.translate(obj.x, cy);
+    ctx.scale(s, s);
+    ctx.translate(-obj.x, -cy);
+    ctx.globalAlpha = Math.max(0.15, Math.min(1, appear * 1.6));
     ctx.fillStyle = "rgba(10,14,22,0.85)";
     ctx.beginPath();
     ctx.roundRect(obj.x - cw / 2, cy - 0.55, cw, 1.1, 0.3);
@@ -1037,6 +1315,7 @@ export class Renderer {
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(label, obj.x, cy);
+    ctx.restore();
   }
 
   // ---- Phase 4 hide enter/exit animations (presentation only) -------------
@@ -1264,6 +1543,13 @@ export class Renderer {
   private seatIndexOf(id: string): number {
     const m = /-(\d)$/.exec(id);
     return m ? parseInt(m[1], 10) % 4 : -1;
+  }
+
+  /** Stable key for Gronk's current target (type + id; noise x/y are fixed). */
+  private gronkTargetKey(g: GronkState): string {
+    return g.target
+      ? `${g.target.type}:${(g.target as { playerId?: string }).playerId ?? ""}:${(g.target as { x?: number }).x ?? ""}:${(g.target as { y?: number }).y ?? ""}`
+      : "none";
   }
 
   // ---- Gronk (huge red troll) --------------------------------------------

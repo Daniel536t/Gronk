@@ -234,6 +234,31 @@ body {
   animation: pulse 1s ease-in-out infinite;
 }
 
+/* ---- Mute button (Phase 5) ---- */
+.btn-mute {
+  position: absolute;
+  top: 58px;
+  right: 14px;
+  z-index: 30;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 2px solid #3a4660;
+  background: rgba(16, 22, 31, 0.85);
+  color: #e8ecf4;
+  font-size: 1.05rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.btn-mute:hover {
+  border-color: #ffd166;
+  background: #232e47;
+}
+
 /* ---- Players strip (portraits) ---- */
 .players-hud {
   position: absolute;
