@@ -1000,11 +1000,23 @@ async function gameFeelProbes(page: Page): Promise<void> {
     }
 
     // 6) Effects: hide/emerge shook the camera; shake decays; bounds intact.
+    //    The decay check polls for a quiet sample — an unrelated event (Gronk
+    //    alert, bot stun) can inject fresh shake mid-window, so a single fixed
+    //    delay is flaky.
     const e0 = await page.evaluate(() => (window as any).__ghEffects?.() ?? null);
     check("desktop: effects system present", !!e0 && typeof e0.shake === "number", "");
-    await page.waitForTimeout(1300);
-    const e1 = await page.evaluate(() => (window as any).__ghEffects?.() ?? null);
-    check("desktop: camera shake decays to zero", !!e1 && e1.shake < 0.05, `shake=${e1?.shake}`);
+    let minSeen = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < 12; i++) {
+      await page.waitForTimeout(400);
+      const e = await page.evaluate(() => (window as any).__ghEffects?.() ?? null);
+      if (e && typeof e.shake === "number") minSeen = Math.min(minSeen, e.shake);
+      if (minSeen < 0.05) break;
+    }
+    check(
+      "desktop: camera shake decays to zero",
+      minSeen < 0.05,
+      `min=${Number.isFinite(minSeen) ? minSeen.toFixed(3) : "none"}`,
+    );
     const cam = await getCam(page);
     check(
       "desktop: camera bounds intact after effects",

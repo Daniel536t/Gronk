@@ -406,12 +406,24 @@ export class Renderer {
     // only when the match is genuinely starting (elapsed < 2s). A page-load
     // resume into an in-progress match also sees a fresh matchId here (the
     // renderer was just constructed), and must stay quiet (Qodo #11).
+    //
+    // A new match ALSO resets every event-transition tracker so the first
+    // snapshot of THIS match seeds a clean baseline: player ids are reused
+    // across matches (wizard-0..3), so without a reset the previous match's
+    // states would be misread as transitions (false emerge/drop/stun/alert
+    // cues at the next match's start — Qodo #2).
     if (state.matchId !== this.prevMatchId) {
       this.prevMatchId = state.matchId;
+      this.prevState.clear();
+      this.prevCarry.clear();
+      this.stepAcc.clear();
+      this.prevGronkTarget = "";
+      this.prevEnraged = false;
+      this.eventBaseline = false;
+      this.hideCompletePlayed.clear();
       if (state.status === "playing" && state.elapsed < 2) {
         this.effects.flash("#ffe08a", 0.45);
         audio.playGameStart();
-        this.hideCompletePlayed.clear();
       }
     }
 
