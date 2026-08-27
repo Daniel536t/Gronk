@@ -46,6 +46,10 @@ export interface CharacterOpts {
   facing: Facing;
   timeMs: number;
   ghost: boolean; // transformed + local player: translucent absorber feedback
+  /** Phase 4: extra fade/scale applied by the hide enter/exit animation.
+   *  Pure presentation — the server state is untouched. */
+  alphaMul?: number;
+  scaleMul?: number;
 }
 
 const GOLD = "#ffd166";
@@ -101,7 +105,8 @@ export function drawCharacter(ctx: CanvasRenderingContext2D, o: CharacterOpts): 
   }
 
   const ghost = o.ghost;
-  const baseAlpha = ghost ? 0.3 + 0.08 * Math.sin(o.timeMs / 260) : closeted ? 0.88 : 1;
+  const fade = Math.min(1, o.alphaMul ?? 1);
+  const baseAlpha = (ghost ? 0.3 + 0.08 * Math.sin(o.timeMs / 260) : closeted ? 0.88 : 1) * fade;
 
   // ---- floor marks (world space, not the local frame) ---------------------
   // Team pip: small colored floor ring under the feet (identity at a glance).
@@ -131,7 +136,8 @@ export function drawCharacter(ctx: CanvasRenderingContext2D, o: CharacterOpts): 
   // ---- character (local frame, feet at y=0) -------------------------------
   ctx.save();
   ctx.translate(o.x, o.y - bob);
-  ctx.scale(1, breathe);
+  const squash = o.scaleMul ?? 1;
+  ctx.scale(squash, squash * breathe);
   ctx.globalAlpha = baseAlpha;
 
   const DX = o.facing === "left" ? -1 : o.facing === "right" ? 1 : 0;

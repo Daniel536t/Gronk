@@ -16,14 +16,39 @@
 // window size. Positions are exponentially smoothed toward the latest 10Hz poll
 // (see step()); teleports (respawn, transform snap) jump instantly.
 import type { GameState, Player } from "../engine/types";
-import { ROOM_WIDTH, ROOM_HEIGHT, TICKS_PER_SECOND } from "../engine/constants";
-import { drawRoomProps, drawVisualObject, visualObjectsFor, type VisualLayer } from "./objects";
+import { ROOM_WIDTH, ROOM_HEIGHT, TICKS_PER_SECOND, TRANSFORM_RANGE } from "../engine/constants";
+import {
+  drawRoomProps,
+  drawVisualObject,
+  drawVisualObjectFront,
+  isCoverKind,
+  visualObjectsFor,
+  type VisualLayer,
+  type VisualObject,
+} from "./objects";
 import { drawCharacter, type CharacterRenderInfo, type Facing } from "./character";
 
 const TEAM_COLORS = ["#4aa8e8", "#f2765b"]; // blue / coral — Among-Us-esque
 const TEAM_DARK = ["#2f6fa3", "#b34a34"];
 const SNAP_DIST = 8; // world units — bigger = teleport, not glide
 const LERP_K = 14; // exponential smoothing constant (dt-based)
+
+// Phase 4 hide animation: how long entering/exiting a hiding object takes.
+// Purely visual — the server state is authoritative and changes instantly;
+// this only makes the transition read as physical (slide in, cover fades).
+const HIDE_ANIM_MS = 300;
+
+// Where a character steps out of the furniture, relative to their facing.
+const EXIT_OFFSET: Record<Facing, { x: number; y: number }> = {
+  up: { x: 0, y: -0.8 },
+  down: { x: 0, y: 0.8 },
+  left: { x: -0.8, y: 0 },
+  right: { x: 0.8, y: 0 },
+};
+
+const easeInOut = (t: number): number => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+const easeOut = (t: number): number => 1 - Math.pow(1 - t, 3);
+const smoothstep = (x: number): number => (x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x));
 
 // Each seat (wizard-0..3) gets its own adventurer color, independent of team.
 // Order follows the design spec: Player 1 cyan, Player 2 coral, Player 3
@@ -105,6 +130,29 @@ const DECOR = {
   ],
 };
 
+// Client-side hiding transition (enter/exit a furniture object). The engine
+// snaps the player to the object center instantly; this animates the visual
+// slide + cover fade so hiding feels physical. Authoritative state wins — the
+// anim only affects how the character is drawn.
+interface HideAnim {
+  id: string; // player id (for QA hooks)
+  phase: "enter" | "exit";
+  start: number; // rAF timestamp (ms)
+  fromX: number;
+  fromY: number;
+  toX: number;
+  toY: number;
+  furnitureId: string;
+  // Updated every frame by advanceHideAnim:
+  t: number; // 0..1 progress
+  cover: number; // this anim's contribution to the object's cover alpha
+  drawX: number;
+  drawY: number;
+  scaleMul: number;
+  alphaMul: number;
+  done: boolean;
+}
+
 // World->screen projection via a camera transform, recomputed every frame. All
 // drawing is in world units through this transform; DPR, window size, and the
 // camera only affect scale/offset.
@@ -124,6 +172,17 @@ export class Renderer {
   private charPhase = new Map<string, number>();
   private charFace = new Map<string, Facing>();
   private charInfos: CharacterRenderInfo[] = [];
+  // ---- Phase 4 hide animation state (client-side, presentation only) ------
+  private hideAnims = new Map<string, HideAnim>();
+  private prevState = new Map<string, Player["state"]>();
+  private prevDrawn = new Map<string, { x: number; y: number }>();
+  private prevTransAs = new Map<string, string | null>();
+  private lastCoverMap = new Map<string, number>();
+  private lastObjects: VisualObject[] = [];
+  private interactTarget: { id: string; x: number; y: number } | null = null;
+  private isTouchDevice =
+    typeof window !== "undefined" &&
+    ("ontouchstart" in window || navigator.maxTouchPoints > 0);
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -140,6 +199,17 @@ export class Renderer {
     // Debug/QA hook: per-character render info for the previous frame.
     (window as unknown as { __ghChars?: () => CharacterRenderInfo[] }).__ghChars = () =>
       this.charInfos;
+    // Phase 4 QA hooks (read-only, not gameplay): the currently highlighted
+    // hide object, live hide animations, and per-object cover alpha.
+    (window as unknown as {
+      __ghInteract?: () => { id: string; x: number; y: number } | null;
+      __ghHide?: () => HideAnim[];
+      __ghCover?: (fid: string) => number;
+    }).__ghInteract = () => this.interactTarget;
+    (window as unknown as { __ghHide?: () => HideAnim[] }).__ghHide = () =>
+      Array.from(this.hideAnims.values());
+    (window as unknown as { __ghCover?: (fid: string) => number }).__ghCover = (fid) =>
+      this.lastCoverMap.get(fid) ?? 0;
   }
 
   resize(): void {
@@ -291,17 +361,24 @@ export class Renderer {
       this.drawDiamond(ctx, state.groundTreasure.x, state.groundTreasure.y + bob, 1.6, "#ffd166");
     }
 
-    // Furniture split into back/front passes around the players. Phase 4's
-    // occlusion will flip Y-sorted cover objects into the "front" pass; for
-    // now everything renders behind the players (they walk in front of props).
-    this.drawObjects(ctx, state, timeMs, "back");
+    // Objects: computed once per frame (covers + back/front passes share it).
+    const objs = visualObjectsFor(state);
+    this.lastObjects = objs;
+
+    // Furniture split into back/front passes around the players. The back pass
+    // paints every object's full body (empty objects look identical to before);
+    // the front pass re-paints cover objects' front geometry only when a player
+    // is hidden inside, occluding them between the two passes.
+    this.drawObjects(ctx, objs, timeMs, "back");
 
     // Pedestals: team-colored glow platform at the corners.
     state.pedestals.forEach((ped, team) => this.drawPedestal(ctx, ped.x, ped.y, team));
 
     // Players: smoothed hooded adventurers. My own wizard is rendered at the
     // locally predicted position (see setLocalPrediction) so it moves at 60fps
-    // instead of the choppy 10Hz poll rate.
+    // instead of the choppy 10Hz poll rate. Enter/exit of hiding objects runs a
+    // short client-side slide + cover fade (authoritative state snaps instantly;
+    // this only makes the transition read as physical).
     this.charInfos = [];
     for (const p of state.players) {
       const pos = this.step(p.id, p.x, p.y, dt);
@@ -314,10 +391,54 @@ export class Renderer {
           dy = this.localOverride.y;
         }
       }
-      this.drawPlayer(ctx, p, dx, dy, timeMs, dt);
+
+      // Detect hide enter/exit transitions against the previous frame.
+      const was = this.prevState.get(p.id);
+      if (was !== p.state) {
+        this.beginHideAnim(p, was, pos, state, timeMs);
+      }
+
+      let scaleMul = 1;
+      let alphaMul = 1;
+      const anim = this.hideAnims.get(p.id);
+      if (anim && !anim.done) {
+        this.advanceHideAnim(anim, timeMs);
+        dx = anim.drawX;
+        dy = anim.drawY;
+        scaleMul = anim.scaleMul;
+        alphaMul = anim.alphaMul;
+      } else if (anim?.done) {
+        this.hideAnims.delete(p.id);
+      }
+
+      this.prevDrawn.set(p.id, { x: dx, y: dy });
+      this.prevState.set(p.id, p.state);
+      this.drawPlayer(ctx, p, dx, dy, timeMs, dt, scaleMul, alphaMul);
     }
 
-    this.drawObjects(ctx, state, timeMs, "front");
+    // Cover alpha per object: steady 1 while any player is hidden inside, else
+    // driven by in-flight enter/exit animations (fade in/out).
+    this.lastCoverMap.clear();
+    const animObjects = new Set<string>();
+    for (const a of this.hideAnims.values()) {
+      if (!a.done) animObjects.add(a.furnitureId);
+    }
+    for (const p of state.players) {
+      if (p.state === "transformed" && p.transformedAs && !animObjects.has(p.transformedAs)) {
+        this.lastCoverMap.set(p.transformedAs, 1);
+      }
+    }
+    for (const a of this.hideAnims.values()) {
+      if (a.done || a.cover <= 0) continue;
+      const cur = this.lastCoverMap.get(a.furnitureId) ?? 0;
+      if (a.cover > cur) this.lastCoverMap.set(a.furnitureId, a.cover);
+    }
+
+    this.drawObjectFronts(ctx, objs, timeMs);
+
+    // Interaction affordance: soft highlight on the nearest hideable object.
+    this.updateInteractTarget(state);
+    this.drawInteractAffordance(ctx, objs, timeMs);
 
     // Gronk: the big red troll.
     const g = state.gronk;
@@ -832,12 +953,12 @@ export class Renderer {
   // secondary reference.
   private drawObjects(
     ctx: CanvasRenderingContext2D,
-    state: GameState,
+    objs: VisualObject[],
     timeMs: number,
     pass: VisualLayer,
   ): void {
     const me = this.localOverride ?? this.lastPlayerPos;
-    for (const obj of visualObjectsFor(state)) {
+    for (const obj of objs) {
       if (obj.layer !== pass) continue;
       let labelAlpha = 0;
       if (me) {
@@ -846,6 +967,161 @@ export class Renderer {
       }
       drawVisualObject(ctx, obj, timeMs, labelAlpha);
     }
+  }
+
+  // Phase 4 front pass: cover objects re-paint their front-facing geometry over
+  // the player layer with the computed cover alpha (0 when nothing is hidden).
+  private drawObjectFronts(
+    ctx: CanvasRenderingContext2D,
+    objs: VisualObject[],
+    timeMs: number,
+  ): void {
+    for (const obj of objs) {
+      if (!isCoverKind(obj.kind)) continue;
+      const alpha = this.lastCoverMap.get(obj.id) ?? 0;
+      if (alpha <= 0.02) continue;
+      drawVisualObjectFront(ctx, obj, timeMs, alpha);
+    }
+  }
+
+  // The nearest hideable object within engine TRANSFORM_RANGE of the local
+  // player (same center-to-center semantics the engine uses). Only when the
+  // player could actually transform: active, not carrying, not stunned/closeted.
+  private updateInteractTarget(state: GameState): void {
+    this.interactTarget = null;
+    const me = state.players.find((p) => p.id === this.myPlayerId);
+    const mePos = this.localOverride ?? this.lastPlayerPos;
+    if (!me || me.state !== "active" || me.carrying || !mePos) return;
+    let best: { id: string; x: number; y: number; d: number } | null = null;
+    for (const f of state.furniture) {
+      const d = Math.hypot(f.x - mePos.x, f.y - mePos.y);
+      if (d <= TRANSFORM_RANGE && (!best || d < best.d)) best = { id: f.id, x: f.x, y: f.y, d };
+    }
+    if (best) this.interactTarget = { id: best.id, x: best.x, y: best.y };
+  }
+
+  // Compact affordance on the highlighted object: pulsing soft outline + a
+  // small "HIDE" chip. The environment stays clean — only this object glows.
+  private drawInteractAffordance(
+    ctx: CanvasRenderingContext2D,
+    objs: VisualObject[],
+    timeMs: number,
+  ): void {
+    if (!this.interactTarget) return;
+    const obj = objs.find((o) => o.id === this.interactTarget!.id);
+    if (!obj) return;
+    const pulse = 0.5 + 0.5 * Math.sin(timeMs / 220);
+    ctx.strokeStyle = `rgba(255,224,138,${(0.3 + 0.28 * pulse).toFixed(3)})`;
+    ctx.lineWidth = 0.3;
+    ctx.beginPath();
+    ctx.roundRect(obj.x - obj.w / 2 - 0.3, obj.y - obj.h / 2 - 0.3, obj.w + 0.6, obj.h + 0.6, 0.7);
+    ctx.stroke();
+
+    const label = this.isTouchDevice ? "HIDE" : "HIDE · E";
+    const cy = obj.y - obj.h / 2 - 1.15;
+    ctx.font = "700 0.8px system-ui";
+    const tw = ctx.measureText(label).width;
+    const cw = tw + 1.0;
+    ctx.fillStyle = "rgba(10,14,22,0.85)";
+    ctx.beginPath();
+    ctx.roundRect(obj.x - cw / 2, cy - 0.55, cw, 1.1, 0.3);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,224,138,0.5)";
+    ctx.lineWidth = 0.15;
+    ctx.stroke();
+    ctx.fillStyle = "#ffe08a";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, obj.x, cy);
+  }
+
+  // ---- Phase 4 hide enter/exit animations (presentation only) -------------
+
+  private beginHideAnim(
+    p: Player,
+    was: Player["state"] | undefined,
+    pos: { x: number; y: number },
+    state: GameState,
+    timeMs: number,
+  ): void {
+    if (p.state === "transformed") {
+      const to = this.furnitureCenter(p.transformedAs, state) ?? pos;
+      const from = this.prevDrawn.get(p.id) ?? pos;
+      // Teleport-scale jumps (e.g. respawn then instantly hide) skip the slide.
+      if (Math.hypot(to.x - from.x, to.y - from.y) > SNAP_DIST) {
+        this.hideAnims.delete(p.id);
+      } else {
+        this.hideAnims.set(p.id, {
+          id: p.id,
+          phase: "enter",
+          start: timeMs,
+          fromX: from.x,
+          fromY: from.y,
+          toX: to.x,
+          toY: to.y,
+          furnitureId: p.transformedAs ?? "",
+          t: 0,
+          cover: 0,
+          drawX: from.x,
+          drawY: from.y,
+          scaleMul: 1,
+          alphaMul: 1,
+          done: false,
+        });
+      }
+      this.prevTransAs.set(p.id, p.transformedAs);
+    } else if (was === "transformed") {
+      const fid = this.prevTransAs.get(p.id);
+      const from = (fid ? this.furnitureCenter(fid, state) : null) ?? pos;
+      const off = EXIT_OFFSET[this.charFace.get(p.id) ?? "down"];
+      this.hideAnims.set(p.id, {
+        id: p.id,
+        phase: "exit",
+        start: timeMs,
+        fromX: from.x,
+        fromY: from.y,
+        toX: from.x + off.x,
+        toY: from.y + off.y,
+        furnitureId: fid ?? "",
+        t: 0,
+        cover: 1,
+        drawX: from.x,
+        drawY: from.y,
+        scaleMul: 0.85,
+        alphaMul: 0.45,
+        done: false,
+      });
+    }
+  }
+
+  private advanceHideAnim(a: HideAnim, timeMs: number): void {
+    const t = Math.min(1, (timeMs - a.start) / HIDE_ANIM_MS);
+    a.t = t;
+    if (a.phase === "enter") {
+      const e = easeInOut(t);
+      a.drawX = a.fromX + (a.toX - a.fromX) * e;
+      a.drawY = a.fromY + (a.toY - a.fromY) * e;
+      a.scaleMul = 1 - 0.18 * Math.sin(Math.PI * t); // dip then settle
+      a.alphaMul = 1 - 0.55 * e; // fade toward the absorbed ghost
+      a.cover = t < 0.35 ? 0 : smoothstep((t - 0.35) / 0.5);
+    } else {
+      const e = easeOut(t);
+      a.drawX = a.fromX + (a.toX - a.fromX) * e;
+      a.drawY = a.fromY + (a.toY - a.fromY) * e;
+      a.scaleMul = 0.85 + 0.15 * e;
+      a.alphaMul = 0.45 + 0.55 * e;
+      a.cover = t < 0.15 ? 1 : 1 - smoothstep((t - 0.15) / 0.45);
+    }
+    a.done = t >= 1;
+  }
+
+  private furnitureCenter(
+    fid: string | null,
+    state: GameState,
+  ): { x: number; y: number } | null {
+    if (!fid) return null;
+    const f = state.furniture.find((q) => q.id === fid);
+    return f ? { x: f.x, y: f.y } : null;
   }
 
   private drawPedestal(ctx: CanvasRenderingContext2D, x: number, y: number, team: number): void {
@@ -899,6 +1175,8 @@ export class Renderer {
     y: number,
     timeMs: number,
     dt: number,
+    scaleMul = 1,
+    alphaMul = 1,
   ): void {
     const seat = this.seatIndexOf(p.id);
     const col = SEAT_COLORS[seat] ?? TEAM_COLORS[p.team];
@@ -954,10 +1232,13 @@ export class Renderer {
       facing: face,
       timeMs,
       ghost: p.state === "transformed" && isMine,
+      alphaMul,
+      scaleMul,
     });
 
-    // Own wizard: white ring (position feedback).
-    if (isMine) {
+    // Own wizard: white ring (position feedback). Hidden players don't get a
+    // ring or name — they are the furniture, and the marker would give them away.
+    if (isMine && p.state !== "transformed") {
       ctx.beginPath();
       ctx.arc(x, y, 1.9, 0, Math.PI * 2);
       ctx.lineWidth = 0.3;
@@ -966,11 +1247,13 @@ export class Renderer {
     }
 
     // Name tag (secondary to the character itself).
-    ctx.fillStyle = "#cfd8e8";
-    ctx.font = "600 0.85px system-ui";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "top";
-    ctx.fillText(p.name, x, y - 3.5);
+    if (p.state !== "transformed") {
+      ctx.fillStyle = "#cfd8e8";
+      ctx.font = "600 0.85px system-ui";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      ctx.fillText(p.name, x, y - 3.5);
+    }
   }
 
   /** seat color index from a player id like "wizard-3" (fallback: team). */
