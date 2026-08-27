@@ -51,6 +51,17 @@ const TEAM_COLORS = ["#4aa8e8", "#f2765b"]; // blue / coral — Among-Us-esque
 const TEAM_DARK = ["#2f6fa3", "#b34a34"];
 const SNAP_DIST = 8; // world units — bigger = teleport, not glide
 const LERP_K = 14; // exponential smoothing constant (dt-based)
+// Release reconciliation (Phase 6A.1): when the player lets go of the
+// controller/keyboard, the locally predicted position is FROZEN (not snapped
+// back to the lagging 10Hz server position — that snap is the "RELEASE →
+// REWIND" controller bug). The server has received the same move vectors and
+// converges to ~the released spot within one round-trip + tick (one server
+// tick ≈ 0.4u at 4u/s), so once the gap is inside this tolerance we hand back
+// to authoritative smoothing and the residual sub-tick gap lerps invisibly.
+const RELEASE_RECONCILE_DIST = 0.5;
+// A released gap larger than this means a real authoritative teleport
+// (respawn, match reset) — trust the server immediately.
+const RELEASE_TELEPORT_DIST = 3;
 
 // Phase 4 hide animation: how long entering/exiting a hiding object takes.
 // Purely visual — the server state is authoritative and changes instantly;
@@ -1841,7 +1852,37 @@ export class Renderer {
     this.lastCanMove = canMove;
     const moving = !!inputDir && (inputDir.x !== 0 || inputDir.y !== 0) && canMove && !!serverPos;
     if (!moving) {
-      // No input (or can't move): stop predicting and let server smoothing take over.
+      // RELEASED (input zero) while still able to move: do NOT snap back to
+      // the lagging server position — that rewind is the reported controller
+      // bug. Freeze at the predicted position; the server received the same
+      // move vectors and converges to ~here within a round-trip + tick, then
+      // we hand back to authoritative smoothing (residual gap < one tick lerps
+      // invisibly). Snap to the server immediately only on a real teleport
+      // (respawn / match reset) or when the player cannot move (stunned /
+      // transformed / closeted — those are authoritative state changes like
+      // the transform snap to furniture center).
+      if (canMove && this.localOverride && serverPos) {
+        const gap = Math.hypot(
+          serverPos.x - this.localOverride.x,
+          serverPos.y - this.localOverride.y,
+        );
+        if (gap < RELEASE_RECONCILE_DIST) {
+          // Server caught up to the released spot: resume authoritative
+          // smoothing (the sub-tick remainder lerps smoothly, no jump).
+          this.localX = serverPos.x;
+          this.localY = serverPos.y;
+          this.localOverride = null;
+        } else if (gap > RELEASE_TELEPORT_DIST) {
+          // Real teleport (respawn, match reset): trust the server.
+          this.localX = serverPos.x;
+          this.localY = serverPos.y;
+          this.localOverride = null;
+        }
+        // else: server still catching up — keep the frozen released position.
+        return;
+      }
+      // Can't move (stunned/transformed/closeted) or never predicted: trust
+      // the server as before.
       if (serverPos) {
         this.localX = serverPos.x;
         this.localY = serverPos.y;
