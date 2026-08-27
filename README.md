@@ -389,8 +389,11 @@ rounds to `Bugs (0)`:
 
 ### Review history (public)
 The Qodo review and follow-up re-reviews on the updated commits are public on PR #1:
-https://github.com/Daniel536t/Gronk/pull/1 (Qodo Code Review comment + review markers at each commit), on PR #3 (Phase 4, `Bugs (0)` at the final commit), on PR #5 (Phase 5, `Bugs (0)` at the final commit), on PR #7 (Phase 6A, `Bugs (0)` at the final commit), on PR #9 (Phase 6A.1, findings
-`✓ Resolved` at the final commit), and on PR #11 (Phase 6A.1 follow-up, `Bugs (0)`
+https://github.com/Daniel536t/Gronk/pull/1 (Qodo Code Review comment + review markers at each commit), on PR #3 (Phase 4, `Bugs (0)` at the final commit), on PR #5 (Phase 5, `Bugs (0)` at the final commit), on PR #7 (Phase 6A, `Bugs (0)` at the final commit), on PR #9 (Phase 6A.1, two findings `✓ Resolved`; the third finding,
+"Slow requests restore rewind", was missed at the merge pass and resolved in
+follow-up PR #11 — see the reconciliation hardening section above; the Qodo
+dashboard chip for that PR-9 finding remains "Ignored" since the fix landed
+after the PR closed), and on PR #11 (Phase 6A.1 follow-up, `Bugs (0)`
 at the final commit).
 
 ### Workflow
