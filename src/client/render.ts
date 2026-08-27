@@ -62,15 +62,16 @@ const RELEASE_RECONCILE_DIST = 0.5;
 // A released gap larger than this means a real authoritative teleport
 // (respawn, match reset) — trust the server immediately.
 const RELEASE_TELEPORT_DIST = 3;
-// How many consecutive COMPLETED polls may confirm the server position
-// UNCHANGED in the 0.5–3u band before we ease back to the authoritative
-// position. Stall is judged by poll evidence, never frame time:
-// setLocalPrediction runs at 60fps but serverPos only changes when a poll
-// completes, so a single slow poll must not exhaust the bound before it can
-// prove convergence. Move POSTs can fail (HTTP errors are swallowed by the
-// caller) leaving the server stationary forever; 15 identical polls ≈ 1.5s
-// at the healthy 10Hz rate — far past any real convergence window — after
-// which the residual <3u gap lerps back smoothly.
+// How many consecutive COMPLETED polls may fail to demonstrate convergence
+// in the 0.5–3u band before we ease back to the authoritative position.
+// Stall is judged by poll evidence, never frame time: setLocalPrediction runs
+// at 60fps but serverPos only changes when a poll completes, so a single
+// slow poll must not exhaust the bound before it can prove convergence. A
+// poll that completes without showing a moved position counts — that covers
+// move POSTs that failed (server stationary forever, errors swallowed by the
+// caller) AND failed/aborted state polls (no new position delivered, stream
+// unavailable). 15 polls ≈ 1.5s at the healthy 10Hz rate — far past any real
+// convergence window — after which the residual <3u gap lerps back smoothly.
 const RELEASE_FREEZE_POLLS = 15;
 
 // Phase 4 hide animation: how long entering/exiting a hiding object takes.
