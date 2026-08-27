@@ -172,7 +172,13 @@ export function computePose(o: CharacterOpts): Pose {
   const cloakStream =
     -gait * (0.18 + 0.2 * speed01) * rm * (Math.abs(DX) > Math.abs(DY) ? DX : DY);
 
-  const hoodTilt = lean * 0.7 + (gait > 0 ? Math.sin(ph) * 0.04 * rm : 0);
+  // Hood tilt forward in the facing direction. `lean` is already signed by
+  // facing (positive = down/right, negative = up/left); the tiny walk wiggle
+  // is made directional too so the whole value carries the facing sign —
+  // drawHoodHead must NOT re-multiply it by DX/DY (Qodo: hood lean sign
+  // doubles otherwise).
+  const axis = Math.abs(DX) > Math.abs(DY) ? DX : DY;
+  const hoodTilt = lean * 0.7 + (gait > 0 ? Math.sin(ph) * 0.04 * rm * axis : 0);
 
   // Stun droop/wobble/flinch.
   let droop = o.state === "stunned" ? 0.32 : 0;
@@ -477,10 +483,11 @@ function drawHoodHead(
   const rimY = -2.0;
   // Forward lean: the hood tip leans toward the facing axis, but the cone keeps
   // a real width for every direction (Qodo #2 — never multiply the base width by
-  // DX, which is 0 for up/down). The tip X offsets by the lean; the rim stays
-  // full width.
-  const tipX = DX * 0.32 + pose.hoodTilt * DX * 0.5;
-  const tipY = rimY - 1.2 + pose.hoodTilt * (DY !== 0 ? DY * 0.3 : 0);
+  // DX, which is 0 for up/down). `pose.hoodTilt` is ALREADY signed by facing in
+  // computePose, so it is used directly here (Qodo — re-multiplying by DX/DY
+  // would double the sign and lean left/up the wrong way).
+  const tipX = DX * 0.32 + pose.hoodTilt * 0.5;
+  const tipY = rimY - 1.2 + pose.hoodTilt * 0.3;
 
   const hg = ctx.createLinearGradient(0, rimY, 0, tipY);
   hg.addColorStop(0, shade(body, 0.92));
