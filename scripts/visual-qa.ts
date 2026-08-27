@@ -909,8 +909,12 @@ async function gameFeelProbes(page: Page): Promise<void> {
       return;
     }
 
-    // 3) Room ambience: spawn (9,54) is in the Reactor zone -> "reactor".
-    check("desktop: room ambience set at spawn", a0?.room === "reactor" || a0?.room === "cafeteria", `room=${a0?.room}`);
+    // 3) Room ambience: spawn (9,54) is inside the Reactor zone, so AFTER the
+    //    renderer has drawn a few frames the ambient bed must be "reactor"
+    //    (re-read the hook — a stale pre-wait snapshot would not prove it).
+    await page.waitForTimeout(300);
+    const aSpawn = await page.evaluate(() => (window as any).__ghAudio?.() ?? null);
+    check("desktop: room ambience set at spawn (reactor)", aSpawn?.room === "reactor", `room=${aSpawn?.room}`);
 
     // 4) Footsteps: walking produces periodic steps; standing still stops them.
     let s0 = await page.evaluate(() => (window as any).__ghSteps?.() ?? 0);
@@ -932,8 +936,11 @@ async function gameFeelProbes(page: Page): Promise<void> {
     check("desktop: stationary player stops footsteps", s3 === s2, `${s2} -> ${s3}`);
 
     // 5) Hide/emerge effects: particles spawn + sound plays; room flips to
-    //    Library while we're at the bookshelf.
-    if (await walkToBookshelf(page)) {
+    //    Library while we're at the bookshelf. A failed walk/transform/exit is
+    //    an explicit FAILED check — never a silent skip (Qodo #5).
+    if (!(await walkToBookshelf(page))) {
+      check("desktop: hide/emerge effects verified", false, "walk to bookshelf failed");
+    } else {
       await page.waitForTimeout(400);
       const ai = await page.evaluate(() => (window as any).__ghAudio?.() ?? null);
       check(
@@ -970,7 +977,9 @@ async function gameFeelProbes(page: Page): Promise<void> {
           await page.waitForTimeout(120);
           exited = (await getState(page)).players[0].state === "active";
         }
-        if (exited) {
+        if (!exited) {
+          check("desktop: emerging effects verified", false, "untransform never applied");
+        } else {
           await page.waitForTimeout(300);
           const p2 = await page.evaluate(() => (window as any).__ghParticles?.() ?? null);
           check(
@@ -985,6 +994,8 @@ async function gameFeelProbes(page: Page): Promise<void> {
             `emerge=${ae?.counts?.emerge ?? 0}`,
           );
         }
+      } else {
+        check("desktop: hiding effects verified", false, "transform never applied");
       }
     }
 
@@ -1005,8 +1016,11 @@ async function gameFeelProbes(page: Page): Promise<void> {
     const pm = await page.evaluate(() => (window as any).__ghParticles?.() ?? null);
     check("desktop: particle count bounded", !!pm && pm.active <= pm.max, `active=${pm?.active} max=${pm?.max}`);
 
-    // 8) Ambient life: brazier embers spawn while it's on screen.
-    if (await walkToXY(page, BRAZIER.x, BRAZIER.y)) {
+    // 8) Ambient life: brazier embers spawn while it's on screen. A failed
+    //    walk is an explicit FAILED check — never a silent skip (Qodo #6).
+    if (!(await walkToXY(page, BRAZIER.x, BRAZIER.y))) {
+      check("desktop: brazier emits ambient embers", false, "walk to brazier failed");
+    } else {
       await page.waitForTimeout(400);
       const b0 = await page.evaluate(() => (window as any).__ghParticles?.() ?? null);
       await page.waitForTimeout(1500); // ember spawner runs ~every 0.16s
@@ -1020,7 +1034,9 @@ async function gameFeelProbes(page: Page): Promise<void> {
     }
 
     // 9) Ambient life: cauldron vapor while on screen.
-    if (await walkToXY(page, CAULDRON.x, CAULDRON.y)) {
+    if (!(await walkToXY(page, CAULDRON.x, CAULDRON.y))) {
+      check("desktop: cauldron emits ambient vapor", false, "walk to cauldron failed");
+    } else {
       await page.waitForTimeout(400);
       const c0 = await page.evaluate(() => (window as any).__ghParticles?.() ?? null);
       await page.waitForTimeout(1600); // vapor spawner runs ~every 0.38s

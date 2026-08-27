@@ -27,7 +27,10 @@ class AudioManager {
   private totalPlays = 0;
   private lastSound = "";
   private counts = new Map<string, number>();
-  room: RoomKind = "cafeteria";
+  // "" until the first setRoom applies a profile — so the initial cafeteria
+  // call in startAmbience() is NOT short-circuited by the same-room early
+  // return (the ambient bed must start audible).
+  room: RoomKind | "" = "";
 
   // Per-sound cooldowns so events that fire at 60fps / 10Hz can never spam.
   private lastPlayAt = new Map<string, number>();
@@ -158,11 +161,14 @@ class AudioManager {
 
   // ---- primitive helpers --------------------------------------------------
 
-  /** Cooldown gate: plays at most one of a key per `gapMs`. */
+  /** Cooldown gate: plays at most one of a key per `gapMs`. Only keys that
+   *  have ALREADY played are throttled — the first-ever play of a sound (e.g.
+   *  the game-start cue at t≈0, when performance.now() < gap) is never
+   *  discarded. */
   private gate(key: string, gapMs: number): boolean {
     const now = performance.now();
-    const last = this.lastPlayAt.get(key) ?? 0;
-    if (now - last < gapMs) return false;
+    const last = this.lastPlayAt.get(key);
+    if (last !== undefined && now - last < gapMs) return false;
     this.lastPlayAt.set(key, now);
     return true;
   }

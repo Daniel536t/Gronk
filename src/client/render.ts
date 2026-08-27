@@ -15,7 +15,7 @@
 // happens in WORLD units on top of the camera transform so nothing depends on
 // window size. Positions are exponentially smoothed toward the latest 10Hz poll
 // (see step()); teleports (respawn, transform snap) jump instantly.
-import type { GameState, Player } from "../engine/types";
+import type { GameState, GronkState, Player } from "../engine/types";
 import { ROOM_WIDTH, ROOM_HEIGHT, TICKS_PER_SECOND, TRANSFORM_RANGE } from "../engine/constants";
 import {
   drawRoomProps,
@@ -203,6 +203,7 @@ export class Renderer {
   private prevGronkTarget = "";
   private prevEnraged = false;
   private prevMatchId = "";
+  private eventBaseline = false; // first snapshot seeds trackers, emits nothing
   private stepAcc = new Map<string, number>(); // footstep accumulator per player
   private walkDustAcc = 0;
   private emberAcc = 0;
@@ -317,11 +318,27 @@ export class Renderer {
 
   // Build the DPR-correct transform: cssPx -> backing pixels via dpr, then world
   // -> cssPx via (scale, ox, oy).
-  private setProjection(): void {
+  // Install the world->screen transform for the current frame. camX/camY stay
+  // the authoritative (clamped) follow-camera; presentation effects are applied
+  // ONLY here as temporary offsets:
+  //   - camera impulse: a decaying world-unit nudge, clamped back to world
+  //     bounds so a bump at the map edge never shows outside the world.
+  //   - screen shake: a small CSS-px jitter that decays (halved on touch).
+  private applyWorldProjection(): void {
     const dpr = window.devicePixelRatio || 1;
-    // Phase 5 screen shake: a small CSS-px jitter that decays; halved on touch.
-    let ox = this.ox;
-    let oy = this.oy;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const viewW = vw / this.scale;
+    const viewH = vh / this.scale;
+    const imp = this.effects.camOffset;
+    let cx = this.camX + imp.x;
+    let cy = this.camY + imp.y;
+    if (viewW >= ROOM_WIDTH) cx = ROOM_WIDTH / 2;
+    else cx = Math.min(ROOM_WIDTH - viewW / 2, Math.max(viewW / 2, cx));
+    if (viewH >= ROOM_HEIGHT) cy = ROOM_HEIGHT / 2;
+    else cy = Math.min(ROOM_HEIGHT - viewH / 2, Math.max(viewH / 2, cy));
+    let ox = vw / 2 - cx * this.scale;
+    let oy = vh / 2 - cy * this.scale;
     const sh = this.effects.shake;
     if (sh > 0.02) {
       ox += (Math.random() * 2 - 1) * sh;
@@ -349,7 +366,7 @@ export class Renderer {
       ctx.fill();
     }
     ctx.globalAlpha = 1;
-    ctx.setTransform(dpr * this.scale, 0, 0, dpr * this.scale, dpr * this.ox, dpr * this.oy);
+    this.applyWorldProjection();
   }
 
   /** Exponential smoothing toward the latest polled target. */
@@ -378,25 +395,24 @@ export class Renderer {
     // Phase 5: decay camera impulse / shake / flash for this frame.
     this.effects.step(dt);
     this.updateCamera(dt);
-    // Camera micro-feedback: temporary world-unit impulse (hide, pickup, …),
-    // re-clamped so the camera can never leave the world bounds.
-    const imp = this.effects.camOffset;
-    if (Math.abs(imp.x) > 0.0001 || Math.abs(imp.y) > 0.0001) {
-      this.camX += imp.x;
-      this.camY += imp.y;
-      this.clampCamera();
-    }
+    // Camera micro-feedback: the decaying impulse is applied as a temporary
+    // presentation offset inside applyWorldProjection() (never integrated into
+    // the persistent follow-camera — that would drift with frame rate).
     this.clear();
     const ctx = this.ctx;
     const lw = 0.5; // world-unit line width
 
-    // Game start: new match id -> confirm flash + magical cue (once per match;
-    // resume/reconnect keeps the same matchId and won't re-fire).
+    // Game start: a NEW match id fires the confirm flash + magical cue — but
+    // only when the match is genuinely starting (elapsed < 2s). A page-load
+    // resume into an in-progress match also sees a fresh matchId here (the
+    // renderer was just constructed), and must stay quiet (Qodo #11).
     if (state.matchId !== this.prevMatchId) {
       this.prevMatchId = state.matchId;
-      this.effects.flash("#ffe08a", 0.45);
-      audio.playGameStart();
-      this.hideCompletePlayed.clear();
+      if (state.status === "playing" && state.elapsed < 2) {
+        this.effects.flash("#ffe08a", 0.45);
+        audio.playGameStart();
+        this.hideCompletePlayed.clear();
+      }
     }
 
     this.drawFloorBase(ctx);
@@ -436,6 +452,22 @@ export class Renderer {
 
     // Pedestals: team-colored glow platform at the corners.
     state.pedestals.forEach((ped, team) => this.drawPedestal(ctx, ped.x, ped.y, team));
+
+    // Event-feedback baseline (Qodo #9): the FIRST authoritative snapshot must
+    // seed the transition trackers WITHOUT emitting anything — otherwise a
+    // resume/reconnect into a match where players are already transformed,
+    // stunned, or carrying (or Gronk is already chasing/enraged) would be
+    // misread as fresh hide/stun/pickup/alert events.
+    if (!this.eventBaseline) {
+      this.eventBaseline = true;
+      for (const p of state.players) {
+        this.prevState.set(p.id, p.state);
+        this.prevCarry.set(p.id, p.carrying);
+        this.stepAcc.set(p.id, 0);
+      }
+      this.prevGronkTarget = this.gronkTargetKey(state.gronk);
+      this.prevEnraged = state.gronk.enraged;
+    }
 
     // Players: smoothed hooded adventurers. My own wizard is rendered at the
     // locally predicted position (see setLocalPrediction) so it moves at 60fps
@@ -490,7 +522,9 @@ export class Renderer {
           this.effects.addShake(0.4);
         }
         if (p.state === "stunned") {
-          // Revealed + stunned (a search found an enemy hiding here).
+          // Revealed + stunned (a search found an enemy hiding here): the
+          // engine's reveal happens just before the stun, so sound both cues.
+          audio.playReveal();
           audio.playStun();
           spawnStars(this.particles, dx, dy - 1, 10);
           this.effects.flash("#ffffff", 0.22);
@@ -607,9 +641,7 @@ export class Renderer {
 
     // ---- Phase 5: Gronk event feedback (existing state only) ---------------
     // Growl + tiny shake when Gronk picks a chase target (sniff result).
-    const gKey = g.target
-      ? `${g.target.type}:${(g.target as { playerId?: string }).playerId ?? ""}:${(g.target as { x?: number }).x ?? ""}:${(g.target as { y?: number }).y ?? ""}`
-      : "none";
+    const gKey = this.gronkTargetKey(g);
     if (gKey !== this.prevGronkTarget && g.mode === "chase") {
       audio.playGronkAlert(); // has its own 2s cooldown
       this.effects.addShake(0.8);
@@ -647,11 +679,17 @@ export class Renderer {
     }
 
     // Room ambience: swap the ambient bed when the local player crosses rooms.
+    // The decorative room rectangles leave gaps (e.g. the corridor rows between
+    // Cafeteria and Library) — outside every rectangle we retain the previous
+    // bed instead of defaulting to one room (Qodo #10).
     const mePos = this.localOverride ?? this.lastPlayerPos;
     if (mePos) {
       const room = ROOMS.find((r) => mePos.x >= r.x && mePos.x <= r.x + r.w && mePos.y >= r.y && mePos.y <= r.y + r.h);
-      const kind = room?.kind === "tile" ? "cafeteria" : room?.kind === "plank" ? "library" : room?.kind === "panel" ? "reactor" : "storage";
-      audio.setRoom(kind);
+      if (room) {
+        const kind =
+          room.kind === "tile" ? "cafeteria" : room.kind === "plank" ? "library" : room.kind === "panel" ? "reactor" : "storage";
+        audio.setRoom(kind);
+      }
     }
 
     // Particles: advance + draw in world space (after characters, before
@@ -1493,6 +1531,13 @@ export class Renderer {
   private seatIndexOf(id: string): number {
     const m = /-(\d)$/.exec(id);
     return m ? parseInt(m[1], 10) % 4 : -1;
+  }
+
+  /** Stable key for Gronk's current target (type + id; noise x/y are fixed). */
+  private gronkTargetKey(g: GronkState): string {
+    return g.target
+      ? `${g.target.type}:${(g.target as { playerId?: string }).playerId ?? ""}:${(g.target as { x?: number }).x ?? ""}:${(g.target as { y?: number }).y ?? ""}`
+      : "none";
   }
 
   // ---- Gronk (huge red troll) --------------------------------------------
