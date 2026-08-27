@@ -46,6 +46,10 @@ export interface CharacterOpts {
   facing: Facing;
   timeMs: number;
   ghost: boolean; // transformed + local player: translucent absorber feedback
+  /** Phase 4: extra fade/scale applied by the hide enter/exit animation.
+   *  Pure presentation — the server state is untouched. */
+  alphaMul?: number;
+  scaleMul?: number;
 }
 
 const GOLD = "#ffd166";
@@ -101,37 +105,47 @@ export function drawCharacter(ctx: CanvasRenderingContext2D, o: CharacterOpts): 
   }
 
   const ghost = o.ghost;
-  const baseAlpha = ghost ? 0.3 + 0.08 * Math.sin(o.timeMs / 260) : closeted ? 0.88 : 1;
+  const fade = Math.min(1, o.alphaMul ?? 1);
+  const baseAlpha = (ghost ? 0.3 + 0.08 * Math.sin(o.timeMs / 260) : closeted ? 0.88 : 1) * fade;
 
   // ---- floor marks (world space, not the local frame) ---------------------
+  // These sit under the character, so they share the hide animation's fade and
+  // squash — a fading body must not leave a full-strength pip/shadow behind.
+  const squash = o.scaleMul ?? 1;
   // Team pip: small colored floor ring under the feet (identity at a glance).
   ctx.save();
-  ctx.globalAlpha = 0.55;
+  ctx.globalAlpha = 0.55 * fade;
   ctx.fillStyle = o.teamColor;
   ctx.beginPath();
-  ctx.ellipse(o.x, o.y + 0.42, 0.78, 0.26, 0, 0, Math.PI * 2);
+  ctx.ellipse(o.x, o.y + 0.42, 0.78 * squash, 0.26 * squash, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 
   // Soft ground shadow, slightly stretched while moving.
+  ctx.save();
+  ctx.globalAlpha = 0.4 * fade;
   ctx.fillStyle = "rgba(0,0,0,0.4)";
   ctx.beginPath();
-  ctx.ellipse(o.x + 0.08, o.y + 0.34, walking ? 1.05 : 0.95, 0.3, 0, 0, Math.PI * 2);
+  ctx.ellipse(o.x + 0.08, o.y + 0.34, (walking ? 1.05 : 0.95) * squash, 0.3 * squash, 0, 0, Math.PI * 2);
   ctx.fill();
+  ctx.restore();
 
   // Carrier: warm gold aura behind the body.
   if (o.carrying) {
     const pulse = 1 + 0.12 * Math.sin(o.timeMs / 120);
+    ctx.save();
+    ctx.globalAlpha = 0.22 * fade;
     ctx.fillStyle = "rgba(255,209,102,0.22)";
     ctx.beginPath();
-    ctx.arc(o.x, o.y - 1.1, 1.75 * pulse, 0, Math.PI * 2);
+    ctx.arc(o.x, o.y - 1.1, 1.75 * pulse * squash, 0, Math.PI * 2);
     ctx.fill();
+    ctx.restore();
   }
 
   // ---- character (local frame, feet at y=0) -------------------------------
   ctx.save();
   ctx.translate(o.x, o.y - bob);
-  ctx.scale(1, breathe);
+  ctx.scale(squash, squash * breathe);
   ctx.globalAlpha = baseAlpha;
 
   const DX = o.facing === "left" ? -1 : o.facing === "right" ? 1 : 0;

@@ -37,6 +37,10 @@ export interface VisualObject {
   h: number;
   layer: VisualLayer;
   name: string;
+  /** Phase 4: this object can physically cover a hiding player (has front
+   *  geometry that renders between the player and the camera). Non-cover
+   *  objects (tapestry, brazier) draw entirely behind players. */
+  cover: boolean;
 }
 
 // Engine FURNITURE_LAYOUT order (furn-0..furn-9). id -> kind is stable and
@@ -68,20 +72,40 @@ export function furnitureKindOf(f: { id: string; name: string }): FurnitureKind 
   return KIND_BY_NAME[f.name.toLowerCase()] ?? "generic";
 }
 
+/** Objects whose front geometry can occlude a hiding player (Phase 4). */
+export function isCoverKind(kind: FurnitureKind | "generic"): boolean {
+  return (
+    kind === "fridge" ||
+    kind === "barrel" ||
+    kind === "chest" ||
+    kind === "bookshelf" ||
+    kind === "couch" ||
+    kind === "throne" ||
+    kind === "statue" ||
+    kind === "cauldron"
+  );
+}
+
 /** Build the visual layer for each engine furniture entry. */
 export function visualObjectsFor(state: GameState): VisualObject[] {
-  return state.furniture.map((f) => ({
-    id: f.id,
-    kind: furnitureKindOf(f),
-    x: f.x,
-    y: f.y,
-    w: f.w,
-    h: f.h,
-    // Phase 4 will flip cover-objects to "front" based on Y-sorting; for now
-    // everything renders behind the players (they walk "in front of" props).
-    layer: "back",
-    name: f.name,
-  }));
+  return state.furniture.map((f) => {
+    const kind = furnitureKindOf(f);
+    return {
+      id: f.id,
+      kind,
+      x: f.x,
+      y: f.y,
+      w: f.w,
+      h: f.h,
+      // All objects paint their full body in the "back" pass (so an empty
+      // object looks identical to before); cover objects additionally paint
+      // their front-facing components in the "front" pass when a player is
+      // hidden inside, occluding them between the two passes.
+      layer: "back",
+      name: f.name,
+      cover: isCoverKind(kind),
+    };
+  });
 }
 
 // ---- canvas helpers -------------------------------------------------------
@@ -644,6 +668,350 @@ function drawGeneric(ctx: CanvasRenderingContext2D, o: VisualObject): void {
   ctx.lineWidth = 0.5;
   ctx.stroke();
 }
+
+// ---- Phase 4: front-cover geometry ----------------------------------------
+// Each cover object is fully painted in the BACK pass (so it looks identical
+// when empty). When a player is hidden inside, the FRONT pass re-paints the
+// object's front-facing components over the player — re-painting the same
+// pixels over an empty object changes nothing, but sandwiched between the two
+// passes it physically occludes the hiding character. These functions must
+// use the exact same coordinates/colors as their back-pass counterparts.
+
+function drawFridgeFront(ctx: CanvasRenderingContext2D, o: VisualObject): void {
+  const bw = 5.4;
+  const bh = 5.6;
+  const bx = o.x - bw / 2;
+  const by = o.y - bh + 0.4;
+  // Door inset.
+  ctx.fillStyle = "#4e5d70";
+  rr(ctx, bx + 0.6, by + 0.9, bw - 1.2, bh - 1.6, 0.7);
+  ctx.fill();
+  // Freezer seam + door split.
+  ctx.strokeStyle = "#3a4654";
+  ctx.lineWidth = 0.28;
+  line(ctx, bx + 1.0, by + 2.9, bx + bw - 1.0, by + 2.9);
+  line(ctx, o.x - 0.1, by + 0.9, o.x - 0.1, by + bh - 0.7);
+  // Handles.
+  ctx.fillStyle = "#9fb2c4";
+  rr(ctx, o.x + 1.55, by + 1.3, 0.42, 1.2, 0.2);
+  ctx.fill();
+  rr(ctx, o.x + 1.55, by + 3.2, 0.42, 1.6, 0.2);
+  ctx.fill();
+  // Magnet note on the door.
+  ctx.fillStyle = "#ffd166";
+  rr(ctx, o.x - 1.6, by + 3.3, 1.5, 1.0, 0.2);
+  ctx.fill();
+  ctx.fillStyle = "rgba(60,42,0,0.8)";
+  ctx.fillRect(o.x - 1.45, by + 3.55, 1.2, 0.16);
+}
+
+function drawBarrelFront(ctx: CanvasRenderingContext2D, o: VisualObject): void {
+  const bw = 3.6;
+  const bh = 3.0;
+  const bx = o.x - bw / 2;
+  const by = o.y - bh + 0.1;
+  // Body.
+  ctx.fillStyle = "#8a6743";
+  ctx.strokeStyle = "#3d2c1a";
+  ctx.lineWidth = 0.35;
+  rr(ctx, bx, by + 0.5, bw, bh - 0.5, 0.9);
+  ctx.fill();
+  ctx.stroke();
+  // Staves.
+  ctx.strokeStyle = "rgba(61,44,26,0.35)";
+  ctx.lineWidth = 0.16;
+  for (let i = 1; i <= 3; i++) line(ctx, bx + i * (bw / 4), by + 0.8, bx + i * (bw / 4), by + bh - 0.2);
+  // Horizontal bands.
+  ctx.fillStyle = "#4a3523";
+  rr(ctx, bx - 0.15, by + 1.15, bw + 0.3, 0.5, 0.25);
+  ctx.fill();
+  rr(ctx, bx - 0.15, by + 2.15, bw + 0.3, 0.5, 0.25);
+  ctx.fill();
+  // Dark interior (covers the character standing inside the barrel).
+  ctx.fillStyle = "rgba(0,0,0,0.25)";
+  ctx.beginPath();
+  ctx.ellipse(o.x, by + 0.62, bw * 0.38, 0.42, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Rim ring.
+  ctx.strokeStyle = "#3d2c1a";
+  ctx.lineWidth = 0.3;
+  ctx.beginPath();
+  ctx.ellipse(o.x, by + 0.55, bw * 0.5, 0.62, 0, 0, Math.PI * 2);
+  ctx.stroke();
+}
+
+function drawChestFront(ctx: CanvasRenderingContext2D, o: VisualObject): void {
+  const bw = 4.8;
+  const bh = 3.2;
+  const bx = o.x - bw / 2;
+  const by = o.y - bh + 0.3;
+  // Base box.
+  ctx.fillStyle = "#6a4c2c";
+  ctx.strokeStyle = "#33250f";
+  ctx.lineWidth = 0.35;
+  rr(ctx, bx, by + 1.4, bw, bh - 1.4, 0.5);
+  ctx.fill();
+  ctx.stroke();
+  // Curved lid.
+  ctx.fillStyle = "#7a5a36";
+  ctx.beginPath();
+  ctx.moveTo(bx, by + 1.5);
+  ctx.quadraticCurveTo(bx, by + 0.1, bx + bw / 2, by - 0.15);
+  ctx.quadraticCurveTo(bx + bw, by + 0.1, bx + bw, by + 1.5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  // Metal bands.
+  ctx.fillStyle = "#8a6a2f";
+  ctx.fillRect(bx - 0.1, by + 1.45, 0.55, bh - 1.4);
+  ctx.fillRect(bx + bw - 0.45, by + 1.45, 0.55, bh - 1.4);
+  // Lock plate + keyhole.
+  ctx.fillStyle = "#c9a34a";
+  rr(ctx, o.x - 0.55, by + 0.5, 1.1, 1.2, 0.3);
+  ctx.fill();
+  ctx.fillStyle = "#3a2c12";
+  ctx.beginPath();
+  ctx.arc(o.x, by + 1.1, 0.22, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawBookshelfFront(ctx: CanvasRenderingContext2D, o: VisualObject): void {
+  const bw = 6.2;
+  const bh = 5.4;
+  const bx = o.x - bw / 2;
+  const by = o.y - bh + 0.4;
+  // Frame.
+  ctx.fillStyle = "#4a3a28";
+  ctx.strokeStyle = "#241a0e";
+  ctx.lineWidth = 0.4;
+  rr(ctx, bx, by, bw, bh, 0.5);
+  ctx.fill();
+  ctx.stroke();
+  // Shelves.
+  const shelfYs = [by + 1.7, by + 3.3, by + 4.85];
+  ctx.fillStyle = "#5c4a34";
+  for (const sy of shelfYs) ctx.fillRect(bx + 0.4, sy - 0.14, bw - 0.8, 0.28);
+  // Books (same deterministic pattern as the back pass).
+  let seed = 0;
+  for (const sy of shelfYs) {
+    let bx2 = bx + 0.7;
+    while (bx2 < bx + bw - 1.2) {
+      const w = 0.42 + ((seed * 13) % 30) / 100;
+      const h = 0.9 + ((seed * 7) % 5) / 10;
+      const c = BOOK_COLORS[seed % BOOK_COLORS.length];
+      const lean = seed % 9 === 4;
+      ctx.fillStyle = c;
+      if (lean) {
+        ctx.save();
+        ctx.translate(bx2 + w / 2, sy - h / 2);
+        ctx.rotate(-0.35);
+        rr(ctx, -w / 2, -h / 2, w, h, 0.1);
+        ctx.fill();
+        ctx.restore();
+      } else {
+        rr(ctx, bx2, sy - h, w, h, 0.1);
+        ctx.fill();
+      }
+      bx2 += w + 0.12;
+      seed++;
+    }
+  }
+  // Top molding.
+  ctx.fillStyle = "#5c4a34";
+  ctx.fillRect(bx - 0.2, by - 0.1, bw + 0.4, 0.5);
+}
+
+function drawCouchFront(ctx: CanvasRenderingContext2D, o: VisualObject): void {
+  const bw = 3.8;
+  const bx = o.x - bw / 2;
+  const fabric = "#3f5a5c";
+  const fabricDark = "#33494b";
+  // Seat.
+  ctx.fillStyle = fabric;
+  ctx.strokeStyle = "#1d2a2c";
+  ctx.lineWidth = 0.3;
+  rr(ctx, bx + 0.35, o.y - 2.2, bw - 0.7, 1.3, 0.4);
+  ctx.fill();
+  ctx.stroke();
+  // Seat cushion split.
+  ctx.strokeStyle = "rgba(0,0,0,0.25)";
+  ctx.lineWidth = 0.2;
+  line(ctx, o.x, o.y - 2.2, o.x, o.y - 1.0);
+  // Armrests.
+  ctx.fillStyle = fabricDark;
+  rr(ctx, bx - 0.25, o.y - 2.6, 1.1, 2.0, 0.5);
+  ctx.fill();
+  rr(ctx, bx + bw - 0.85, o.y - 2.6, 1.1, 2.0, 0.5);
+  ctx.fill();
+  ctx.fillStyle = "rgba(255,255,255,0.08)";
+  rr(ctx, bx - 0.15, o.y - 2.55, 0.9, 0.4, 0.2);
+  ctx.fill();
+  rr(ctx, bx + bw - 0.75, o.y - 2.55, 0.9, 0.4, 0.2);
+  ctx.fill();
+  // Legs.
+  ctx.fillStyle = "#1d2a2c";
+  ctx.fillRect(bx + 0.5, o.y - 0.7, 0.35, 0.75);
+  ctx.fillRect(bx + bw - 0.85, o.y - 0.7, 0.35, 0.75);
+}
+
+function drawThroneFront(ctx: CanvasRenderingContext2D, o: VisualObject): void {
+  const bw = 5.4;
+  const bx = o.x - bw / 2;
+  // Seat.
+  ctx.fillStyle = "#3c3648";
+  rr(ctx, bx + 0.7, o.y - 1.5, bw - 1.4, 1.3, 0.5);
+  ctx.fill();
+  ctx.strokeStyle = "#241f2e";
+  ctx.lineWidth = 0.3;
+  ctx.stroke();
+  // Armrests with gold caps.
+  ctx.fillStyle = "#4a4356";
+  rr(ctx, bx + 0.05, o.y - 2.5, 1.0, 1.7, 0.4);
+  ctx.fill();
+  rr(ctx, bx + bw - 1.05, o.y - 2.5, 1.0, 1.7, 0.4);
+  ctx.fill();
+  ctx.fillStyle = "#c9a34a";
+  rr(ctx, bx + 0.05, o.y - 2.6, 1.0, 0.35, 0.2);
+  ctx.fill();
+  rr(ctx, bx + bw - 1.05, o.y - 2.6, 1.0, 0.35, 0.2);
+  ctx.fill();
+  // Plinth.
+  ctx.fillStyle = "#332d3f";
+  rr(ctx, bx + 0.2, o.y - 0.3, bw - 0.4, 0.5, 0.25);
+  ctx.fill();
+}
+
+function drawStatueFront(ctx: CanvasRenderingContext2D, o: VisualObject): void {
+  const x = o.x;
+  const y = o.y;
+  // Plinth.
+  ctx.fillStyle = "#5a5a66";
+  ctx.strokeStyle = "#33333c";
+  ctx.lineWidth = 0.35;
+  rr(ctx, x - 2.3, y - 0.7, 4.6, 0.8, 0.3);
+  ctx.fill();
+  ctx.stroke();
+  // Column base.
+  ctx.fillStyle = "#66666f";
+  rr(ctx, x - 1.7, y - 1.8, 3.4, 1.2, 0.3);
+  ctx.fill();
+  ctx.stroke();
+  // Guardian figure.
+  ctx.fillStyle = "#6f6f78";
+  rr(ctx, x - 1.0, y - 5.0, 2.0, 3.4, 0.9);
+  ctx.fill();
+  ctx.strokeStyle = "#33333c";
+  ctx.lineWidth = 0.35;
+  ctx.stroke();
+  // Arms.
+  rr(ctx, x - 1.45, y - 4.4, 0.5, 1.6, 0.25);
+  ctx.fill();
+  rr(ctx, x + 0.95, y - 4.4, 0.5, 1.6, 0.25);
+  ctx.fill();
+  // Head + helmet visor.
+  ctx.beginPath();
+  ctx.arc(x, y - 5.45, 0.55, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#2b2b33";
+  ctx.fillRect(x - 0.42, y - 5.5, 0.84, 0.14);
+  // Spear.
+  ctx.strokeStyle = "#3d3d46";
+  ctx.lineWidth = 0.22;
+  line(ctx, x + 1.2, y - 5.9, x + 1.2, y - 2.2);
+  ctx.fillStyle = "#8a8a94";
+  ctx.beginPath();
+  ctx.moveTo(x + 1.2, y - 6.0);
+  ctx.lineTo(x + 1.45, y - 5.75);
+  ctx.lineTo(x + 0.95, y - 5.75);
+  ctx.closePath();
+  ctx.fill();
+  // Highlight + moss.
+  ctx.fillStyle = "rgba(255,255,255,0.10)";
+  ctx.fillRect(x - 0.9, y - 4.9, 0.3, 3.0);
+  ctx.fillStyle = "#4a6a3a";
+  ctx.beginPath();
+  ctx.arc(x - 1.9, y - 0.2, 0.18, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(x + 1.6, y - 0.35, 0.14, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawCauldronFront(ctx: CanvasRenderingContext2D, o: VisualObject, timeMs: number): void {
+  const x = o.x;
+  const y = o.y;
+  const g = 0.5 + 0.5 * Math.sin(timeMs / 900);
+  // Legs.
+  ctx.fillStyle = "#22222a";
+  ctx.fillRect(x - 1.7, y - 0.5, 0.5, 0.7);
+  ctx.fillRect(x + 1.2, y - 0.5, 0.5, 0.7);
+  ctx.fillRect(x - 0.25, y - 0.35, 0.5, 0.55);
+  // Body.
+  ctx.fillStyle = "#2e2e36";
+  ctx.strokeStyle = "#141419";
+  ctx.lineWidth = 0.4;
+  rr(ctx, x - 2.4, y - 2.9, 4.8, 2.7, 1.2);
+  ctx.fill();
+  ctx.stroke();
+  // Rim + bubbling liquid.
+  ctx.fillStyle = "#3d3d47";
+  ctx.beginPath();
+  ctx.ellipse(x, y - 2.9, 2.4, 0.62, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "#141419";
+  ctx.lineWidth = 0.3;
+  ctx.stroke();
+  ctx.fillStyle = `rgba(110,190,90,${0.5 + 0.2 * g})`;
+  ctx.beginPath();
+  ctx.ellipse(x, y - 2.95, 2.0, 0.4, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Bubbles.
+  const b1 = (timeMs / 700) % 1;
+  ctx.fillStyle = `rgba(170,255,140,${0.6 * (1 - b1)})`;
+  ctx.beginPath();
+  ctx.arc(x - 0.6, y - 3.0 - b1 * 0.9, 0.12, 0, Math.PI * 2);
+  ctx.fill();
+  const b2 = ((timeMs + 350) / 700) % 1;
+  ctx.fillStyle = `rgba(170,255,140,${0.5 * (1 - b2)})`;
+  ctx.beginPath();
+  ctx.arc(x + 0.5, y - 3.05 - b2 * 0.8, 0.09, 0, Math.PI * 2);
+  ctx.fill();
+  // Handles.
+  ctx.strokeStyle = "#3d3d47";
+  ctx.lineWidth = 0.3;
+  ctx.beginPath();
+  ctx.arc(x - 2.45, y - 2.2, 0.5, -Math.PI / 2, Math.PI / 2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(x + 2.45, y - 2.2, 0.5, Math.PI / 2, -Math.PI / 2);
+  ctx.stroke();
+}
+
+/** Paint a cover object's front-facing components over the player layer.
+ *  `alpha` fades the cover in/out during the enter/exit animations; an empty
+ *  object is skipped entirely (cover alpha 0), so nothing changes visually. */
+export function drawVisualObjectFront(
+  ctx: CanvasRenderingContext2D,
+  o: VisualObject,
+  timeMs: number,
+  alpha: number,
+): void {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  switch (o.kind) {
+    case "fridge": drawFridgeFront(ctx, o); break;
+    case "barrel": drawBarrelFront(ctx, o); break;
+    case "chest": drawChestFront(ctx, o); break;
+    case "bookshelf": drawBookshelfFront(ctx, o); break;
+    case "couch": drawCouchFront(ctx, o); break;
+    case "throne": drawThroneFront(ctx, o); break;
+    case "statue": drawStatueFront(ctx, o); break;
+    case "cauldron": drawCauldronFront(ctx, o, timeMs); break;
+    default: break; // non-cover kinds paint no front geometry
+  }
+  ctx.restore();
+}
+
 
 // ---- labels (secondary info only) -----------------------------------------
 

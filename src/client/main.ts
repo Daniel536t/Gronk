@@ -252,23 +252,47 @@ function doAction(): void {
 // poll reflects the new state and instantly untransforming). So we suppress
 // moves around a transform.
 //
-// Suppression is released on exactly two concrete signals so input can NEVER be
-// permanently disabled, and (crucially) is kept active as long as a slow-but-
-// successful transform is still applying:
+// Suppression is released on concrete signals only — never by a fixed timeout —
+// so input can NEVER be permanently disabled, while a slow-but-successful
+// transform keeps protection until its result is actually observed:
 //  1. The transform POST is rejected (stunned/carrying/out-of-range) or errors
 //     -> no state change will happen, so release immediately.
-//  2. A poll observes the requested state (transform/untransform applied).
-// Because a move is re-sent every poll tick once woke, and a slow transform POST
-// that HAS succeeded will show up in the next poll, this both stops the race for
-// the normal case and never pins input when the request fails.
+//  2. A poll observes the requested state (transform/untransform applied) — the
+//     backstop when a response is lost; the state gates then own move-sending.
+//  3. A poll runs AFTER the last transform response arrived. This covers rapid
+//     repeated presses: each transform() toggles, so an even number of toggles
+//     can settle back on a state we never requested (e.g. active while we asked
+//     for transformed). By then the poll has SEEN the server's actual state, so
+//     the active/transformed gates take over correctly and holding longer would
+//     only risk a permanent lock.
 let wantedState = "" as "active" | "transformed" | ""; // state we asked the server for
+// Poll generations: every poll records the generation it STARTED, and we
+// remember the most recent one that COMPLETED (lastObservedPollG) plus the
+// generation at which the last transform cycle settled (settledAtG). This is
+// how we know a poll has actually seen the server's post-toggle state, rather
+// than a stale request racing it.
+let pollGeneration = 0; // monotonically incremented each poll start
+let lastObservedPollG = 0; // generation of the most recently completed poll
+let transformInFlight = 0; // unresolved transform POSTs (overlapping presses)
+let settledAtG = 0; // a poll of generation > settledAtG is post-settle
+// Suppression CYCLE token. Every transform captures `cycle` when it is born;
+// its callback no-ops if the current cycle differs. This stops a promise
+// created before a releaseSuppression()/enterGame() reset from mutating the
+// bookkeeping of a newer lifecycle (Qodo: "old callback settles new cycle").
+let suppressCycle = 0;
 
-function suppressMovesForState(want: "active" | "transformed"): void {
-  wantedState = want;
+function suppressMovesForState(_want: "active" | "transformed"): void {
+  wantedState = _want;
+  transformInFlight++;
+  settledAtG = 0; // not settled this cycle yet
 }
 
 function releaseSuppression(): void {
+  suppressCycle++; // invalidate any in-flight transform callback from a prior cycle
   wantedState = "";
+  transformInFlight = 0;
+  settledAtG = 0;
+  lastObservedPollG = 0;
 }
 
 function movesSuppressed(): boolean {
@@ -276,12 +300,21 @@ function movesSuppressed(): boolean {
   const me = lastState ? myPlayer(lastState) : undefined;
   if (!me) {
     // Player gone / no state — nothing to protect, give input back.
-    wantedState = "";
+    releaseSuppression();
     return false;
   }
   if (me.state === wantedState) {
     // Server applied the requested state change — safe to resume moves.
-    wantedState = "";
+    releaseSuppression();
+    return false;
+  }
+  if (transformInFlight === 0 && lastObservedPollG > settledAtG) {
+    // Every request settled, and a poll that STARTED after they settled has
+    // completed — so lastState is genuinely post-toggle, and the active/
+    // transformed gates take over. A poll that began before the settle but
+    // finished after it has lastObservedPollG <= settledAtG, so it can't
+    // falsely release movement against a stale active state.
+    releaseSuppression();
     return false;
   }
   // Still waiting on the transform to apply (or be rejected) — hold input.
@@ -297,14 +330,34 @@ function doTransform(): void {
   if (!targetFurniture) return; // button disabled gate should prevent this
   const wantState = isTransformed ? "active" : "transformed";
   suppressMovesForState(wantState);
+  const cycle = suppressCycle; // the lifecycle this request belongs to
   const res = api.transform(session.roomCode, session.playerId, targetFurniture);
+  const settle = (): void => {
+    // A stale callback from a previous cycle must never touch the new cycle's
+    // bookkeeping (Qodo: an old promise shouldn't settle bookkeeping created
+    // after it).
+    if (cycle !== suppressCycle) return;
+    // Decrement per request. When the LAST one settles, record the poll
+    // generation that must be exceeded before movement can un-suppress —
+    // i.e. a poll must start after this point and complete.
+    transformInFlight = Math.max(0, transformInFlight - 1);
+    if (transformInFlight === 0) settledAtG = pollGeneration;
+  };
   res.then((r) => {
+    settle();
+    if (cycle !== suppressCycle) return;
     // If the server rejected the request (no state change), free input now
-    // instead of waiting out the whole window.
+    // instead of waiting out the whole window — but only when this was the
+    // last unresolved request: an earlier rejection must not release while a
+    // later toggle is still in flight.
     const ok = (r as { ok?: boolean } | undefined)?.ok ?? false;
-    if (!ok) releaseSuppression();
+    if (!ok && transformInFlight === 0) releaseSuppression();
   });
-  res.catch(releaseSuppression);
+  res.catch(() => {
+    settle();
+    if (cycle !== suppressCycle) return;
+    if (transformInFlight === 0) releaseSuppression();
+  });
 }
 
 // ---- game loop -----------------------------------------------------------
@@ -326,10 +379,12 @@ async function enterGame(): Promise<void> {
   let failStreak = 0;
   const poll = async (): Promise<void> => {
     while (pollToken === token && screenEls.game && !screenEls.game.classList.contains("hidden")) {
+      const myG = ++pollGeneration; // stamp when this poll STARTS
       try {
         const s = await api.getState(sess.roomCode, sess.playerId);
         if (pollToken !== token) return;
         lastState = s;
+        lastObservedPollG = myG; // this poll (started at myG) completed
         failStreak = 0;
         hideReconnect();
         updateRiddle(s);
