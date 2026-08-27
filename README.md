@@ -287,9 +287,36 @@ agentic review that closed **6 bugs over two follow-up rounds to 0**:
 Public thread: https://github.com/Daniel536t/Gronk/pull/3 — Qodo Code Review comment
 with each finding marked `✓ Resolved` at the final commit (`Bugs (0)`).
 
+### Phase 5 — game feel (also Qodo-reviewed)
+- **PR: [Phase 5 — game feel: audio, particles, camera feedback, ambient life](https://github.com/Daniel536t/Gronk/pull/5)** (#5, merged)
+
+Phase 5 (Web Audio manager with semantic procedural sounds + room ambience, pooled
+particle system, camera impulse/shake/flash, event feedback from authoritative state,
+footsteps tied to the walk cycle, and ambient brazier/cauldron/Gronk life) went through
+a full Qodo agentic review that closed **12 findings over three review rounds to 0**,
+including:
+1. Screen shake was dead code (applied in an uncalled `setProjection`) — moved into the
+   frame projection; the camera impulse is now a presentation offset, never integrated
+   into the follow-camera.
+2. The audio cooldown gate discarded a sound's first play; the cafeteria ambient bed
+   stayed silent (room default short-circuited the initial profile).
+3. `playReveal` was never invoked; resume replayed the game-start cue; the first
+   snapshot (and each new match's first snapshot) now seeds event trackers without
+   emitting false hide/stun/pickup/alert feedback.
+4. Shake is folded into the effective camera center before the world-bounds clamp, so a
+   shaken frame at a map edge never exposes the background.
+5. QA probes no longer silently skip on failed walks/transforms; the spawn-room check
+   asserts the actual zone.
+
+Also found while verifying: a latent unhandled-promise-rejection in the transform input
+guard (parallel `.then`/`.catch` — now chained).
+
+Public thread: https://github.com/Daniel536t/Gronk/pull/5 — Qodo Code Review comment
+with each finding marked `✓ Resolved` at the final commit (`Bugs (0)`).
+
 ### Review history (public)
 The Qodo review and follow-up re-reviews on the updated commits are public on PR #1:
-https://github.com/Daniel536t/Gronk/pull/1 (Qodo Code Review comment + review markers at each commit), and on PR #3 (Phase 4, `Bugs (0)` at the final commit).
+https://github.com/Daniel536t/Gronk/pull/1 (Qodo Code Review comment + review markers at each commit), on PR #3 (Phase 4, `Bugs (0)` at the final commit), and on PR #5 (Phase 5, `Bugs (0)` at the final commit).
 
 ### Workflow
 branch → push → open PR → `\`/agentic_review\`` → fix/dismiss findings → re-review → merge.
