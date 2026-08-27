@@ -381,9 +381,11 @@ rounds to `Bugs (0)`:
    `main.ts`, never frames.
 3. **Poll failures freeze forever** → failed polls now count as stall evidence
    too (`pollCompletions` advances on every completed poll), and `getState`
-   gained an 8s fetch timeout so a hung request cannot pend forever — polling
-   being unavailable now eases back after ~1.5s instead of freezing the avatar
-   at a false position.
+   gained an 8s fetch timeout so a hung request cannot pend forever. Ease-back
+   happens after 15 completed polls without convergence — ~1.5s when polls
+   complete at the healthy 10Hz rate, longer when requests hang (each hung
+   poll delays evidence until its 8s timeout) — but always bounded, instead
+   of freezing the avatar at a false position indefinitely.
 
 ### Review history (public)
 The Qodo review and follow-up re-reviews on the updated commits are public on PR #1:
