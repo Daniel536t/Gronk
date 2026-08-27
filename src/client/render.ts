@@ -62,6 +62,13 @@ const RELEASE_RECONCILE_DIST = 0.5;
 // A released gap larger than this means a real authoritative teleport
 // (respawn, match reset) — trust the server immediately.
 const RELEASE_TELEPORT_DIST = 3;
+// How long the released freeze may persist while the authoritative gap sits
+// in the 0.5–3u band before we ease back to the server position. Move POSTs
+// can fail (HTTP errors are swallowed by the caller), leaving the server
+// stationary forever; without this bound the avatar would render at a false
+// location indefinitely. 1.5s ≈ several 10Hz ticks — a healthy round trip +
+// convergence window, after which the residual <3u gap lerps back smoothly.
+const RELEASE_FREEZE_MAX = 1.5;
 
 // Phase 4 hide animation: how long entering/exiting a hiding object takes.
 // Purely visual — the server state is authoritative and changes instantly;
@@ -199,6 +206,10 @@ export class Renderer {
   private camY = ROOM_HEIGHT / 2;
   private lastInputDir = { x: 0, y: 0 };
   private lastCanMove = true;
+  // Seconds the released position has been frozen in the mid-gap band
+  // (0.5–3u). Resets whenever movement input is active; guards against
+  // non-convergence after failed move requests (bounded reconciliation).
+  private releaseFreezeT = 0;
   private lastPlayerPos: { x: number; y: number } | null = null;
   // Per-player walk cycle + facing (driven by movement vectors, not engine).
   private charPhase = new Map<string, number>();
@@ -1868,17 +1879,33 @@ export class Renderer {
         );
         if (gap < RELEASE_RECONCILE_DIST) {
           // Server caught up to the released spot: resume authoritative
-          // smoothing (the sub-tick remainder lerps smoothly, no jump).
+          // smoothing. Seed the smoothing state from the frozen position so
+          // draw()'s step() continues from where the avatar visually is — the
+          // sub-tick remainder lerps invisibly instead of exposing a stale
+          // trailing smoothed value (delayed rewind).
+          this.seedSmooth(this.myPlayerId!, this.localOverride.x, this.localOverride.y);
           this.localX = serverPos.x;
           this.localY = serverPos.y;
           this.localOverride = null;
         } else if (gap > RELEASE_TELEPORT_DIST) {
           // Real teleport (respawn, match reset): trust the server.
+          this.seedSmooth(this.myPlayerId!, serverPos.x, serverPos.y);
           this.localX = serverPos.x;
           this.localY = serverPos.y;
           this.localOverride = null;
+        } else {
+          // Mid-gap: the server should be catching up. Bound the freeze — if
+          // convergence stalls (e.g. move POSTs failed and the server never
+          // moved), ease back to the authoritative position so the avatar
+          // never renders at a false location indefinitely.
+          this.releaseFreezeT += dt;
+          if (this.releaseFreezeT > RELEASE_FREEZE_MAX) {
+            this.seedSmooth(this.myPlayerId!, this.localOverride.x, this.localOverride.y);
+            this.localX = serverPos.x;
+            this.localY = serverPos.y;
+            this.localOverride = null;
+          }
         }
-        // else: server still catching up — keep the frozen released position.
         return;
       }
       // Can't move (stunned/transformed/closeted) or never predicted: trust
@@ -1901,6 +1928,13 @@ export class Renderer {
     this.localX = Math.min(ROOM_WIDTH - 1.2, Math.max(1.2, this.localX! + nx * speed * dt));
     this.localY = Math.min(ROOM_HEIGHT - 1.2, Math.max(1.2, this.localY! + ny * speed * dt));
     this.localOverride = { x: this.localX!, y: this.localY! };
+    // Fresh predicted movement — restart the bounded-freeze clock.
+    this.releaseFreezeT = 0;
+  }
+
+  /** Seed the per-player smoothing state so step() continues from here. */
+  private seedSmooth(id: string, x: number, y: number): void {
+    this.smooth.set(id, { x, y });
   }
 
   myPlayerId: string | null = null;
