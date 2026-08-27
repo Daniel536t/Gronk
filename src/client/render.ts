@@ -56,6 +56,8 @@ const LERP_K = 14; // exponential smoothing constant (dt-based)
 // Purely visual — the server state is authoritative and changes instantly;
 // this only makes the transition read as physical (slide in, cover fades).
 const HIDE_ANIM_MS = 300;
+// Duration (seconds) of a furniture settle reaction on hide/emerge.
+const REACT_DUR = 0.3;
 
 // Where a character steps out of the furniture, relative to their facing.
 const EXIT_OFFSET: Record<Facing, { x: number; y: number }> = {
@@ -255,6 +257,14 @@ export class Renderer {
     (window as unknown as { __ghSteps?: () => number }).__ghSteps = () => this.footstepCount;
     (window as unknown as { __ghEffects?: () => { shake: number; flash: number } }).__ghEffects =
       () => ({ shake: this.effects.shake, flash: this.effects.flashAmount });
+    // Phase 6A QA hook (read-only, not gameplay): live furniture reaction state.
+    (window as unknown as { __ghReact?: () => { fid: string; amp: number }[] }).__ghReact = () => {
+      const out: { fid: string; amp: number }[] = [];
+      for (const [fid, t] of this.reactT) {
+        out.push({ fid, amp: this.reactionFor(fid) });
+      }
+      return out;
+    };
     this.effects.setTouchScale(this.isTouchDevice);
   }
 
@@ -403,10 +413,11 @@ export class Renderer {
   draw(state: GameState, dt: number, timeMs: number): void {
     // Phase 5: decay camera impulse / shake / flash for this frame.
     this.effects.step(dt);
-    // Phase 6A: decay furniture settle reactions and the Gronk catch lunge.
+    // Phase 6A: advance furniture settle reactions (elapsed seconds) + the
+    // Gronk catch lunge decay.
     for (const [fid, t] of this.reactT) {
-      const next = t - dt;
-      if (next <= 0) this.reactT.delete(fid);
+      const next = t + dt;
+      if (next >= REACT_DUR) this.reactT.delete(fid);
       else this.reactT.set(fid, next);
     }
     this.lungeT -= dt;
@@ -543,7 +554,7 @@ export class Renderer {
           this.effects.addShake(0.4);
           this.effects.bumpCamera(-(p.moveDx || 0) * 0.3, -(p.moveDy || 0) * 0.3, 0.5);
           // Phase 6A: the entered furniture gives a tiny settle reaction.
-          if (p.transformedAs) this.reactT.set(p.transformedAs, 0.3);
+          if (p.transformedAs) this.reactT.set(p.transformedAs, 0);
           this.hideCompletePlayed.delete(p.id);
         } else if (was === "transformed") {
           // Emerging: whoosh up + motes + the furniture reacts (emergence).
@@ -551,7 +562,7 @@ export class Renderer {
           spawnMotes(this.particles, dx, dy - 1, 7);
           this.effects.addShake(0.4);
           const fid = this.prevTransAs.get(p.id);
-          if (fid) this.reactT.set(fid, 0.3);
+          if (fid) this.reactT.set(fid, 0);
         }
         if (p.state === "stunned") {
           // Revealed + stunned (a search found an enemy hiding here): the
@@ -1250,14 +1261,20 @@ export class Renderer {
   // Draw one layer of the visual objects. Labels fade in near the local player
   // only — the environment itself carries the information, the label is a
   // secondary reference.
-  /** Furniture settle reaction: a short 0..1 dip that can be applied to the
-   *  back/front passes of the object being entered/exited, so hiding feels
-   *  physical (DESIGN.md — furniture reactions). Decays over ~300ms. */
+  /** Furniture settle reaction: a short 0..1 dip applied to the back/front
+   *  passes of the object being entered/exited so hiding feels physical
+   *  (DESIGN.md — furniture reactions). `reactT` stores elapsed seconds from
+   *  the reaction start; the envelope attacks immediately then decays over
+   *  the full REACT_DUR window (Qodo #8 — elapsed, not remaining countdown). */
   private reactionFor(fid: string): number {
     const t = this.reactT.get(fid);
-    if (t == null || t <= 0) return 0;
-    // quick attack (~80ms) then a soft settle overshoot-decay.
-    return Math.max(0, Math.sin(Math.min(1, t / 0.08) * Math.PI) * Math.exp(-t * 9));
+    if (t == null) return 0;
+    const prog = Math.min(1, t / REACT_DUR); // 0..1 across the reaction
+    // Quick attack to a peak (~25% in), then a soft settle decay that stays
+    // visible across the FULL 300ms window (a sin-attack capped at prog/0.2
+    // collapses to zero after 60ms — the probe rightly caught that).
+    const attack = Math.min(1, prog / 0.25);
+    return Math.max(0, attack * Math.exp(-prog * 3.5));
   }
 
   private drawObjects(
@@ -1275,11 +1292,15 @@ export class Renderer {
         labelAlpha = d > 16 ? 0 : 0.18 + 0.32 * Math.max(0, 1 - d / 16);
       }
       ctx.save();
-      // Subtle vertical dip + tiny squash while the object settles.
+      // Subtle vertical dip + tiny squash while the object settles, scaled
+      // about the object's own center so it never jumps toward the world
+      // origin (Qodo #3).
       const r = this.reactionFor(obj.id);
       if (r > 0) {
+        ctx.translate(obj.x, obj.y);
         ctx.translate(0, r * 0.04);
         ctx.scale(1 + r * 0.02, 1 - r * 0.03);
+        ctx.translate(-obj.x, -obj.y);
       }
       drawVisualObject(ctx, obj, timeMs, labelAlpha);
       ctx.restore();
@@ -1300,8 +1321,10 @@ export class Renderer {
       ctx.save();
       const r = this.reactionFor(obj.id);
       if (r > 0) {
+        ctx.translate(obj.x, obj.y);
         ctx.translate(0, r * 0.04);
         ctx.scale(1 + r * 0.02, 1 - r * 0.03);
+        ctx.translate(-obj.x, -obj.y);
       }
       drawVisualObjectFront(ctx, obj, timeMs, alpha);
       ctx.restore();
@@ -1625,8 +1648,9 @@ export class Renderer {
   }
 
   // ---- Gronk (huge red troll) --------------------------------------------
-  private gronkPrevX = -1;
-  private gronkPrevY = -1;
+  private gronkPrevX = NaN;
+  private gronkPrevY = NaN;
+  private gronkPrevSeeded = false;
   private gronkFace: Facing = "down";
   private gronkStepAcc = 0;
 
@@ -1640,7 +1664,14 @@ export class Renderer {
     const g = state.gronk;
     const enraged = g.enraged;
     const moving = state.gronk.mode === "chase";
-    // Derive facing from the smoothed position delta.
+    // Derive facing from the smoothed position delta. The previous position is
+    // seeded from the first real position so no fake delta vs (-1,-1) sets a
+    // wrong initial orientation (Qodo #9).
+    if (!this.gronkPrevSeeded) {
+      this.gronkPrevX = x;
+      this.gronkPrevY = y;
+      this.gronkPrevSeeded = true;
+    }
     const dx = x - this.gronkPrevX;
     const dy = y - this.gronkPrevY;
     if (Math.hypot(dx, dy) > 0.02) {
@@ -1681,12 +1712,13 @@ export class Renderer {
     ctx.ellipse(0.2, 2.3 + bob, bodyW * 0.75, 0.62, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Feet: heavy stomping, alternating stride along the facing axis.
+    // Feet: heavy stomping, alternating stride projected along the facing axis
+    // and straddles laterally (Qodo #10 — up/down must not walk sideways).
     ctx.fillStyle = shade(col, 0.72);
     for (const s of [-1, 1]) {
       const lift = moving ? Math.max(0, Math.sin(stepPh + (s > 0 ? 0 : Math.PI))) * 0.18 : 0;
-      const fx = stride * s + (s * 0.5) * FDY;
-      const fy = 0.6 - lift + (s * 0.5) * FDX;
+      const fx = stride * s * FDX + (s * 0.5) * FDY;
+      const fy = 0.6 - lift + stride * s * FDY + (s * 0.5) * FDX;
       ctx.beginPath();
       ctx.roundRect(fx - 0.4, fy, 0.8, 0.5, 0.22);
       ctx.fill();
@@ -1708,6 +1740,7 @@ export class Renderer {
     ctx.ellipse(bellySway, -bodyH * 0.22, bodyW * 0.4, bodyH * 0.32, 0, 0, Math.PI * 2);
     ctx.fillStyle = rgba(col, 0.2);
     ctx.fill();
+    ctx.restore();
 
     // Arms: swing heavily; on a catch lunge they reach forward.  --
     ctx.fillStyle = shade(col, 0.85);

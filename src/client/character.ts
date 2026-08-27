@@ -159,8 +159,9 @@ export function computePose(o: CharacterOpts): Pose {
   const bob = gait > 0 ? Math.abs(Math.sin(ph)) * 0.12 * rm : 0;
   const hipSway = gait > 0 ? Math.sin(ph + Math.PI / 2) * 0.12 * rm : 0;
 
-  // Forward lean scales with speed, direction-aware.
-  const leanTarget = gait * (0.16 + 0.1 * speed01);
+  // Forward lean scales with speed, direction-aware. The magnitude is scaled
+  // by reduced-motion consistently across every direction (Qodo #14).
+  const leanTarget = gait * (0.16 + 0.1 * speed01) * rm;
   const lean =
     o.facing === "down" ? leanTarget : o.facing === "up" ? -0.12 * gait * rm : DX * leanTarget;
 
@@ -246,8 +247,9 @@ function drawPose(ctx: CanvasRenderingContext2D, o: CharacterOpts, pose: Pose): 
   const baseAlpha = (ghost ? 0.3 + 0.08 * Math.sin(o.timeMs / 260) : closeted ? 0.88 : 1) * fade;
 
   // Squash from the Phase 4 hide animation + posture (stun recoil, carry).
-  const squash =
-    (o.scaleMul ?? 1) * (1 - pose.hunch * 0.05) * (1 - pose.flinch * 0.12) * rm;
+  // NOTE: reduced-motion must NOT scale the whole character (that would shrink
+  // avatars by 45%); it only damps animated offsets/amplitudes (Qodo #4).
+  const squash = (o.scaleMul ?? 1) * (1 - pose.hunch * 0.05) * (1 - pose.flinch * 0.12);
 
   // ---- floor marks (world space, not the local frame) ---------------------
   const floorSquash = o.scaleMul ?? 1;
@@ -294,25 +296,33 @@ function drawPose(ctx: CanvasRenderingContext2D, o: CharacterOpts, pose: Pose): 
   ctx.scale(squash, squash * breathe);
   ctx.globalAlpha = baseAlpha;
 
+  // Feet stay planted on the floor at y=0.
   drawFeet(ctx, pose, dark, baseAlpha, o.facing);
+
+  // Torso + head (everything above the feet). A stun droop compresses and
+  // lowers the upper body toward the feet so the slouch actually renders
+  // (Qodo #6); the feet remain planted.
+  ctx.save();
+  ctx.translate(0, pose.droop * 0.22);
+  ctx.scale(1 + pose.droop * 0.03, 1 - pose.droop * 0.12);
   drawCloakBody(ctx, pose, body, dark, baseAlpha);
   drawArms(ctx, pose, body, baseAlpha, o.facing);
   drawHoodHead(ctx, o, pose, body, baseAlpha);
-
   ctx.restore();
 
-  // ---- screen-space-relative halo effects (kept) --------------------------
+  // ---- character-attached effects (drawn INSIDE the local frame so their
+  // local coordinates stay attached to the character — Qodo #5) -----------
   if (o.state === "stunned") {
     for (let i = 0; i < 3; i++) {
       const a = o.timeMs * 0.0045 + (i * Math.PI * 2) / 3;
-      star4(ctx, Math.cos(a) * 1.15, -2.3 + Math.sin(a) * 0.95 + pose.bob, 0.17, GOLD, 0.9 * rm);
+      star4(ctx, Math.cos(a) * 1.15, -2.3 + Math.sin(a) * 0.95, 0.17, GOLD, 0.9 * rm);
     }
   }
 
   if (o.carrying) {
     // Gold diamond bob held above the hood (arms-to-hold posture is on the body).
     ctx.save();
-    ctx.translate(0, -3.7 - 0.12 * Math.sin(o.timeMs / 140));
+    ctx.translate(0, -3.7 - 0.12 * Math.sin(o.timeMs / 140) - pose.droop * 0.2);
     ctx.rotate(Math.PI / 4);
     ctx.fillStyle = GOLD;
     ctx.fillRect(-0.11, -0.11, 0.22, 0.22);
@@ -331,6 +341,8 @@ function drawPose(ctx: CanvasRenderingContext2D, o: CharacterOpts, pose: Pose): 
       ctx.restore();
     }
   }
+
+  ctx.restore();
 }
 
 /** Feet — alternating stride along the movement axis, front/back in profile. */
@@ -381,7 +393,8 @@ function drawCloakBody(
 
   const cw = 0.62; // half-width at shoulders
   const hemW = 0.74; // half-width at hem
-  const sway = pose.cloakSway;
+  const sway = pose.cloakSway; // lateral sway (perpendicular to motion)
+  const stream = pose.cloakStream; // trailing offset opposite movement (Qodo #7)
 
   const grad = ctx.createLinearGradient(0, -2.0, 0, -0.35);
   grad.addColorStop(0, shade(body, 1.12));
@@ -389,17 +402,17 @@ function drawCloakBody(
   ctx.fillStyle = grad;
   ctx.beginPath();
   ctx.moveTo(-cw, -2.0);
-  ctx.quadraticCurveTo(-hemW * 1.1 + sway * 0.1, -1.3, -hemW + sway, -0.42);
-  ctx.quadraticCurveTo(0, -0.08 + sway * 0.5, hemW + sway, -0.42);
-  ctx.quadraticCurveTo(hemW * 1.1 + sway * 0.1, -1.3, cw, -2.0);
+  ctx.quadraticCurveTo(-hemW * 1.1 + sway * 0.1, -1.3 + stream * 0.3, -hemW + sway + stream, -0.42);
+  ctx.quadraticCurveTo(0 + stream * 0.4, -0.08 + sway * 0.5 + stream * 0.4, hemW + sway + stream, -0.42);
+  ctx.quadraticCurveTo(hemW * 1.1 + sway * 0.1, -1.3 + stream * 0.3, cw, -2.0);
   ctx.closePath();
   ctx.fill();
 
-  // Hem band follows the sway.
+  // Hem band follows the sway + trail.
   ctx.globalAlpha = baseAlpha * 0.85;
   ctx.fillStyle = dark;
   ctx.beginPath();
-  ctx.roundRect(-hemW + sway, -0.5 + sway * 0.3, hemW * 2, 0.2, 0.09);
+  ctx.roundRect(-hemW + sway + stream, -0.5 + sway * 0.3, hemW * 2, 0.2, 0.09);
   ctx.fill();
 
   // Belt + gold buckle.
@@ -462,19 +475,23 @@ function drawHoodHead(
   const DX = facing === "left" ? -1 : facing === "right" ? 1 : 0;
   const DY = facing === "up" ? -1 : facing === "down" ? 1 : 0;
   const rimY = -2.0;
-  const tipX = DX * 0.28 + pose.hoodTilt * DX * 0.5;
-  const tipY = rimY - 1.2 + pose.hoodTilt * DY * 0.3;
+  // Forward lean: the hood tip leans toward the facing axis, but the cone keeps
+  // a real width for every direction (Qodo #2 — never multiply the base width by
+  // DX, which is 0 for up/down). The tip X offsets by the lean; the rim stays
+  // full width.
+  const tipX = DX * 0.32 + pose.hoodTilt * DX * 0.5;
+  const tipY = rimY - 1.2 + pose.hoodTilt * (DY !== 0 ? DY * 0.3 : 0);
 
-  // Hood cone leaning toward the facing direction.
   const hg = ctx.createLinearGradient(0, rimY, 0, tipY);
   hg.addColorStop(0, shade(body, 0.92));
   hg.addColorStop(1, shade(body, 1.12));
   ctx.fillStyle = hg;
   ctx.beginPath();
-  ctx.moveTo(DX * -0.5, rimY + 0.05);
-  ctx.quadraticCurveTo(DX * -0.4, rimY - 0.4, tipX, tipY);
-  ctx.quadraticCurveTo(DX * 0.4, rimY - 0.4, DX * 0.5, rimY + 0.05);
-  ctx.quadraticCurveTo(0, rimY + 0.35, DX * -0.5, rimY + 0.05);
+  ctx.moveTo(-0.52, rimY + 0.02);
+  ctx.quadraticCurveTo(-0.46 + DX * 0.1, rimY - 0.45, tipX - 0.18, tipY + 0.1);
+  ctx.quadraticCurveTo(tipX + 0.02, tipY - 0.05, tipX + 0.18, tipY + 0.1);
+  ctx.quadraticCurveTo(0.46 + DX * 0.1, rimY - 0.45, 0.52, rimY + 0.02);
+  ctx.quadraticCurveTo(0, rimY + 0.34, -0.52, rimY + 0.02);
   ctx.closePath();
   ctx.fill();
 

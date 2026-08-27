@@ -1163,7 +1163,7 @@ async function poseAnimationProbes(page: Page): Promise<void> {
     `down=${downLean.toFixed(3)} up=${upLean.toFixed(3)}`,
   );
 
-  // 4) Idle keeps breathing (animTick advances) without re-gaining stride.
+  // 4) Idle keeps breathing (animTick advances) WITHOUT re-gaining stride.
   await waitForActive(page);
   await page.keyboard.up("w");
   await page.keyboard.up("a");
@@ -1175,13 +1175,14 @@ async function poseAnimationProbes(page: Page): Promise<void> {
   const idleB = await getMyPose(page);
   check(
     "p6a: idle keeps breathing without stride",
-    !!idleA && !!idleB && idleA.animTick !== idleB.animTick,
-    `tick ${idleA?.animTick}->${idleB?.animTick}`,
+    !!idleA && !!idleB && idleA.animTick !== idleB.animTick && idleA.stride < 0.05 && idleB.stride < 0.05,
+    `tick ${idleA?.animTick}->${idleB?.animTick} stride ${idleA?.stride?.toFixed(3)}->${idleB?.stride?.toFixed(3)}`,
   );
 
-  // 5) Hide enter + furniture settle reaction (transform applies cleanly).
-  //    The naive bots can catch the player mid-walk (not a rendering issue),
-  //    so retry the approach once before failing (never a silent skip).
+  // 5) Hide enter + furniture settle reaction. Verify the ACTUAL reaction
+  //    fires (via the read-only __ghReact hook), not merely that the player
+  //    became transformed (Qodo #12). The naive bots can catch the player
+  //    mid-walk, so retry the approach once before failing (never a silent skip).
   await waitForActive(page);
   let reachedShelf = await walkToXY(page, BOOKSHELF.x, BOOKSHELF.y);
   if (!reachedShelf) {
@@ -1194,17 +1195,39 @@ async function poseAnimationProbes(page: Page): Promise<void> {
   } else {
     await page.waitForTimeout(200);
     await page.keyboard.press("e");
+    // The reaction is a ~300ms envelope that starts when the CLIENT's own poll
+    // observes the transform. Sample state AND the __ghReact hook together in
+    // a tight loop so we catch the reaction while it is still live (a separate
+    // "wait for transformed" loop can lag a full poll past the window).
     let applied = false;
-    for (let i = 0; i < 20 && !applied; i++) {
-      await page.waitForTimeout(120);
-      applied = (await getState(page)).players[0].state === "transformed";
+    let sawReact = false;
+    for (let i = 0; i < 30 && !(applied && sawReact); i++) {
+      const [st, reacts] = await Promise.all([
+        getState(page),
+        page.evaluate(() => (window as any).__ghReact?.() ?? []),
+      ]);
+      applied = st.players[0].state === "transformed";
+      sawReact = reacts.some((r: any) => r.fid === BOOKSHELF.id && r.amp > 0.05);
+      if (!(applied && sawReact)) await page.waitForTimeout(40);
     }
-    check("p6a: furniture reaction on hide", applied, applied ? "transformed" : "not transformed");
+    check(
+      "p6a: furniture reaction on hide",
+      applied && sawReact,
+      `transformed=${applied} react=${sawReact}`,
+    );
     if (applied) {
       await page.screenshot({ path: `${SHOTS}/p6a-hiding.png` });
       await page.keyboard.press("e");
-      await page.waitForTimeout(400);
-      await page.screenshot({ path: `${SHOTS}/p6a-emerged.png` });
+      // Assert the emerge actually completes (Qodo #13) before assuming the
+      // "emerged" screenshot is valid.
+      let exited = false;
+      for (let i = 0; i < 20 && !exited; i++) {
+        await page.waitForTimeout(120);
+        exited = (await getState(page)).players[0].state !== "transformed";
+      }
+      if (exited) {
+        await page.screenshot({ path: `${SHOTS}/p6a-emerged.png` });
+      }
     }
   }
 
