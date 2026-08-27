@@ -266,22 +266,27 @@ function doAction(): void {
 //     the active/transformed gates take over correctly and holding longer would
 //     only risk a permanent lock.
 let wantedState = "" as "active" | "transformed" | ""; // state we asked the server for
-// Number of transform POSTs currently unresolved. A counter (not a boolean) so
-// overlapping requests (rapid presses) keep suppression active until EVERY
-// request that can still toggle the state has settled.
-let transformInFlight = 0;
-let polledSinceResponse = false; // a poll has observed the post-request state
+// Poll generations: every poll_() records the generation it STARTED, and we
+// remember the most recent one that COMPLETED (lastObservedPollG) plus the
+// earliest generation after which a settle is considered "observed"
+// (settledAtG). This is how we know a poll has actually seen the server's
+// post-toggle state, rather than a stale request racing it.
+let pollGeneration = 0; // monotonically incremented each poll start
+let lastObservedPollG = 0; // generation of the most recently completed poll
+let transformInFlight = 0; // unresolved transform POSTs (overlapping presses)
+let settledAtG = 0; // a poll of generation > settledAtG is post-settle
 
-function suppressMovesForState(want: "active" | "transformed"): void {
-  wantedState = want;
+function suppressMovesForState(_want: "active" | "transformed"): void {
+  wantedState = _want;
   transformInFlight++;
-  polledSinceResponse = false;
+  settledAtG = 0; // not settled this cycle yet
 }
 
 function releaseSuppression(): void {
   wantedState = "";
   transformInFlight = 0;
-  polledSinceResponse = true;
+  settledAtG = 0;
+  lastObservedPollG = 0;
 }
 
 function movesSuppressed(): boolean {
@@ -297,10 +302,12 @@ function movesSuppressed(): boolean {
     releaseSuppression();
     return false;
   }
-  if (transformInFlight === 0 && polledSinceResponse) {
-    // Every request settled on a state we didn't request (rapid repeated
-    // presses, lost response). The poll has observed it, so the state gates
-    // take over — holding longer would only risk a permanent lock.
+  if (transformInFlight === 0 && lastObservedPollG > settledAtG) {
+    // Every request settled, and a poll that STARTED after they settled has
+    // completed — so lastState is genuinely post-toggle, and the active/
+    // transformed gates take over. A poll that began before the settle but
+    // finished after it has lastObservedPollG <= settledAtG, so it can't
+    // falsely release movement against a stale active state.
     releaseSuppression();
     return false;
   }
@@ -319,10 +326,11 @@ function doTransform(): void {
   suppressMovesForState(wantState);
   const res = api.transform(session.roomCode, session.playerId, targetFurniture);
   const settle = (): void => {
-    // Decrement per request: suppression stays active until every in-flight
-    // toggle has settled AND a poll has observed the final state.
+    // Decrement per request. When the LAST one settles, record the poll
+    // generation that must be exceeded before movement can un-suppress —
+    // i.e. a poll must start after this point and complete.
     transformInFlight = Math.max(0, transformInFlight - 1);
-    polledSinceResponse = false; // released only once the next poll observes it
+    if (transformInFlight === 0) settledAtG = pollGeneration;
   };
   res.then((r) => {
     settle();
@@ -358,11 +366,12 @@ async function enterGame(): Promise<void> {
   let failStreak = 0;
   const poll = async (): Promise<void> => {
     while (pollToken === token && screenEls.game && !screenEls.game.classList.contains("hidden")) {
+      const myG = ++pollGeneration; // stamp when this poll STARTS
       try {
         const s = await api.getState(sess.roomCode, sess.playerId);
         if (pollToken !== token) return;
         lastState = s;
-        polledSinceResponse = true; // this poll observed the post-request state
+        lastObservedPollG = myG; // this poll (started at myG) completed
         failStreak = 0;
         hideReconnect();
         updateRiddle(s);
