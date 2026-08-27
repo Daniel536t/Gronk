@@ -343,9 +343,31 @@ two follow-up rounds to 0**, including:
 Public thread: https://github.com/Daniel536t/Gronk/pull/7 — Qodo Code Review comment
 with each finding marked `✓ Resolved` at the final commit (`Bugs (0)`).
 
+### Phase 6A.1 — input / movement feel (also Qodo-reviewed)
+- **PR: [Phase 6A.1 — fix controller release rewind (movement feel)](https://github.com/Daniel536t/Gronk/pull/9)** (#9, merged)
+
+Phase 6A.1 fixed the mobile/desktop "RELEASE → REWIND" bug: the client predicted the
+avatar at 60fps while the server is authoritative at 10Hz, and releasing input hard-
+snapped the render back to the lagging server position. The fix freezes the released
+position and hands back to authoritative smoothing only once the server converges
+(client-only; no engine/server/API change). Qodo's agentic review found 2 bugs, both
+fixed in the same PR:
+1. **Moderate gaps could freeze forever** — if move POSTs fail (errors are swallowed)
+   the server never converges, leaving the avatar at a false location. Fixed with a
+   bounded reconciliation window (`RELEASE_FREEZE_MAX`): the frozen position eases back
+   to the authoritative position after 1.5s.
+2. **Handoff exposed a stale smoothed position** — clearing the override without
+   seeding the `smooth` map `draw()` actually reads caused a delayed rewind at the
+   reconciliation frame. Fixed with `seedSmooth()` at every override handoff.
+
+Both findings marked `✓ Resolved` at the final commit; the review also verified the
+11 new deterministic probes (keyboard release hold, repeated move/release cycles,
+direction change, transform-immediately-after-release, touch-emulated joystick
+release with neutral knob reset).
+
 ### Review history (public)
 The Qodo review and follow-up re-reviews on the updated commits are public on PR #1:
-https://github.com/Daniel536t/Gronk/pull/1 (Qodo Code Review comment + review markers at each commit), on PR #3 (Phase 4, `Bugs (0)` at the final commit), on PR #5 (Phase 5, `Bugs (0)` at the final commit), and on PR #7 (Phase 6A, `Bugs (0)` at the final commit).
+https://github.com/Daniel536t/Gronk/pull/1 (Qodo Code Review comment + review markers at each commit), on PR #3 (Phase 4, `Bugs (0)` at the final commit), on PR #5 (Phase 5, `Bugs (0)` at the final commit), on PR #7 (Phase 6A, `Bugs (0)` at the final commit), and on PR #9 (Phase 6A.1, both findings `✓ Resolved` at the final commit).
 
 ### Workflow
 branch → push → open PR → `\`/agentic_review\`` → fix/dismiss findings → re-review → merge.
