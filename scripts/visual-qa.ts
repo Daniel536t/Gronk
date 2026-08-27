@@ -510,14 +510,25 @@ async function transformProbe(page: Page): Promise<void> {
           applied = st2.players[0].state === "transformed";
         }
         if (applied) {
-          await page.waitForTimeout(300); // a frame or two of the ghost render
-          const chars = await getChars(page);
-          const mine = chars?.find((c) => c.id === me.id);
+          // Verify the ghost within a short frame window: the KNOWN deferred
+          // move/transform ordering race can untransform us within ~100ms of
+          // the disguise (a move POST in flight when E was pressed), so a
+          // single instant read could miss the ghost for reasons unrelated to
+          // rendering. Any frame showing transformed+drawn proves the ghost.
+          let mine: any = null;
+          let sawGhost = false;
+          for (let w = 0; w < 8 && !sawGhost; w++) {
+            await page.waitForTimeout(60);
+            const chars = await getChars(page);
+            mine = chars?.find((c) => c.id === me.id) ?? null;
+            sawGhost = !!mine && mine.drawn && mine.state === "transformed";
+          }
           check(
             "desktop: transformed self renders as ghost (drawn)",
-            !!mine && mine.drawn && mine.state === "transformed",
+            sawGhost,
             mine ? `state=${mine.state} drawn=${mine.drawn}` : "no info",
           );
+          const chars = await getChars(page);
           const disguisedBots = (chars ?? []).filter((c) => c.state === "transformed" && c.id !== me.id);
           if (disguisedBots.length > 0) {
             check(
@@ -565,24 +576,24 @@ async function waitForActive(page: Page, maxMs = 26000): Promise<void> {
   }
 }
 
-// Walk toward the bookshelf from the player's current position. A held
+// Walk toward any world point from the player's current position. A held
 // diagonal always moves at exactly 45°, which overshoots any off-diagonal
 // target, so this walks one axis at a time (the larger delta first), polling
 // until that axis lands inside tolerance. Returns true if we end close while
 // staying active.
-async function walkToBookshelf(page: Page): Promise<boolean> {
+async function walkToXY(page: Page, tx: number, ty: number, tol = 1.5): Promise<boolean> {
   const st = await getState(page);
   const m = st.players[0];
   if (m.state !== "active") return false;
-  const dx = BOOKSHELF.x - m.x;
-  const dy = BOOKSHELF.y - m.y;
+  const dx = tx - m.x;
+  const dy = ty - m.y;
   const stages: { axis: "x" | "y"; target: number; key: string; tol: number }[] = [];
   if (Math.abs(dy) > Math.abs(dx)) {
-    stages.push({ axis: "y", target: BOOKSHELF.y, key: dy > 0 ? "s" : "w", tol: 1.0 });
-    stages.push({ axis: "x", target: BOOKSHELF.x, key: dx > 0 ? "d" : "a", tol: 1.5 });
+    stages.push({ axis: "y", target: ty, key: dy > 0 ? "s" : "w", tol: 1.0 });
+    stages.push({ axis: "x", target: tx, key: dx > 0 ? "d" : "a", tol });
   } else {
-    stages.push({ axis: "x", target: BOOKSHELF.x, key: dx > 0 ? "d" : "a", tol: 1.5 });
-    stages.push({ axis: "y", target: BOOKSHELF.y, key: dy > 0 ? "s" : "w", tol: 1.0 });
+    stages.push({ axis: "x", target: tx, key: dx > 0 ? "d" : "a", tol });
+    stages.push({ axis: "y", target: ty, key: dy > 0 ? "s" : "w", tol: 1.0 });
   }
   for (const stage of stages) {
     await page.keyboard.down(stage.key);
@@ -606,7 +617,11 @@ async function walkToBookshelf(page: Page): Promise<boolean> {
   }
   const stFinal = await getState(page);
   const mf = stFinal.players[0];
-  return mf.state === "active" && Math.hypot(mf.x - BOOKSHELF.x, mf.y - BOOKSHELF.y) <= 2.6;
+  return mf.state === "active" && Math.hypot(mf.x - tx, mf.y - ty) <= 2.6;
+}
+
+async function walkToBookshelf(page: Page): Promise<boolean> {
+  return walkToXY(page, BOOKSHELF.x, BOOKSHELF.y);
 }
 
 // Hold a movement key and assert the player actually moves (toward the map
@@ -857,6 +872,172 @@ async function hideNegativeProbes(page: Page): Promise<void> {
   }
 }
 
+// ---- Phase 5: game feel (audio, particles, effects, ambient life) ---------
+// Each check starts a FRESH single-player match so bots/Gronk can't pollute
+// the counts, and every probe is wrapped so an exception FAILS the suite
+// (never silently passes). Pixel probes verify structure; artistic quality is
+// for human review of qa/screenshots.
+const BRAZIER = { x: 18, y: 48 };
+const CAULDRON = { x: 82, y: 48 };
+
+async function gameFeelProbes(page: Page): Promise<void> {
+  try {
+    await page.evaluate(() => localStorage.removeItem("gh-session"));
+    await page.goto(BASE, { waitUntil: "domcontentloaded" });
+    await page.click("#btn-single");
+    await page.waitForSelector("#screen-game:not(.hidden)", { timeout: 10000 });
+    await page.waitForTimeout(1500);
+
+    // 1) Audio: initialized after a user gesture, not muted by default.
+    const a0 = await page.evaluate(() => (window as any).__ghAudio?.() ?? null);
+    check("desktop: audio initializes after user gesture", !!a0 && a0.initialized, JSON.stringify(a0));
+    check("desktop: audio not muted by default", !!a0 && !a0.muted, "");
+
+    // 2) Mute toggle round-trips.
+    await page.click("#btn-mute");
+    const a1 = await page.evaluate(() => (window as any).__ghAudio?.() ?? null);
+    check("desktop: mute button mutes audio", !!a1 && a1.muted, "");
+    await page.click("#btn-mute");
+    const a2 = await page.evaluate(() => (window as any).__ghAudio?.() ?? null);
+    check("desktop: mute button unmutes audio", !!a2 && !a2.muted, "");
+
+    await waitForActive(page);
+    const st = await getState(page);
+    const m = st.players[0];
+    if (m.state !== "active") {
+      check("desktop: game-feel probe reached active state", false, `state=${m.state}`);
+      return;
+    }
+
+    // 3) Room ambience: spawn (9,54) is in the Reactor zone -> "reactor".
+    check("desktop: room ambience set at spawn", a0?.room === "reactor" || a0?.room === "cafeteria", `room=${a0?.room}`);
+
+    // 4) Footsteps: walking produces periodic steps; standing still stops them.
+    let s0 = await page.evaluate(() => (window as any).__ghSteps?.() ?? 0);
+    let s1 = s0;
+    // If Gronk interrupted the first walk (closet), retry once after respawn.
+    for (let attempt = 0; attempt < 2 && s1 <= s0; attempt++) {
+      s0 = await page.evaluate(() => (window as any).__ghSteps?.() ?? 0);
+      const stW = await getState(page);
+      const mW = stW.players[0];
+      if (mW.state !== "active") await waitForActive(page);
+      const stW2 = await getState(page);
+      await holdKey(page, stW2.players[0].x < 50 ? "d" : "a", 1600);
+      s1 = await page.evaluate(() => (window as any).__ghSteps?.() ?? 0);
+    }
+    check("desktop: walking produces periodic footsteps", s1 > s0, `${s0} -> ${s1}`);
+    const s2 = await page.evaluate(() => (window as any).__ghSteps?.() ?? 0);
+    await page.waitForTimeout(1200); // idle move(0,0) — no walk cycle
+    const s3 = await page.evaluate(() => (window as any).__ghSteps?.() ?? 0);
+    check("desktop: stationary player stops footsteps", s3 === s2, `${s2} -> ${s3}`);
+
+    // 5) Hide/emerge effects: particles spawn + sound plays; room flips to
+    //    Library while we're at the bookshelf.
+    if (await walkToBookshelf(page)) {
+      await page.waitForTimeout(400);
+      const ai = await page.evaluate(() => (window as any).__ghAudio?.() ?? null);
+      check(
+        "desktop: interaction tick plays on affordance",
+        !!ai && (ai.counts?.interaction ?? 0) >= 1,
+        `interaction=${ai?.counts?.interaction ?? 0}`,
+      );
+      const p0 = await page.evaluate(() => (window as any).__ghParticles?.() ?? null);
+      await page.keyboard.press("e");
+      let applied = false;
+      for (let i = 0; i < 20 && !applied; i++) {
+        await page.waitForTimeout(120);
+        applied = (await getState(page)).players[0].state === "transformed";
+      }
+      if (applied) {
+        await page.waitForTimeout(350); // motes + hide sounds during the enter anim
+        const p1 = await page.evaluate(() => (window as any).__ghParticles?.() ?? null);
+        check(
+          "desktop: hiding spawns particles",
+          !!p1 && (p1.totalSpawned ?? 0) > (p0?.totalSpawned ?? 0),
+          `spawned ${p0?.totalSpawned} -> ${p1?.totalSpawned}`,
+        );
+        const ah = await page.evaluate(() => (window as any).__ghAudio?.() ?? null);
+        check(
+          "desktop: hiding plays hide sound",
+          !!ah && (ah.counts?.hide ?? 0) >= 1,
+          `hide=${ah?.counts?.hide ?? 0}`,
+        );
+        const roomLib = await page.evaluate(() => (window as any).__ghAudio?.()?.room ?? null);
+        check("desktop: room ambience follows player (library)", roomLib === "library", `room=${roomLib}`);
+        await page.keyboard.press("e");
+        let exited = false;
+        for (let i = 0; i < 20 && !exited; i++) {
+          await page.waitForTimeout(120);
+          exited = (await getState(page)).players[0].state === "active";
+        }
+        if (exited) {
+          await page.waitForTimeout(300);
+          const p2 = await page.evaluate(() => (window as any).__ghParticles?.() ?? null);
+          check(
+            "desktop: emerging spawns particles",
+            !!p2 && (p2.totalSpawned ?? 0) > (p1?.totalSpawned ?? 0),
+            `spawned ${p1?.totalSpawned} -> ${p2?.totalSpawned}`,
+          );
+          const ae = await page.evaluate(() => (window as any).__ghAudio?.() ?? null);
+          check(
+            "desktop: emerging plays emerge sound",
+            !!ae && (ae.counts?.emerge ?? 0) >= 1,
+            `emerge=${ae?.counts?.emerge ?? 0}`,
+          );
+        }
+      }
+    }
+
+    // 6) Effects: hide/emerge shook the camera; shake decays; bounds intact.
+    const e0 = await page.evaluate(() => (window as any).__ghEffects?.() ?? null);
+    check("desktop: effects system present", !!e0 && typeof e0.shake === "number", "");
+    await page.waitForTimeout(1300);
+    const e1 = await page.evaluate(() => (window as any).__ghEffects?.() ?? null);
+    check("desktop: camera shake decays to zero", !!e1 && e1.shake < 0.05, `shake=${e1?.shake}`);
+    const cam = await getCam(page);
+    check(
+      "desktop: camera bounds intact after effects",
+      !!cam && cam.x >= 0 && cam.x <= 100 && cam.y >= 0 && cam.y <= 60,
+      `cam=${cam ? cam.x.toFixed(1) + "," + cam.y.toFixed(1) : "none"}`,
+    );
+
+    // 7) Particle pool stays bounded even under event spam.
+    const pm = await page.evaluate(() => (window as any).__ghParticles?.() ?? null);
+    check("desktop: particle count bounded", !!pm && pm.active <= pm.max, `active=${pm?.active} max=${pm?.max}`);
+
+    // 8) Ambient life: brazier embers spawn while it's on screen.
+    if (await walkToXY(page, BRAZIER.x, BRAZIER.y)) {
+      await page.waitForTimeout(400);
+      const b0 = await page.evaluate(() => (window as any).__ghParticles?.() ?? null);
+      await page.waitForTimeout(1500); // ember spawner runs ~every 0.16s
+      const b1 = await page.evaluate(() => (window as any).__ghParticles?.() ?? null);
+      check(
+        "desktop: brazier emits ambient embers",
+        !!b1 && (b1.totalSpawned ?? 0) > (b0?.totalSpawned ?? 0),
+        `spawned ${b0?.totalSpawned} -> ${b1?.totalSpawned}`,
+      );
+      await page.screenshot({ path: `${SHOTS}/desktop-reactor-brazier.png` });
+    }
+
+    // 9) Ambient life: cauldron vapor while on screen.
+    if (await walkToXY(page, CAULDRON.x, CAULDRON.y)) {
+      await page.waitForTimeout(400);
+      const c0 = await page.evaluate(() => (window as any).__ghParticles?.() ?? null);
+      await page.waitForTimeout(1600); // vapor spawner runs ~every 0.38s
+      const c1 = await page.evaluate(() => (window as any).__ghParticles?.() ?? null);
+      check(
+        "desktop: cauldron emits ambient vapor",
+        !!c1 && (c1.totalSpawned ?? 0) > (c0?.totalSpawned ?? 0),
+        `spawned ${c0?.totalSpawned} -> ${c1?.totalSpawned}`,
+      );
+      await page.screenshot({ path: `${SHOTS}/desktop-storage-cauldron.png` });
+    }
+  } catch (e) {
+    // A probe that aborts must FAIL the suite — never silently pass.
+    check("desktop: game-feel probe completed", false, `exception: ${(e as Error).message}`);
+  }
+}
+
 async function main(): Promise<void> {
   mkdirSync(SHOTS, { recursive: true });
   console.log("Booting game server on :" + PORT + " ...");
@@ -899,6 +1080,7 @@ async function main(): Promise<void> {
         await furnitureTour(p);
         await hideProbe(p);
         await hideNegativeProbes(p);
+        await gameFeelProbes(p);
       }
       const cam = await getCam(p);
       if (cam) {

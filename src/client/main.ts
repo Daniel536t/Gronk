@@ -5,6 +5,7 @@ import "./style.css";
 import * as api from "./api";
 import { InputManager } from "./input";
 import { Renderer } from "./render";
+import { audio } from "./audio";
 import type { GameState } from "../engine/types";
 import {
   ACTION_RANGE,
@@ -468,6 +469,7 @@ function showResult(s: GameState): void {
         : "The other team got closeted.";
     if (s.winReason === "bank") spawnConfetti();
   }
+  audio.playGameEnd();
   show("result");
 }
 
@@ -675,6 +677,31 @@ const input = new InputManager({
 
 btnAction.addEventListener("click", doAction);
 btnTransform.addEventListener("click", doTransform);
+
+// ---- audio (Phase 5) ----------------------------------------------------
+// Browsers block Web Audio until a user gesture. init() is idempotent and
+// failure-safe — until a gesture happens, every sound is a silent no-op and
+// the game plays exactly the same (spec #8 / #24).
+function initAudioOnGesture(): void {
+  const boot = (): void => {
+    audio.init();
+    window.removeEventListener("pointerdown", boot);
+    window.removeEventListener("keydown", boot);
+  };
+  window.addEventListener("pointerdown", boot);
+  window.addEventListener("keydown", boot);
+}
+initAudioOnGesture();
+
+const btnMute = $<HTMLButtonElement>("btn-mute");
+function updateMuteBtn(): void {
+  btnMute.textContent = audio.isMuted() ? "🔇" : "🔊";
+}
+btnMute.addEventListener("click", () => {
+  audio.init(); // the click IS a gesture — safe to start audio here
+  audio.toggleMuted();
+  updateMuteBtn();
+});
 
 show("title");
 void resumeSession();
