@@ -350,8 +350,9 @@ Phase 6A.1 fixed the mobile/desktop "RELEASE → REWIND" bug: the client predict
 avatar at 60fps while the server is authoritative at 10Hz, and releasing input hard-
 snapped the render back to the lagging server position. The fix freezes the released
 position and hands back to authoritative smoothing only once the server converges
-(client-only; no engine/server/API change). Qodo's agentic review found 2 bugs, both
-fixed in the same PR:
+(client-only; no engine/server/API change). Qodo's agentic review found 3 bugs; two
+were fixed in the same PR (the third, "Slow requests restore rewind", was missed in
+the merge pass and resolved in PR #11 — see the follow-up section below):
 1. **Moderate gaps could freeze forever** — if move POSTs fail (errors are swallowed)
    the server never converges, leaving the avatar at a false location. Fixed with a
    bounded reconciliation window (`RELEASE_FREEZE_MAX`): the frozen position eases back
@@ -360,10 +361,13 @@ fixed in the same PR:
    seeding the `smooth` map `draw()` actually reads caused a delayed rewind at the
    reconciliation frame. Fixed with `seedSmooth()` at every override handoff.
 
-Both findings marked `✓ Resolved` at the final commit; the review also verified the
-11 new deterministic probes (keyboard release hold, repeated move/release cycles,
+Both in-PR findings marked `✓ Resolved` at the final commit; the review also verified
+the 11 new deterministic probes (keyboard release hold, repeated move/release cycles,
 direction change, transform-immediately-after-release, touch-emulated joystick
-release with neutral knob reset).
+release with neutral knob reset). The third finding stayed open at the PR #9 merge
+point — the Qodo dashboard chip for it reads "Ignored" (per-PR status; the fix landed
+after the PR closed), and a resolution reply in that finding's thread links it to
+PR #11.
 
 ### Phase 6A.1 follow-up — release reconciliation hardening (Qodo-reviewed)
 - **PR: [Release reconciliation: progress detection + bounded stall evidence](https://github.com/Daniel536t/Gronk/pull/11)** (#11, merged)
