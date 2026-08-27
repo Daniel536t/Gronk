@@ -5,7 +5,7 @@
 // (server-authoritative). Captures screenshots to qa/screenshots/.
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync } from "node:fs";
-import { chromium, type Page } from "playwright";
+import { chromium, type Browser, type Page } from "playwright";
 
 const PORT = 8799;
 const BASE = `http://localhost:${PORT}`;
@@ -1271,6 +1271,292 @@ async function getMyPose(page: Page): Promise<any | null> {
   return (chars ?? []).find((c) => c.mine) ?? null;
 }
 
+// ---- Phase 6A.1: input / movement feel (release must not rewind) -------------
+// The controller bug: releasing the stick/keyboard snapped the locally
+// predicted avatar back to the lagging 10Hz server position (a visible
+// rewind). These probes assert the PRESS -> MOVE / RELEASE -> STAY contract
+// using the rendered position from __ghChars (x/y are the drawn position,
+// including the local prediction override).
+async function inputFeelProbes(page: Page): Promise<void> {
+  const releaseKeys = async (): Promise<void> => {
+    await page.keyboard.up("w");
+    await page.keyboard.up("a");
+    await page.keyboard.up("s");
+    await page.keyboard.up("d");
+  };
+
+  // 1) move -> release -> remain stationary (the core regression). The old
+  //    code snapped to the server position on release, so the released sample
+  //    fell below the last moving sample and the position drifted back.
+  await keepGameAlive(page);
+  await waitForActive(page);
+  await releaseKeys();
+  await page.waitForTimeout(350); // settle any prior movement
+  const r0 = await getMyPose(page);
+  if (!r0) {
+    check("p6a1: move+release holds position", false, "no rendered position");
+    return;
+  }
+  await page.keyboard.down("d");
+  let movingX = 0;
+  for (let i = 0; i < 12; i++) {
+    const r = await getMyPose(page);
+    if (r) movingX = Math.max(movingX, r.x);
+    await page.waitForTimeout(60);
+  }
+  await page.keyboard.up("d");
+  const rRel = await getMyPose(page);
+  const moved = movingX > r0.x + 1.5; // actually walked (4u/s * ~0.7s)
+  const noRewind = !!rRel && rRel.x >= movingX - 0.3; // release did NOT snap back
+  check(
+    "p6a1: move+release holds position (no rewind on release)",
+    moved && noRewind,
+    `x0=${r0.x.toFixed(2)} moving=${movingX.toFixed(2)} released=${rRel?.x.toFixed(2)}`,
+  );
+  // After the server reconciles (a round-trip + tick), the position must not
+  // drift back below the released spot by more than a sub-tick lerp.
+  await keepGameAlive(page);
+  await page.waitForTimeout(800);
+  const rSettled = await getMyPose(page);
+  check(
+    "p6a1: released position persists after server reconcile",
+    !!rSettled && !!rRel && rSettled.x >= rRel.x - 0.6,
+    `released=${rRel?.x.toFixed(2)} settled=${rSettled?.x.toFixed(2)}`,
+  );
+
+  // 2) Repeated move/release cycles: each release holds, never drifts back.
+  await keepGameAlive(page);
+  await waitForActive(page);
+  await releaseKeys();
+  await page.waitForTimeout(250);
+  const c0 = await getMyPose(page);
+  if (!c0) {
+    check("p6a1: repeated move/release cycles hold position", false, "no rendered position");
+    return;
+  }
+  let cLast = c0;
+  let okCycles = true;
+  for (let c = 0; c < 3 && okCycles; c++) {
+    const dir = c % 2 === 0 ? "a" : "d"; // left, then right, then left
+    const sign = c % 2 === 0 ? -1 : 1; // left decreases x, right increases x
+    await page.keyboard.down(dir);
+    // Track the extreme x reached in the intended direction.
+    let extreme = cLast.x; // 'a': min; 'd': max
+    for (let i = 0; i < 8; i++) {
+      const r = await getMyPose(page);
+      if (r) extreme = c % 2 === 0 ? Math.min(extreme, r.x) : Math.max(extreme, r.x);
+      await page.waitForTimeout(50);
+    }
+    await page.keyboard.up(dir);
+    await page.waitForTimeout(80);
+    const r2 = await getMyPose(page);
+    if (!r2) {
+      okCycles = false;
+      break;
+    }
+    // Progress: the player actually moved in the intended direction.
+    const progress = sign < 0 ? r2.x <= cLast.x - 1.0 : r2.x >= cLast.x + 1.0;
+    // Release holds: the position after release is at/inside the extreme
+    // reached while moving (never rewound back toward the cycle start).
+    const held = sign < 0 ? r2.x <= extreme + 0.4 : r2.x >= extreme - 0.4;
+    okCycles = progress && held;
+    if (!okCycles) {
+      check(
+        "p6a1: repeated move/release cycles hold position",
+        false,
+        `cycle ${c} dir=${dir} from=${cLast.x.toFixed(2)} extreme=${extreme.toFixed(2)} after=${r2.x.toFixed(2)}`,
+      );
+      break;
+    }
+    cLast = r2;
+    await keepGameAlive(page);
+    await waitForActive(page);
+  }
+  if (okCycles) check("p6a1: repeated move/release cycles hold position", true, "3 cycles");
+
+  // 3) Direction change while moving never rewinds.
+  await keepGameAlive(page);
+  await waitForActive(page);
+  await releaseKeys();
+  await page.waitForTimeout(200);
+  await page.keyboard.down("w");
+  await page.waitForTimeout(250);
+  await page.keyboard.down("d"); // direction change mid-move (diagonal)
+  await page.waitForTimeout(250);
+  // 'w' decreases y (moves up), 'd' increases x (moves right): track the
+  // extreme in each movement axis (min y, max x) so the release-hold check
+  // is direction-correct.
+  let diagMaxX = 0;
+  let diagMinY = 999;
+  for (let i = 0; i < 6; i++) {
+    const r = await getMyPose(page);
+    if (r) {
+      diagMaxX = Math.max(diagMaxX, r.x);
+      diagMinY = Math.min(diagMinY, r.y);
+    }
+    await page.waitForTimeout(50);
+  }
+  await releaseKeys();
+  const dRel = await getMyPose(page);
+  check(
+    "p6a1: direction change + release holds (no rewind)",
+    !!dRel && dRel.x >= diagMaxX - 0.3 && dRel.y <= diagMinY + 0.3,
+    `extreme=(${diagMaxX.toFixed(2)},${diagMinY.toFixed(2)}) released=(${dRel?.x.toFixed(2)},${dRel?.y.toFixed(2)})`,
+  );
+
+  // 4) Transform immediately after release: walk to the bookshelf, let go,
+  //    press E, stay hidden (no stale movement reveals), untransform cleanly.
+  await keepGameAlive(page);
+  await waitForActive(page);
+  await releaseKeys();
+  let reached = await walkToXY(page, BOOKSHELF.x, BOOKSHELF.y);
+  if (!reached) {
+    await keepGameAlive(page);
+    await waitForActive(page);
+    reached = await walkToXY(page, BOOKSHELF.x, BOOKSHELF.y);
+  }
+  if (!reached) {
+    check("p6a1: transform immediately after release", false, "walk to bookshelf failed");
+  } else {
+    await page.waitForTimeout(150); // release fully settles
+    const near = await getMyPose(page);
+    await page.keyboard.press("e");
+    let applied = false;
+    for (let i = 0; i < 20 && !applied; i++) {
+      await page.waitForTimeout(120);
+      applied = (await getState(page)).players[0].state === "transformed";
+    }
+    // After the transform, wait a beat: a stale released-movement POST must
+    // NOT have untransformed us (that was the guard's whole purpose).
+    let stillHidden = false;
+    if (applied) {
+      await page.waitForTimeout(450);
+      stillHidden = (await getState(page)).players[0].state === "transformed";
+    }
+    check(
+      "p6a1: transform immediately after release succeeds and stays hidden",
+      applied && stillHidden,
+      `applied=${applied} stillHidden=${stillHidden} near=(${near?.x.toFixed(1)},${near?.y.toFixed(1)})`,
+    );
+    if (applied) {
+      await page.keyboard.press("e");
+      let exited = false;
+      for (let i = 0; i < 20 && !exited; i++) {
+        await page.waitForTimeout(120);
+        exited = (await getState(page)).players[0].state !== "transformed";
+      }
+      check(
+        "p6a1: emerge after release returns to active",
+        exited,
+        exited ? "active" : "still transformed",
+      );
+    }
+  }
+}
+
+// ---- Phase 6A.1: virtual joystick release (touch/controller path) -----------
+// The joystick shares the SAME onMove path as the keyboard, but drives it with
+// real pointer events on a touch-enabled context: drag up -> release -> the
+// rendered position must HOLD (no rewind to the lagging server position) and
+// the knob must return to neutral.
+async function joystickReleaseProbe(browser: Browser): Promise<void> {
+  const ctx = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+    isMobile: true,
+  });
+  const p = await ctx.newPage();
+  p.on("pageerror", (e) => failures.push(`joystick pageerror: ${e.message}`));
+  try {
+    await p.goto(BASE, { waitUntil: "domcontentloaded" });
+    await p.click("#btn-single");
+    await p.waitForSelector("#screen-game:not(.hidden)", { timeout: 10000 });
+    await p.waitForTimeout(1500);
+
+    const stick = p.locator("#joystick");
+    const visible = await stick.isVisible();
+    check("p6a1: joystick visible on touch device", visible, visible ? "shown" : "hidden");
+    if (!visible) {
+      await ctx.close();
+      return;
+    }
+    const box = await stick.boundingBox();
+    if (!box) {
+      check("p6a1: joystick drag+release holds position", false, "no joystick box");
+      await ctx.close();
+      return;
+    }
+    const cx = box.x + box.width / 2;
+    const cy = box.y + box.height / 2;
+    // Baseline rendered + server y (spawn is near the bottom; up = smaller y).
+    const base = await p.evaluate(() => {
+      const chars = (window as any).__ghChars?.() ?? [];
+      const mine = chars.find((c: any) => c.mine);
+      return mine ? { x: mine.x, y: mine.y } : null;
+    });
+    // Drag up ~40px and hold.
+    await p.mouse.move(cx, cy);
+    await p.mouse.down();
+    await p.mouse.move(cx, cy - 40, { steps: 4 });
+    await p.waitForTimeout(450);
+    const held = await p.evaluate(() => {
+      const chars = (window as any).__ghChars?.() ?? [];
+      const mine = chars.find((c: any) => c.mine);
+      return mine ? { x: mine.x, y: mine.y } : null;
+    });
+    const movedUp = !!base && !!held && held.y < base.y - 1.0;
+    check("p6a1: joystick drag moves the player up", movedUp, `base=${base?.y.toFixed(2)} held=${held?.y.toFixed(2)}`);
+
+    // Release: the rendered position must NOT rewind back down toward the
+    // lagging server position.
+    await p.mouse.up();
+    await p.waitForTimeout(120);
+    const released = await p.evaluate(() => {
+      const chars = (window as any).__ghChars?.() ?? [];
+      const mine = chars.find((c: any) => c.mine);
+      return mine ? { x: mine.x, y: mine.y } : null;
+    });
+    // Knob returns to neutral.
+    const knobReset = await p.evaluate(() => {
+      const knob = document.getElementById("joystick-knob") as HTMLElement;
+      if (!knob) return false;
+      // reset() sets "translate(0,0)"; the browser serializes it back as
+      // "translate(0px, 0px)" — normalize by stripping px before comparing.
+      const t = knob.style.transform.replace(/px/g, "");
+      return t === "" || t === "translate(0,0)" || t === "translate(0, 0)";
+    });
+    check(
+      "p6a1: joystick knob returns to neutral on release",
+      knobReset,
+      knobReset ? "translate(0,0)" : "not reset",
+    );
+    // No rewind: the released y stays above (smaller than) the held y + tol,
+    // and stays up the field vs baseline (never snaps back toward spawn).
+    const noRewind = !!held && !!released && released.y <= held.y + 0.6;
+    check(
+      "p6a1: joystick release holds position (no rewind)",
+      noRewind && movedUp,
+      `held=${held?.y.toFixed(2)} released=${released?.y.toFixed(2)}`,
+    );
+    // After the server reconciles, the rendered position persists up-field.
+    await p.waitForTimeout(800);
+    const settled = await p.evaluate(() => {
+      const chars = (window as any).__ghChars?.() ?? [];
+      const mine = chars.find((c: any) => c.mine);
+      return mine ? { x: mine.x, y: mine.y } : null;
+    });
+    check(
+      "p6a1: joystick released position persists after reconcile",
+      !!settled && !!base && settled.y <= base.y - 0.5 && settled.y <= (released?.y ?? 999) + 0.6,
+      `base=${base?.y.toFixed(2)} settled=${settled?.y.toFixed(2)}`,
+    );
+  } catch (e) {
+    check("p6a1: joystick release probe completed", false, `exception: ${(e as Error).message}`);
+  } finally {
+    await ctx.close();
+  }
+}
+
 async function main(): Promise<void> {
   mkdirSync(SHOTS, { recursive: true });
   console.log("Booting game server on :" + PORT + " ...");
@@ -1315,6 +1601,8 @@ async function main(): Promise<void> {
         await hideNegativeProbes(p);
         await gameFeelProbes(p);
         await poseAnimationProbes(p);
+        await inputFeelProbes(p);
+        await joystickReleaseProbe(browser);
       }
       const cam = await getCam(p);
       if (cam) {
