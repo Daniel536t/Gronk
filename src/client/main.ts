@@ -266,18 +266,21 @@ function doAction(): void {
 //     the active/transformed gates take over correctly and holding longer would
 //     only risk a permanent lock.
 let wantedState = "" as "active" | "transformed" | ""; // state we asked the server for
-let transformInFlight = false; // a transform POST is unresolved
+// Number of transform POSTs currently unresolved. A counter (not a boolean) so
+// overlapping requests (rapid presses) keep suppression active until EVERY
+// request that can still toggle the state has settled.
+let transformInFlight = 0;
 let polledSinceResponse = false; // a poll has observed the post-request state
 
 function suppressMovesForState(want: "active" | "transformed"): void {
   wantedState = want;
-  transformInFlight = true;
+  transformInFlight++;
   polledSinceResponse = false;
 }
 
 function releaseSuppression(): void {
   wantedState = "";
-  transformInFlight = false;
+  transformInFlight = 0;
   polledSinceResponse = true;
 }
 
@@ -294,9 +297,10 @@ function movesSuppressed(): boolean {
     releaseSuppression();
     return false;
   }
-  if (!transformInFlight && polledSinceResponse) {
-    // The toggle settled on a state we didn't request (rapid repeated presses,
-    // lost response). The poll has observed it, so the state gates take over.
+  if (transformInFlight === 0 && polledSinceResponse) {
+    // Every request settled on a state we didn't request (rapid repeated
+    // presses, lost response). The poll has observed it, so the state gates
+    // take over — holding longer would only risk a permanent lock.
     releaseSuppression();
     return false;
   }
@@ -315,19 +319,23 @@ function doTransform(): void {
   suppressMovesForState(wantState);
   const res = api.transform(session.roomCode, session.playerId, targetFurniture);
   const settle = (): void => {
-    transformInFlight = false;
+    // Decrement per request: suppression stays active until every in-flight
+    // toggle has settled AND a poll has observed the final state.
+    transformInFlight = Math.max(0, transformInFlight - 1);
     polledSinceResponse = false; // released only once the next poll observes it
   };
   res.then((r) => {
     settle();
     // If the server rejected the request (no state change), free input now
-    // instead of waiting out the whole window.
+    // instead of waiting out the whole window — but only when this was the
+    // last unresolved request: an earlier rejection must not release while a
+    // later toggle is still in flight.
     const ok = (r as { ok?: boolean } | undefined)?.ok ?? false;
-    if (!ok) releaseSuppression();
+    if (!ok && transformInFlight === 0) releaseSuppression();
   });
   res.catch(() => {
     settle();
-    releaseSuppression();
+    if (transformInFlight === 0) releaseSuppression();
   });
 }
 

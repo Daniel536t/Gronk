@@ -416,15 +416,19 @@ export class Renderer {
       this.drawPlayer(ctx, p, dx, dy, timeMs, dt, scaleMul, alphaMul);
     }
 
-    // Cover alpha per object: steady 1 while any player is hidden inside, else
-    // driven by in-flight enter/exit animations (fade in/out).
+    // Cover alpha per object: steady 1 while ANY player is hidden inside, else
+    // driven by in-flight enter/exit animations (fade in/out). The only
+    // exception is a player with an active ENTER animation of their own — their
+    // fading cover (not an instant 1) renders their entrance. Other occupants
+    // of the same object keep steady cover, so one player's animation can never
+    // expose another player who stays hidden.
     this.lastCoverMap.clear();
-    const animObjects = new Set<string>();
-    for (const a of this.hideAnims.values()) {
-      if (!a.done) animObjects.add(a.furnitureId);
+    const enterSubjects = new Set<string>();
+    for (const [pid, a] of this.hideAnims) {
+      if (!a.done && a.phase === "enter") enterSubjects.add(pid);
     }
     for (const p of state.players) {
-      if (p.state === "transformed" && p.transformedAs && !animObjects.has(p.transformedAs)) {
+      if (p.state === "transformed" && p.transformedAs && !enterSubjects.has(p.id)) {
         this.lastCoverMap.set(p.transformedAs, 1);
       }
     }

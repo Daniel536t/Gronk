@@ -747,8 +747,9 @@ async function hideProbe(page: Page): Promise<void> {
       done = true;
     }
     if (!done) check("desktop: hide probe completed", false, "all attempts interrupted");
-  } catch {
-    // Best-effort only.
+  } catch (e) {
+    // A probe that aborts must FAIL the suite — never silently pass.
+    check("desktop: hide probe completed", false, `exception: ${(e as Error).message}`);
   }
 }
 
@@ -758,19 +759,34 @@ async function hideNegativeProbes(page: Page): Promise<void> {
   try {
     await keepGameAlive(page);
     await waitForActive(page);
-    const reached = await walkToBookshelf(page);
+    // Retry the walk a couple of times before declaring the fixture unreachable
+    // (a single Gronk interruption shouldn't disable the checks).
+    let reached = false;
+    for (let i = 0; i < 2 && !reached; i++) {
+      reached = await walkToBookshelf(page);
+      if (!reached) {
+        await keepGameAlive(page);
+        await waitForActive(page);
+      }
+    }
     const sess = JSON.parse((await page.evaluate(() => localStorage.getItem("gh-session"))) || "null");
 
     // 1) Rejected transform (furniture far away) must not lock movement. The
     //    API test needs no position, so it runs even if the walk failed.
     const status = await page.evaluate(
       async ({ room, player }) => {
-        const r = await fetch("/api/transform", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ roomCode: room, playerId: player, furnitureId: "furn-0" }),
-        });
-        return r.status;
+        try {
+          const r = await fetch("/api/transform", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ roomCode: room, playerId: player, furnitureId: "furn-0" }),
+          });
+          return r.status;
+        } catch {
+          // Network/fetch rejection — the mcpHttp/api layer doesn't reject for
+          // a 4xx, but guard anyway so this never surfaces as a pageerror.
+          return 0;
+        }
       },
       { room: sess.roomCode, player: sess.playerId },
     );
@@ -778,11 +794,12 @@ async function hideNegativeProbes(page: Page): Promise<void> {
     await assertCanMove(page, "desktop: movement recovers after rejected transform");
 
     if (!reached) {
-      // The remaining checks need the bookshelf nearby — mark them skipped.
-      check("desktop: rapid transform ends in a valid state", true, "skipped (could not reach bookshelf)");
-      check("desktop: no permanent suppression after rapid transform", true, "skipped (could not reach bookshelf)");
-      check("desktop: move during transition settles", true, "skipped (could not reach bookshelf)");
-      check("desktop: movement unlocked after transition", true, "skipped (could not reach bookshelf)");
+      // The remaining checks NEED the bookshelf fixture — an unreachable
+      // fixture is a real failure (setup/regression), never a pass.
+      check("desktop: rapid transform ends in a valid state", false, "skipped (could not reach bookshelf)");
+      check("desktop: no permanent suppression after rapid transform", false, "skipped (could not reach bookshelf)");
+      check("desktop: move during transition settles", false, "skipped (could not reach bookshelf)");
+      check("desktop: movement unlocked after transition", false, "skipped (could not reach bookshelf)");
       return;
     }
 
@@ -832,10 +849,11 @@ async function hideNegativeProbes(page: Page): Promise<void> {
       }
       await assertCanMove(page, "desktop: movement unlocked after transition");
     } else {
-      check("desktop: move during transition settles", true, "skipped (position drifted)");
+      check("desktop: move during transition settles", false, "skipped (position drifted — fixture unreachable)");
     }
-  } catch {
-    // Best-effort only.
+  } catch (e) {
+    // A probe that aborts must FAIL the suite — never silently pass.
+    check("desktop: hide negative probes completed", false, `exception: ${(e as Error).message}`);
   }
 }
 
