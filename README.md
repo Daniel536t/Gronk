@@ -314,9 +314,38 @@ guard (parallel `.then`/`.catch` — now chained).
 Public thread: https://github.com/Daniel536t/Gronk/pull/5 — Qodo Code Review comment
 with each finding marked `✓ Resolved` at the final commit (`Bugs (0)`).
 
+### Phase 6A — character animation & motion (also Qodo-reviewed)
+- **PR: [Phase 6A — articulated character rig, Gronk upgrade, furniture reactions](https://github.com/Daniel536t/Gronk/pull/7)** (#7, merged)
+
+Phase 6A (pose-based character rig: speed-scaled stride, directional back/front/profile
+silhouettes, cloak secondary motion, stun droop, carry hunch, reduced-motion gate; a
+Gronk rig with feet/arms/head/nostrils/catch-lunge; furniture settle reactions on
+hide/emerge) went through a full Qodo agentic review that closed **15 findings over
+two follow-up rounds to 0**, including:
+1. An unbalanced canvas save in `drawGronk` leaked the rig transform into particle
+   rendering and grew the stack every frame.
+2. Front/back hoods collapsed to a zero-area path (all X coordinates multiplied by the
+   zero horizontal facing component).
+3. The furniture reaction scaled around the world origin, drifting distant objects;
+   now it scales about the object center in both back and front passes.
+4. Reduced motion scaled whole avatars down 45% (only motion amplitudes should damp),
+   and left lean full-strength on down/horizontal facings.
+5. Stun stars/diamond/ghost motes rendered at the world origin after the character
+   transform was restored — now drawn inside the local frame.
+6. The advertised stun slouch and cloak trailing stream were computed but never drawn
+   — both are now consumed by the renderer.
+7. The furniture-reaction envelope treated remaining countdown as elapsed time
+   (suppressed for most of the window) and the hood lean sign doubled for left/up.
+8. QA honesty: the reaction probe now reads a live `__ghReact` hook instead of the
+   transform state, the idle probe asserts zero stride in both samples, and the
+   hide-exit probe verifies the player actually emerged before the screenshot.
+
+Public thread: https://github.com/Daniel536t/Gronk/pull/7 — Qodo Code Review comment
+with each finding marked `✓ Resolved` at the final commit (`Bugs (0)`).
+
 ### Review history (public)
 The Qodo review and follow-up re-reviews on the updated commits are public on PR #1:
-https://github.com/Daniel536t/Gronk/pull/1 (Qodo Code Review comment + review markers at each commit), on PR #3 (Phase 4, `Bugs (0)` at the final commit), and on PR #5 (Phase 5, `Bugs (0)` at the final commit).
+https://github.com/Daniel536t/Gronk/pull/1 (Qodo Code Review comment + review markers at each commit), on PR #3 (Phase 4, `Bugs (0)` at the final commit), on PR #5 (Phase 5, `Bugs (0)` at the final commit), and on PR #7 (Phase 6A, `Bugs (0)` at the final commit).
 
 ### Workflow
 branch → push → open PR → `\`/agentic_review\`` → fix/dismiss findings → re-review → merge.
