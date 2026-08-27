@@ -365,9 +365,33 @@ Both findings marked `✓ Resolved` at the final commit; the review also verifie
 direction change, transform-immediately-after-release, touch-emulated joystick
 release with neutral knob reset).
 
+### Phase 6A.1 follow-up — release reconciliation hardening (Qodo-reviewed)
+- **PR: [Release reconciliation: progress detection + bounded stall evidence](https://github.com/Daniel536t/Gronk/pull/11)** (#11, merged)
+
+A third Qodo finding on PR #9 ("Slow requests restore rewind" — the 1.5s freeze
+deadline fired on elapsed time alone, rewinding slow-but-successful connections
+mid-convergence) was missed in the PR #9 merge pass and fixed here in two review
+rounds to `Bugs (0)`:
+1. **Slow requests restore rewind** → replaced the wall-clock deadline with
+   progress detection: any server-position movement resets the stall counter,
+   so convergence in flight never triggers the ease-back.
+2. **Frames masquerade as polls** → the stall clock had accrued frame dt (60fps)
+   against a signal that only updates on polls (10Hz); a single slow poll could
+   exhaust the bound. Fixed by counting distinct completed polls passed from
+   `main.ts`, never frames.
+3. **Poll failures freeze forever** → failed polls now count as stall evidence
+   too (`pollCompletions` advances on every completed poll), and `getState`
+   gained an 8s fetch timeout so a hung request cannot pend forever. Ease-back
+   happens after 15 completed polls without convergence — ~1.5s when polls
+   complete at the healthy 10Hz rate, longer when requests hang (each hung
+   poll delays evidence until its 8s timeout) — but always bounded, instead
+   of freezing the avatar at a false position indefinitely.
+
 ### Review history (public)
 The Qodo review and follow-up re-reviews on the updated commits are public on PR #1:
-https://github.com/Daniel536t/Gronk/pull/1 (Qodo Code Review comment + review markers at each commit), on PR #3 (Phase 4, `Bugs (0)` at the final commit), on PR #5 (Phase 5, `Bugs (0)` at the final commit), on PR #7 (Phase 6A, `Bugs (0)` at the final commit), and on PR #9 (Phase 6A.1, both findings `✓ Resolved` at the final commit).
+https://github.com/Daniel536t/Gronk/pull/1 (Qodo Code Review comment + review markers at each commit), on PR #3 (Phase 4, `Bugs (0)` at the final commit), on PR #5 (Phase 5, `Bugs (0)` at the final commit), on PR #7 (Phase 6A, `Bugs (0)` at the final commit), on PR #9 (Phase 6A.1, findings
+`✓ Resolved` at the final commit), and on PR #11 (Phase 6A.1 follow-up, `Bugs (0)`
+at the final commit).
 
 ### Workflow
 branch → push → open PR → `\`/agentic_review\`` → fix/dismiss findings → re-review → merge.
