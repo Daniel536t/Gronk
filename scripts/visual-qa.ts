@@ -1082,6 +1082,195 @@ async function gameFeelProbes(page: Page): Promise<void> {
   }
 }
 
+// ---- Phase 6A: character pose rig + furniture reactions ---------------------
+async function poseAnimationProbes(page: Page): Promise<void> {
+  // Uses the pose params on __ghChars (stride/torsoLean/leanSigned/droop/
+  // hunch/cloakSway) to assert the rig actually articulates — deterministic,
+  // without claiming artistic quality (human gate is the acceptance bar).
+
+  // 1) Stationary -> idle: NO stride (walk phase stalled).
+  await waitForActive(page);
+  // Clear any leftover key so a previous probe's held movement settles first.
+  await page.keyboard.up("w");
+  await page.keyboard.up("a");
+  await page.keyboard.up("s");
+  await page.keyboard.up("d");
+  let settledStride = 99;
+  for (let i = 0; i < 10; i++) {
+    const info = await getMyPose(page);
+    if (info) settledStride = Math.min(settledStride, info.stride);
+    await page.waitForTimeout(150);
+  }
+  check(
+    "p6a: stationary player has zero stride",
+    settledStride < 0.05,
+    `min stride=${settledStride.toFixed(3)}`,
+  );
+  await page.screenshot({ path: `${SHOTS}/p6a-idle.png` });
+
+  // 2) Walking -> stride + lean articulate (clearly > idle, > perception).
+  //    Sample WHILE holding the key (holdKey presses+releases, so keep the
+  //    key held and sample in the same window).
+  await waitForActive(page);
+  await page.keyboard.down("d");
+  let sawWalk = false;
+  let walkStride = 0;
+  let walkLean = 0;
+  for (let i = 0; i < 12; i++) {
+    const info = await getMyPose(page);
+    if (info && info.stride > 0.1) {
+      sawWalk = true;
+      walkStride = Math.max(walkStride, info.stride);
+      walkLean = Math.max(walkLean, info.torsoLean);
+    }
+    await page.waitForTimeout(70);
+  }
+  await page.screenshot({ path: `${SHOTS}/p6a-walk.png` });
+  await page.keyboard.up("d");
+  check(
+    "p6a: walking articulates a visible stride + lean",
+    sawWalk && walkStride > 0.2 && walkLean > 0.05,
+    `stride=${walkStride.toFixed(3)} lean=${walkLean.toFixed(3)}`,
+  );
+
+  // 3) Directional silhouettes: walking down leans positive, up negative.
+  await waitForActive(page);
+  await page.waitForTimeout(150); // clear any residual movement
+  await page.keyboard.down("s"); // down
+  let downSamples: number[] = [];
+  for (let i = 0; i < 6; i++) {
+    const info = await getMyPose(page);
+    if (info && !Number.isNaN(info.leanSigned) && info.leanSigned > 0.02) downSamples.push(info.leanSigned);
+    await page.waitForTimeout(70);
+  }
+  await page.keyboard.up("s");
+  await page.waitForTimeout(200); // let motion settle before the next key
+  await waitForActive(page);
+  await page.waitForTimeout(150);
+  await page.keyboard.down("w"); // up
+  let upSamples: number[] = [];
+  for (let i = 0; i < 6; i++) {
+    const info = await getMyPose(page);
+    if (info && !Number.isNaN(info.leanSigned) && info.leanSigned < -0.02) upSamples.push(info.leanSigned);
+    await page.waitForTimeout(70);
+  }
+  await page.keyboard.up("w");
+  const downLean = downSamples.reduce((a, b) => a + b, 0) / Math.max(1, downSamples.length);
+  const upLean = upSamples.reduce((a, b) => a + b, 0) / Math.max(1, upSamples.length);
+  check(
+    "p6a: up/down directional silhouettes differ (lean sign flips)",
+    downSamples.length > 0 && upSamples.length > 0 && downLean > 0 && upLean < 0,
+    `down=${downLean.toFixed(3)} up=${upLean.toFixed(3)}`,
+  );
+
+  // 4) Idle keeps breathing (animTick advances) WITHOUT re-gaining stride.
+  await waitForActive(page);
+  await page.keyboard.up("w");
+  await page.keyboard.up("a");
+  await page.keyboard.up("s");
+  await page.keyboard.up("d");
+  await page.waitForTimeout(250);
+  const idleA = await getMyPose(page);
+  await page.waitForTimeout(300);
+  const idleB = await getMyPose(page);
+  check(
+    "p6a: idle keeps breathing without stride",
+    !!idleA && !!idleB && idleA.animTick !== idleB.animTick && idleA.stride < 0.05 && idleB.stride < 0.05,
+    `tick ${idleA?.animTick}->${idleB?.animTick} stride ${idleA?.stride?.toFixed(3)}->${idleB?.stride?.toFixed(3)}`,
+  );
+
+  // 5) Hide enter + furniture settle reaction. Verify the ACTUAL reaction
+  //    fires (via the read-only __ghReact hook), not merely that the player
+  //    became transformed (Qodo #12). The naive bots can catch the player
+  //    mid-walk, so retry the approach once before failing (never a silent skip).
+  await waitForActive(page);
+  let reachedShelf = await walkToXY(page, BOOKSHELF.x, BOOKSHELF.y);
+  if (!reachedShelf) {
+    await keepGameAlive(page);
+    await waitForActive(page);
+    reachedShelf = await walkToXY(page, BOOKSHELF.x, BOOKSHELF.y);
+  }
+  if (!reachedShelf) {
+    check("p6a: furniture reaction on hide", false, "walk to bookshelf failed (caught twice)");
+  } else {
+    await page.waitForTimeout(200);
+    await page.keyboard.press("e");
+    // The reaction is a ~300ms envelope that starts when the CLIENT's own poll
+    // observes the transform. Sample state AND the __ghReact hook together in
+    // a tight loop so we catch the reaction while it is still live (a separate
+    // "wait for transformed" loop can lag a full poll past the window).
+    let applied = false;
+    let sawReact = false;
+    for (let i = 0; i < 30 && !(applied && sawReact); i++) {
+      const [st, reacts] = await Promise.all([
+        getState(page),
+        page.evaluate(() => (window as any).__ghReact?.() ?? []),
+      ]);
+      applied = st.players[0].state === "transformed";
+      sawReact = reacts.some((r: any) => r.fid === BOOKSHELF.id && r.amp > 0.05);
+      if (!(applied && sawReact)) await page.waitForTimeout(40);
+    }
+    check(
+      "p6a: furniture reaction on hide",
+      applied && sawReact,
+      `transformed=${applied} react=${sawReact}`,
+    );
+    if (applied) {
+      await page.screenshot({ path: `${SHOTS}/p6a-hiding.png` });
+      await page.keyboard.press("e");
+      // Assert the emerge actually completes (Qodo #13) before assuming the
+      // "emerged" screenshot is valid.
+      let exited = false;
+      for (let i = 0; i < 20 && !exited; i++) {
+        await page.waitForTimeout(120);
+        exited = (await getState(page)).players[0].state !== "transformed";
+      }
+      if (exited) {
+        await page.screenshot({ path: `${SHOTS}/p6a-emerged.png` });
+      }
+    }
+  }
+
+  // 6) Reduced motion: suggested stride amplitude drops (DESIGN.md reduced-
+  //    motion gate). Compare full walk stride before vs.with reduced-motion.
+  await waitForActive(page);
+  await page.keyboard.down("d");
+  let normalStride = 0;
+  for (let i = 0; i < 8; i++) {
+    const info = await getMyPose(page);
+    if (info) normalStride = Math.max(normalStride, info.stride);
+    await page.waitForTimeout(60);
+  }
+  await page.keyboard.up("d");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.waitForTimeout(200);
+  await waitForActive(page);
+  await page.keyboard.down("d");
+  let reducedStride = 0;
+  for (let i = 0; i < 8; i++) {
+    const info = await getMyPose(page);
+    if (info) reducedStride = Math.max(reducedStride, info.stride);
+    await page.waitForTimeout(60);
+  }
+  await page.keyboard.up("d");
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  check(
+    "p6a: reduced-motion lowers stride amplitude",
+    normalStride > 0.2 && reducedStride < normalStride,
+    `normal=${normalStride.toFixed(3)} reduced=${reducedStride.toFixed(3)}`,
+  );
+
+  // 7) Group screenshot for the human visual gate.
+  await waitForActive(page);
+  await page.screenshot({ path: `${SHOTS}/p6a-group.png` });
+}
+
+/** The LOCAL player's pose params (chars carry a `mine` flag). */
+async function getMyPose(page: Page): Promise<any | null> {
+  const chars = await getChars(page);
+  return (chars ?? []).find((c) => c.mine) ?? null;
+}
+
 async function main(): Promise<void> {
   mkdirSync(SHOTS, { recursive: true });
   console.log("Booting game server on :" + PORT + " ...");
@@ -1125,6 +1314,7 @@ async function main(): Promise<void> {
         await hideProbe(p);
         await hideNegativeProbes(p);
         await gameFeelProbes(p);
+        await poseAnimationProbes(p);
       }
       const cam = await getCam(p);
       if (cam) {
