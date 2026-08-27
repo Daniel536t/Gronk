@@ -445,6 +445,7 @@ async function enterGame(): Promise<void> {
         me && moving ? inputDir : null,
         speed,
         !!moving,
+        lastObservedPollG, // poll identity — lets the renderer judge release-freeze stalling by poll evidence, not frames
       );
       renderer.draw(lastState, dt, now);
     }
