@@ -14,12 +14,26 @@ export class Effects {
   private flashA = 0;
   private flashColor = "#ffffff";
   private touchScale = 1;
+  private reducedMotionActive = false;
 
   // prefers-reduced-motion gate (DESIGN.md P2 #12 / accessibility): shake and
   // flash are pure impact decoration — dropped under reduced motion. Read live
   // (not cached at import) so OS-level changes and test emulation apply.
   private reducedMotion(): boolean {
     return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  }
+
+  private applyMotionPreference(): boolean {
+    const reduced = this.reducedMotion();
+    if (reduced && !this.reducedMotionActive) {
+      // A preference change can happen while an impact is already visible.
+      // Clear nonessential active shake/flash immediately, not only future
+      // requests, so the live accessibility preference is honored.
+      this.shakeMag = 0;
+      this.flashA = 0;
+    }
+    this.reducedMotionActive = reduced;
+    return reduced;
   }
 
   /** Halve shake on small screens (spec #14). */
@@ -47,11 +61,16 @@ export class Effects {
 
   /** Decay all effects. Call once per frame with dt. */
   step(dt: number): void {
+    const reduced = this.applyMotionPreference();
     const k = Math.exp(-dt * 8);
     this.impX *= k;
     this.impY *= k;
     this.shakeMag *= Math.exp(-dt * 5);
     this.flashA *= Math.exp(-dt * 4);
+    if (reduced) {
+      this.shakeMag = 0;
+      this.flashA = 0;
+    }
   }
 
   get camOffset(): { x: number; y: number } {
@@ -60,11 +79,11 @@ export class Effects {
 
   /** Current shake magnitude in CSS px (touch-reduced). */
   get shake(): number {
-    return this.shakeMag * this.touchScale;
+    return this.applyMotionPreference() ? 0 : this.shakeMag * this.touchScale;
   }
 
   get flashAmount(): number {
-    return this.flashA;
+    return this.applyMotionPreference() ? 0 : this.flashA;
   }
 
   get flashColorValue(): string {

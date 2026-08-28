@@ -126,6 +126,20 @@ body {
   display: none !important;
 }
 
+/* Persistent screen-reader-only live region; unlike .toasts it is not inside
+   #screen-game, which is hidden when a match ends. */
+.sr-only {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* Display type: title only (per DESIGN.md). */
 .game-title {
   font-size: clamp(2.5rem, 8vw, 5rem);

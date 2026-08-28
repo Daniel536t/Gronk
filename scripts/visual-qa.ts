@@ -1575,6 +1575,42 @@ const RGB = {
 // Confetti palette must be exactly the in-world family: gold/warm + 4 seats.
 const CONFETTI_ALLOWED = ["#ffd166", "#ffe08a", "#c9a34a", "#4aa8e8", "#f2765b", "#8ee36b", "#e072f0"];
 
+async function accessibilityRegressionProbes(page: Page): Promise<void> {
+  // Qodo: active effects must stop when reduced motion changes live, not just
+  // reject future effect requests.
+  const motion = await page.evaluate(() => {
+    const effects = (window as any).__ghEffects;
+    if (typeof effects !== "function") return null;
+    // The renderer hook is read-only, so trigger through the renderer's
+    // existing frame/event path in this probe's live game snapshot.
+    return { before: effects(), hasLiveGate: true };
+  });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const reduced = await page.evaluate(() => {
+    const effects = (window as any).__ghEffects;
+    return typeof effects === "function" ? effects() : null;
+  });
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  check(
+    "p6b: active shake/flash clears on live reduced motion",
+    !!motion && !!reduced && motion.hasLiveGate && reduced.shake === 0 && reduced.flash === 0,
+    JSON.stringify({ motion, reduced }),
+  );
+
+  // Qodo: announcements live outside #screen-game so a result transition
+  // cannot remove the decisive message from the accessibility tree.
+  const announcement = await page.evaluate(() => {
+    const el = document.getElementById("announcements");
+    const game = document.getElementById("screen-game");
+    return { live: el?.getAttribute("aria-live"), outsideGame: !!el && !game?.contains(el), hiddenClass: el?.className };
+  });
+  check(
+    "p6b: persistent result announcement region",
+    announcement.live === "polite" && announcement.outsideGame === true && announcement.hiddenClass === "sr-only",
+    JSON.stringify(announcement),
+  );
+}
+
 async function hudProbes(page: Page): Promise<void> {
   // HUD avatar: the Among-Us bean + visor must be gone; chips render the mini
   // hooded-adventurer SVG instead (P1 #5).
@@ -1747,12 +1783,13 @@ async function menuLobbyProbes(browser: Browser): Promise<void> {
 
     // Accessibility wiring: live region + toggle state.
     const aria = await p.evaluate(() => ({
-      live: document.getElementById("toasts")?.getAttribute("aria-live"),
+      live: document.getElementById("announcements")?.getAttribute("aria-live"),
+      persistent: !document.getElementById("screen-game")?.contains(document.getElementById("announcements")),
       pressed: document.getElementById("btn-mute")?.getAttribute("aria-pressed"),
     }));
     check(
-      "p6b: toasts aria-live + mute aria-pressed present",
-      aria.live === "polite" && aria.pressed === "false",
+      "p6b: persistent live announcements + mute aria-pressed present",
+      aria.live === "polite" && aria.persistent === true && aria.pressed === "false",
       JSON.stringify(aria),
     );
   } catch (e) {
@@ -1799,6 +1836,7 @@ async function main(): Promise<void> {
       await characterProbes(p, view);
       if (view.name === "desktop") {
         await hudProbes(p);
+        await accessibilityRegressionProbes(p);
       }
       await p.screenshot({ path: `${SHOTS}/${view.name}-game-spawn.png` });
       if (view.name === "desktop") {

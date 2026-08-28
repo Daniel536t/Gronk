@@ -7,6 +7,9 @@
   </head>
   <body>
     <div id="app">
+      <!-- Persistent accessibility announcements stay outside screen containers
+           so a match-ending screen switch cannot remove the live region. -->
+      <div id="announcements" class="sr-only" aria-live="polite" aria-atomic="true"></div>
       <!-- TITLE -->
       <section id="screen-title" class="screen">
         <h1 class="game-title">Gronk's Hoard</h1>
@@ -47,7 +50,7 @@
         <div id="riddle-banner" class="riddle-banner"></div>
         <div id="timer-hud" class="timer-hud"></div>
         <div id="players-hud" class="players-hud"></div>
-        <div id="toasts" class="toasts" aria-live="polite"></div>
+        <div id="toasts" class="toasts"></div>
         <div id="joystick" class="joystick hidden">
           <div id="joystick-knob" class="joystick-knob"></div>
         </div>

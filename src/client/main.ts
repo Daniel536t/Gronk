@@ -241,6 +241,7 @@ function updatePlayersHud(state: GameState): void {
 }
 
 const toastsEl = $("toasts");
+const announcementsEl = $("announcements");
 const prevPlayerState = new Map<string, string>();
 
 function updateToasts(state: GameState): void {
@@ -263,6 +264,9 @@ function addToast(text: string, kind: ToastKind = "danger"): void {
   t.className = `toast toast-${kind}`;
   t.textContent = text;
   toastsEl.appendChild(t);
+  // The visual toast may be removed with screen-game; the persistent live
+  // region remains available to assistive technology through result changes.
+  announcementsEl.textContent = text;
   setTimeout(() => t.remove(), 3200);
 }
 
@@ -524,12 +528,14 @@ function showResult(s: GameState): void {
   if (team === null) {
     resultTitle.textContent = "Draw?";
     resultSub.textContent = "Nobody banked the treasure.";
+    announcementsEl.textContent = `${resultTitle.textContent} ${resultSub.textContent}`;
   } else {
     resultTitle.textContent = `Team ${team + 1} wins!`;
     resultSub.textContent =
       s.winReason === "bank"
         ? "Treasure banked with approval." // M5: every bank needs a human Approve
         : "The other team got closeted.";
+    announcementsEl.textContent = `${resultTitle.textContent} ${resultSub.textContent}`;
     if (s.winReason === "bank") spawnConfetti();
   }
   audio.playGameEnd();
