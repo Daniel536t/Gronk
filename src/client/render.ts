@@ -291,8 +291,13 @@ export class Renderer {
     // count, and live effect magnitudes.
     installParticlesQaHook(this.particles);
     (window as unknown as { __ghSteps?: () => number }).__ghSteps = () => this.footstepCount;
-    (window as unknown as { __ghEffects?: () => { shake: number; flash: number } }).__ghEffects =
-      () => ({ shake: this.effects.shake, flash: this.effects.flashAmount });
+    const effectProbe = (() => ({ shake: this.effects.shake, flash: this.effects.flashAmount })) as (() => { shake: number; flash: number }) & {
+      read?: () => { shake: number; flash: number };
+      qaSeedImpact?: () => void;
+    };
+    effectProbe.read = effectProbe;
+    effectProbe.qaSeedImpact = () => this.effects.qaSeedImpact();
+    (window as unknown as { __ghEffects?: typeof effectProbe }).__ghEffects = effectProbe;
     // Phase 6A QA hook (read-only, not gameplay): live furniture reaction state.
     (window as unknown as { __ghReact?: () => { fid: string; amp: number }[] }).__ghReact = () => {
       const out: { fid: string; amp: number }[] = [];
@@ -834,8 +839,11 @@ export class Renderer {
       ctx.rect(room.x, room.y, room.w, room.h);
       ctx.clip();
 
-      // Tint wash (kept subtle so the base slab still reads through).
-      ctx.fillStyle = rgba(room.tint, 0.05);
+      // Tint wash (kept subtle so the base slab still reads through — but
+      // strong enough to aid wayfinding; DESIGN.md P1 #6: the old 0.05 wash
+      // measured ΔRGB ≈ 2/255 between rooms, too faint to help). Still only
+      // ~4-5/255 against the base — a whisper, never a wall of color.
+      ctx.fillStyle = rgba(room.tint, 0.1);
       ctx.fillRect(room.x, room.y, room.w, room.h);
 
       switch (room.kind) {
@@ -849,7 +857,7 @@ export class Renderer {
       const cx = room.x + room.w / 2;
       const cy = room.y + room.h / 2;
       const glow = ctx.createRadialGradient(cx, cy, 1, cx, cy, room.w * 0.55);
-      glow.addColorStop(0, rgba(room.tint, 0.055));
+      glow.addColorStop(0, rgba(room.tint, 0.1));
       glow.addColorStop(1, "rgba(0,0,0,0)");
       ctx.fillStyle = glow;
       ctx.fillRect(room.x, room.y, room.w, room.h);

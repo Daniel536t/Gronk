@@ -1,3 +1,87 @@
+/* Gronk's Hoard — UI stylesheet.
+   DESIGN.md is the source of truth: one semantic meaning = one token.
+   No raw hex outside :root (except inside canvas-drawn world code). */
+
+/* ---- Design tokens ------------------------------------------------------- */
+:root {
+  /* surfaces */
+  --bg-deep: #05070d;
+  --bg-app: #0b0e14;
+  --bg-screen-hi: #1a2233;
+  --bg-panel: #10161f;
+  --bg-raised: #182032;
+  --bg-raised-hover: #232e47;
+  --surface-border: #3a4660;
+  --surface-border-soft: rgba(60, 72, 100, 0.6);
+  --hud-panel: rgba(10, 14, 22, 0.85); /* HUD panels: 0.8–0.88 band, unified */
+
+  /* text */
+  --text-primary: #e8ecf4;
+  --text-secondary: #c7d2e4;
+  --text-muted: #9aa7bd;
+  --text-dim: #4a5670;
+  --text-dim-soft: #6b7688;
+
+  /* semantic accents */
+  --accent-gold: #ffd166; /* THE magic/treasure/CTA color */
+  --accent-gold-hover: #ffdf8e;
+  --accent-gold-warm: #ffe9b0;
+  --gold-dark: #7a4b00; /* display title shadow companion */
+  --gold-cta-text: #3a2400; /* dark text on gold buttons */
+  --gold-trim: #c9a34a; /* muted prop gold — never UI */
+  --danger: #ff7b72;
+  --danger-text: #ffd9d6;
+  --danger-surface: rgba(120, 20, 20, 0.92); /* danger toast surface */
+  --danger-surface-solid: #781414; /* same family, solid: danger button fill */
+  --danger-surface-hover: #93201d;
+  --success: #4fc36b; /* active/healthy status ONLY (distinct from seat leaf) */
+  --success-surface: rgba(23, 80, 44, 0.92);
+  --success-text: #d8f5de;
+  --info: #4fc3f7;
+  --info-surface: rgba(21, 66, 94, 0.92);
+  --info-text: #d9f1fd;
+  --warning-surface: rgba(122, 75, 0, 0.92); /* gold-dark family */
+  --warning-text: #ffe9b0;
+
+  /* players (identity colors — fixed) */
+  --seat-0: #4aa8e8; --seat-0-dark: #2f6fa3;
+  --seat-1: #f2765b; --seat-1-dark: #b04b36;
+  --seat-2: #8ee36b; --seat-2-dark: #5ba83f;
+  --seat-3: #e072f0; --seat-3-dark: #a843bd;
+  --team-0: #4aa8e8;
+  --team-1: #f2765b;
+
+  /* spacing (4-based scale) */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --sp-7: 48px;
+
+  /* radii */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 20px;
+  --r-pill: 999px;
+
+  /* motion */
+  --t-press: 0.05s;
+  --t-appear: 0.25s;
+  --t-fade: 0.6s;
+  --ease-appear: cubic-bezier(0.16, 1, 0.3, 1); /* ease-out cubic */
+
+  /* z-index ladder */
+  --z-hud: 10;
+  --z-mute: 30;
+  --z-ping: 50;
+  --z-modal: 100;
+  --z-confetti: 200;
+}
+
+/* ---- Base ---------------------------------------------------------------- */
 * {
   box-sizing: border-box;
   -webkit-tap-highlight-color: transparent;
@@ -8,8 +92,8 @@ body {
   margin: 0;
   height: 100%;
   overflow: hidden;
-  background: #0b0e14;
-  color: #e8ecf4;
+  background: var(--bg-app);
+  color: var(--text-primary);
   font-family: "Segoe UI", system-ui, sans-serif;
   user-select: none;
   touch-action: none;
@@ -21,6 +105,12 @@ body {
   height: 100vh;
 }
 
+/* Keyboard focus is always visible (gold) — was missing entirely. */
+:focus-visible {
+  outline: 2px solid var(--accent-gold);
+  outline-offset: 2px;
+}
+
 .screen {
   position: absolute;
   inset: 0;
@@ -28,49 +118,76 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 1rem;
-  background: radial-gradient(circle at 50% 30%, #1a2233 0%, #0b0e14 70%);
+  gap: var(--sp-4);
+  background: radial-gradient(circle at 50% 30%, var(--bg-screen-hi) 0%, var(--bg-app) 70%);
 }
 
 .hidden {
   display: none !important;
 }
 
+/* Persistent screen-reader-only live region; unlike .toasts it is not inside
+   #screen-game, which is hidden when a match ends. */
+.sr-only {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Display type: title only (per DESIGN.md). */
 .game-title {
   font-size: clamp(2.5rem, 8vw, 5rem);
   letter-spacing: 0.06em;
   margin: 0;
-  color: #ffd166;
-  text-shadow: 0 4px 0 #7a4b00, 0 8px 24px rgba(0, 0, 0, 0.6);
+  color: var(--accent-gold);
+  text-shadow: 0 4px 0 var(--gold-dark), 0 8px 24px rgba(0, 0, 0, 0.6);
+}
+
+/* H2: screen headers (Multiplayer, Lobby) — was browser-default. Calm,
+   structural, never a second display face. */
+h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-primary);
+  margin: 0 0 var(--sp-2);
 }
 
 .tagline {
-  color: #9aa7bd;
+  color: var(--text-muted);
   margin: 0;
 }
 
+/* ---- Buttons: one family, semantic variants ------------------------------ */
 .menu-buttons {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  margin-top: 1rem;
+  gap: var(--sp-3);
+  margin-top: var(--sp-4);
 }
 
 .btn {
   font-size: 1.1rem;
   font-weight: 600;
   padding: 0.7rem 1.6rem;
-  border-radius: 999px;
-  border: 2px solid #3a4660;
-  background: #182032;
-  color: #e8ecf4;
+  border-radius: var(--r-pill);
+  border: 2px solid var(--surface-border);
+  background: var(--bg-raised);
+  color: var(--text-primary);
   cursor: pointer;
   min-width: 220px;
-  transition: transform 0.05s ease, background 0.15s ease, border-color 0.15s ease;
+  transition: transform var(--t-press) ease, background 0.15s ease, border-color 0.15s ease;
 }
 
 .btn:hover {
-  background: #232e47;
+  background: var(--bg-raised-hover);
 }
 
 .btn:active {
@@ -83,24 +200,34 @@ body {
 }
 
 .btn-primary {
-  background: #ffd166;
-  border-color: #ffd166;
-  color: #3a2400;
+  background: var(--accent-gold);
+  border-color: var(--accent-gold);
+  color: var(--gold-cta-text);
 }
 
 .btn-primary:hover {
-  background: #ffdf8e;
+  background: var(--accent-gold-hover);
 }
 
 .btn-ghost {
   background: transparent;
   min-width: 0;
-  margin-top: 1rem;
+  margin-top: var(--sp-4);
+}
+
+.btn-danger {
+  background: var(--danger-surface-solid);
+  border-color: var(--danger);
+  color: var(--danger-text);
+  margin-left: var(--sp-2);
+}
+.btn-danger:hover {
+  background: var(--danger-surface-hover);
 }
 
 .join-row {
   display: flex;
-  gap: 0.5rem;
+  gap: var(--sp-2);
 }
 
 .code-input {
@@ -110,43 +237,43 @@ body {
   text-align: center;
   padding: 0.6rem 1rem;
   width: 220px;
-  border-radius: 12px;
-  border: 2px solid #3a4660;
-  background: #10161f;
-  color: #e8ecf4;
+  border-radius: var(--r-md);
+  border: 2px solid var(--surface-border);
+  background: var(--bg-panel);
+  color: var(--text-primary);
 }
 
 .error {
-  color: #ff7b72;
+  color: var(--danger);
 }
 
 .muted {
-  color: #9aa7bd;
+  color: var(--text-muted);
 }
 
-/* ---- Lobby ---- */
+/* ---- Lobby ---------------------------------------------------------------- */
 .room-code-display {
   font-size: 1.1rem;
-  color: #9aa7bd;
+  color: var(--text-muted);
 }
 
 .room-code {
   font-size: 2.4rem;
   font-weight: 800;
   letter-spacing: 0.12em;
-  color: #ffd166;
+  color: var(--accent-gold);
   font-family: ui-monospace, monospace;
 }
 
 .lobby-teams {
   display: flex;
-  gap: 2rem;
+  gap: var(--sp-6);
 }
 
 .team-col {
-  background: #10161f;
-  border: 2px solid #3a4660;
-  border-radius: 16px;
+  background: var(--bg-panel);
+  border: 2px solid var(--surface-border);
+  border-radius: var(--r-lg);
   padding: 1rem 1.5rem;
   min-width: 180px;
 }
@@ -158,32 +285,32 @@ body {
 }
 
 .team-0 h3 {
-  color: #4fc3f7;
+  color: var(--info);
 }
 
 .team-1 h3 {
-  color: #ff7b72;
+  color: var(--danger);
 }
 
 .seat {
   padding: 0.35rem 0.6rem;
-  border-radius: 8px;
-  margin: 0.25rem 0;
-  background: #182032;
-  color: #c7d2e4;
+  border-radius: var(--r-sm);
+  margin: var(--sp-1) 0;
+  background: var(--bg-raised);
+  color: var(--text-secondary);
 }
 
 .seat.empty {
-  color: #4a5670;
+  color: var(--text-dim);
   background: transparent;
   border: 1px dashed #2c3650;
 }
 
 .seat.you {
-  outline: 2px solid #ffd166;
+  outline: 2px solid var(--accent-gold);
 }
 
-/* ---- Game HUD ---- */
+/* ---- Game HUD -------------------------------------------------------------- */
 #game-canvas {
   position: absolute;
   inset: 0;
@@ -194,21 +321,22 @@ body {
 
 .riddle-banner {
   position: absolute;
-  top: 12px;
+  top: var(--sp-3);
   left: 50%;
   transform: translateX(-50%);
   max-width: min(640px, 90vw);
-  background: rgba(10, 14, 22, 0.88);
-  border: 1px solid #3a4660;
-  border-left: 4px solid #ffd166;
+  background: var(--hud-panel);
+  border: 1px solid var(--surface-border);
+  border-left: 4px solid var(--accent-gold);
   border-radius: 10px;
   padding: 0.5rem 1rem;
   font-size: 0.95rem;
-  color: #ffd166;
+  color: var(--accent-gold);
   text-align: center;
   opacity: 0;
-  transition: opacity 0.6s ease;
+  transition: opacity var(--t-fade) ease;
   pointer-events: none;
+  z-index: var(--z-hud);
 }
 
 .riddle-banner.show {
@@ -217,35 +345,50 @@ body {
 
 .timer-hud {
   position: absolute;
-  top: 12px;
+  top: var(--sp-3);
   right: 14px;
   font-family: ui-monospace, monospace;
   font-size: 1.2rem;
-  color: #c7d2e4;
-  background: rgba(10, 14, 22, 0.8);
+  color: var(--text-secondary);
+  background: var(--hud-panel);
   padding: 0.3rem 0.7rem;
-  border-radius: 8px;
-  border: 1px solid #3a4660;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--surface-border);
+  z-index: var(--z-hud);
 }
 
+/* Timer states: normal → warning → critical → finished. Never color alone:
+   warning adds a glow, critical adds motion (pulse). */
+.timer-hud.timer-warning {
+  color: var(--accent-gold);
+  border-color: var(--accent-gold);
+  box-shadow: 0 0 8px rgba(255, 209, 102, 0.25);
+}
+
+.timer-hud.timer-critical,
 .timer-hud.sudden-death {
-  color: #ff7b72;
-  border-color: #ff7b72;
+  color: var(--danger);
+  border-color: var(--danger);
   animation: pulse 1s ease-in-out infinite;
 }
 
-/* ---- Mute button (Phase 5) ---- */
+.timer-hud.timer-finished {
+  color: var(--text-dim-soft);
+  border-color: var(--surface-border);
+}
+
+/* ---- Mute (icon button; ≥44px touch target everywhere) -------------------- */
 .btn-mute {
   position: absolute;
   top: 58px;
   right: 14px;
-  z-index: 30;
-  width: 42px;
-  height: 42px;
+  z-index: var(--z-mute);
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
-  border: 2px solid #3a4660;
+  border: 2px solid var(--surface-border);
   background: rgba(16, 22, 31, 0.85);
-  color: #e8ecf4;
+  color: var(--text-primary);
   font-size: 1.05rem;
   cursor: pointer;
   display: flex;
@@ -255,54 +398,48 @@ body {
 }
 
 .btn-mute:hover {
-  border-color: #ffd166;
-  background: #232e47;
+  border-color: var(--accent-gold);
+  background: var(--bg-raised-hover);
 }
 
-/* ---- Players strip (portraits) ---- */
+/* ---- Players strip --------------------------------------------------------- */
 .players-hud {
   position: absolute;
-  top: 12px;
+  top: var(--sp-3);
   left: 14px;
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: var(--sp-1);
   pointer-events: none;
+  z-index: var(--z-hud);
 }
 
 .player-chip {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  background: rgba(10, 14, 22, 0.82);
-  border: 1px solid rgba(60, 72, 100, 0.6);
-  border-radius: 999px;
+  gap: var(--sp-2);
+  background: var(--hud-panel);
+  border: 1px solid var(--surface-border-soft);
+  border-radius: var(--r-pill);
   padding: 0.22rem 0.7rem 0.22rem 0.3rem;
   font-size: 0.82rem;
-  color: #c7d2e4;
+  color: var(--text-secondary);
   min-width: 132px;
 }
 
-.player-chip .bean {
+/* Mini hooded-adventurer glyph (mirrors the in-world character identity).
+   Replaces the old Among-Us bean + visor. */
+.player-chip .avatar {
   width: 20px;
   height: 20px;
-  border-radius: 46% 46% 44% 44% / 38% 38% 46% 46%;
-  background: var(--pc);
-  position: relative;
   flex: none;
+  display: block;
 }
 
-/* tiny visor on the bean avatar */
-.player-chip .bean::after {
-  content: "";
-  position: absolute;
-  left: 7px;
-  top: 4px;
-  width: 9px;
-  height: 7px;
-  border-radius: 50%;
-  background: #9fe2ff;
-  box-shadow: inset 1px 1px 0 rgba(255, 255, 255, 0.7);
+.player-chip .avatar svg {
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 
 .player-chip .name {
@@ -317,30 +454,30 @@ body {
   height: 9px;
   border-radius: 50%;
   flex: none;
-  background: #4fc36b;
+  background: var(--success);
 }
 
-.player-chip.carrying .bean {
-  box-shadow: 0 0 0 2px #ffd166, 0 0 8px rgba(255, 209, 102, 0.8);
+.player-chip.carrying .avatar {
+  filter: drop-shadow(0 0 4px rgba(255, 209, 102, 0.8));
 }
 .player-chip.carrying .state-dot {
-  background: #ffd166;
+  background: var(--accent-gold);
 }
 
 .player-chip.closeted {
   opacity: 0.45;
 }
 .player-chip.closeted .state-dot {
-  background: #6b7688;
+  background: var(--text-dim-soft);
 }
 
 .player-chip.stunned .state-dot {
-  background: #ffd166;
+  background: var(--accent-gold);
   animation: pulse 0.5s ease-in-out infinite;
 }
 
 .player-chip.you {
-  border-color: #ffd166;
+  border-color: var(--accent-gold);
   box-shadow: 0 0 8px rgba(255, 209, 102, 0.35);
 }
 
@@ -350,6 +487,7 @@ body {
   }
 }
 
+/* ---- Toasts (semantic kinds; ≥2 cues each: surface + border + dot) -------- */
 .toasts {
   position: absolute;
   top: 76px;
@@ -358,18 +496,63 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.4rem;
+  gap: var(--sp-1);
   pointer-events: none;
+  z-index: var(--z-hud);
 }
 
 .toast {
-  background: rgba(120, 20, 20, 0.92);
-  border: 1px solid #ff7b72;
-  color: #ffd9d6;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--danger-surface);
+  border: 1px solid var(--danger);
+  color: var(--danger-text);
   padding: 0.4rem 1rem;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   font-size: 0.95rem;
-  animation: toast-in 0.25s ease;
+  animation: toast-in var(--t-appear) var(--ease-appear);
+}
+
+/* state dot — cue #2 next to the border/surface color */
+.toast::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--danger);
+  box-shadow: 0 0 6px var(--danger);
+}
+
+.toast-success {
+  background: var(--success-surface);
+  border-color: var(--success);
+  color: var(--success-text);
+}
+.toast-success::before {
+  background: var(--success);
+  box-shadow: 0 0 6px var(--success);
+}
+
+.toast-info {
+  background: var(--info-surface);
+  border-color: var(--info);
+  color: var(--info-text);
+}
+.toast-info::before {
+  background: var(--info);
+  box-shadow: 0 0 6px var(--info);
+}
+
+.toast-warning {
+  background: var(--warning-surface);
+  border-color: var(--accent-gold);
+  color: var(--warning-text);
+}
+.toast-warning::before {
+  background: var(--accent-gold);
+  box-shadow: 0 0 6px var(--accent-gold);
 }
 
 @keyframes toast-in {
@@ -379,7 +562,7 @@ body {
   }
 }
 
-/* ---- Touch controls (Among-Us feel) ---- */
+/* ---- Touch controls -------------------------------------------------------- */
 .joystick {
   position: absolute;
   left: 26px;
@@ -388,9 +571,9 @@ body {
   height: 150px;
   border-radius: 50%;
   border: 2px solid rgba(255, 255, 255, 0.22);
-  background: radial-gradient(circle at 50% 50%, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.03) 100%);
+  background: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.03) 100%);
   touch-action: none;
-  box-shadow: 0 0 0 6px rgba(0,0,0,0.18);
+  box-shadow: 0 0 0 6px rgba(0, 0, 0, 0.18);
 }
 
 .joystick-knob {
@@ -401,9 +584,9 @@ body {
   height: 60px;
   margin: -30px 0 0 -30px;
   border-radius: 50%;
-  background: radial-gradient(circle at 35% 30%, #ffe9b0, #ffd166 60%, #e0a83d);
-  border: 2px solid rgba(255,255,255,0.35);
-  box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+  background: radial-gradient(circle at 35% 30%, var(--accent-gold-warm), var(--accent-gold) 60%, #e0a83d);
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
   pointer-events: none;
 }
 
@@ -414,10 +597,9 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.9rem;
+  gap: var(--sp-3);
 }
 
-/* The main ACTION button is a big circle (like Among Us' USE button). */
 .action-btn {
   width: 96px;
   height: 96px;
@@ -430,23 +612,23 @@ body {
   align-items: center;
   justify-content: center;
   text-align: center;
-  box-shadow: 0 6px 16px rgba(0,0,0,0.4), inset 0 2px 0 rgba(255,255,255,0.25);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4), inset 0 2px 0 rgba(255, 255, 255, 0.25);
 }
 
-/* Secondary TRANSFORM is a small circle above ABSTRACT. */
 .action-btn.secondary {
   width: 64px;
   height: 64px;
   font-size: 0.72rem;
   background: rgba(40, 48, 66, 0.9);
-  border-color: #4a5670;
+  border-color: var(--text-dim);
 }
 
 /* Desktop (fine pointer): hide the touch joystick + buttons, show a hint.
-   Touch (coarse pointer): show the touch controls, hide the hint. */
+   Touch (coarse pointer): show the touch controls, hide the hint.
+   Pointer type — not width — decides (deliberate; DESIGN.md responsive model). */
 .desktop-hint {
   position: absolute;
-  bottom: 12px;
+  bottom: var(--sp-3);
   left: 50%;
   transform: translateX(-50%);
   color: rgba(190, 202, 224, 0.55);
@@ -464,7 +646,7 @@ body {
   .desktop-hint { display: none; }
 }
 
-/* ---- Approval modal (M5) ---- */
+/* ---- Modals (one coherent system) ------------------------------------------ */
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -472,13 +654,13 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 100;
+  z-index: var(--z-modal);
 }
 
 .modal {
-  background: var(--bg-secondary);
-  border: 2px solid var(--border);
-  border-radius: 20px;
+  background: var(--bg-panel);
+  border: 2px solid var(--surface-border);
+  border-radius: var(--r-xl);
   padding: 2.5rem 2rem;
   max-width: 420px;
   width: 90%;
@@ -488,8 +670,10 @@ body {
 .modal h2 {
   font-size: 1.8rem;
   margin: 0 0 1rem;
-  color: var(--accent);
+  color: var(--accent-gold);
   line-height: 1.25;
+  text-transform: none;
+  letter-spacing: normal;
 }
 
 .modal .muted {
@@ -497,20 +681,11 @@ body {
   margin-bottom: 1.5rem;
 }
 
-.btn-danger {
-  background: #c0392b;
-  color: #fff;
-  margin-left: 0.5rem;
-}
-.btn-danger:hover {
-  background: #e74c3c;
-}
-
-/* ---- Confetti (M5 demo climax) ---- */
+/* ---- Confetti (win feedback) ------------------------------------------------ */
 .confetti {
   position: fixed;
   top: -20px;
-  z-index: 200;
+  z-index: var(--z-confetti);
   pointer-events: none;
   animation: confetti-fall linear forwards;
   border-radius: 2px;
@@ -521,18 +696,32 @@ body {
   100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
 }
 
-/* ---- Treasure ping (sudden death, M6) ---- */
+/* ---- Treasure ping (sudden death) ------------------------------------------ */
 .ping-flash {
   position: fixed;
   inset: 0;
   background: radial-gradient(circle at center, rgba(255, 209, 102, 0.2) 0%, transparent 60%);
   pointer-events: none;
   animation: ping-pulse 0.8s ease-out forwards;
-  z-index: 50;
+  z-index: var(--z-ping);
 }
 
 @keyframes ping-pulse {
   0%   { opacity: 0; }
   30%  { opacity: 1; }
   100% { opacity: 0; }
+}
+
+/* ---- Reduced motion (P2): drop amplitude/decoration, keep state pulses.
+   Gameplay information (pulse, timer states) is opacity-only and stays. */
+@media (prefers-reduced-motion: reduce) {
+  .confetti {
+    animation-duration: 0.01s; /* effectively removed (JS gate also skips spawn) */
+  }
+  .toast {
+    animation: none;
+  }
+  .riddle-banner {
+    transition-duration: 0.01s;
+  }
 }

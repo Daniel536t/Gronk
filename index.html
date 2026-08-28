@@ -7,6 +7,9 @@
   </head>
   <body>
     <div id="app">
+      <!-- Persistent accessibility announcements stay outside screen containers
+           so a match-ending screen switch cannot remove the live region. -->
+      <div id="announcements" class="sr-only" aria-live="polite" aria-atomic="true"></div>
       <!-- TITLE -->
       <section id="screen-title" class="screen">
         <h1 class="game-title">Gronk's Hoard</h1>
@@ -56,13 +59,13 @@
           <button id="btn-action" class="btn action-btn btn-primary">ACTION</button>
         </div>
         <div id="desktop-hint" class="desktop-hint">WASD move · Space action · E transform</div>
-        <button id="btn-mute" class="btn-mute" aria-label="Toggle sound">🔊</button>
+        <button id="btn-mute" class="btn-mute" aria-label="Toggle sound" aria-pressed="false">🔊</button>
       </section>
 
       <!-- APPROVAL MODAL (M5: shown to ALL human players when a team banks) -->
       <div id="approval-modal" class="modal-backdrop hidden">
         <div class="modal">
-          <h2 id="approval-title">TEAM 1 IS BANKING THE TREASURE!</h2>
+          <h2 id="approval-title">Team 1 is banking the treasure!</h2>
           <p class="muted">Approve the bank to end the match. Rejecting gives that team a 10s cooldown.</p>
           <div class="menu-buttons">
             <button id="btn-approve" class="btn btn-primary">Approve</button>
