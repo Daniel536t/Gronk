@@ -42,6 +42,7 @@ export class Effects {
   }
 
   bumpCamera(x: number, y: number, mag: number): void {
+    if (this.applyMotionPreference()) return;
     this.impX += x * mag;
     this.impY += y * mag;
   }
@@ -75,6 +76,12 @@ export class Effects {
 
   get camOffset(): { x: number; y: number } {
     return { x: this.impX, y: this.impY };
+  }
+
+  /** QA-only: seed bounded impact values without exposing gameplay behavior. */
+  qaSeedImpact(): void {
+    this.shakeMag = 4;
+    this.flashA = 1;
   }
 
   /** Current shake magnitude in CSS px (touch-reduced). */

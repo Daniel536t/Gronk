@@ -1581,8 +1581,7 @@ async function accessibilityRegressionProbes(page: Page): Promise<void> {
   const motion = await page.evaluate(() => {
     const effects = (window as any).__ghEffects;
     if (typeof effects !== "function") return null;
-    // The renderer hook is read-only, so trigger through the renderer's
-    // existing frame/event path in this probe's live game snapshot.
+    effects.qaSeedImpact?.();
     return { before: effects(), hasLiveGate: true };
   });
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -1590,6 +1589,11 @@ async function accessibilityRegressionProbes(page: Page): Promise<void> {
     const effects = (window as any).__ghEffects;
     return typeof effects === "function" ? effects() : null;
   });
+  const reducedCamera = await page.evaluate(() => {
+    const effects = (window as any).__ghEffects;
+    return typeof effects === "function" ? effects() : null;
+  });
+  check("p6b: reduced motion keeps active camera feedback suppressed", !!reducedCamera && reducedCamera.shake === 0 && reducedCamera.flash === 0, JSON.stringify(reducedCamera));
   await page.emulateMedia({ reducedMotion: "no-preference" });
   check(
     "p6b: active shake/flash clears on live reduced motion",

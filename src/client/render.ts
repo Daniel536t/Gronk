@@ -291,8 +291,13 @@ export class Renderer {
     // count, and live effect magnitudes.
     installParticlesQaHook(this.particles);
     (window as unknown as { __ghSteps?: () => number }).__ghSteps = () => this.footstepCount;
-    (window as unknown as { __ghEffects?: () => { shake: number; flash: number } }).__ghEffects =
-      () => ({ shake: this.effects.shake, flash: this.effects.flashAmount });
+    const effectProbe = (() => ({ shake: this.effects.shake, flash: this.effects.flashAmount })) as (() => { shake: number; flash: number }) & {
+      read?: () => { shake: number; flash: number };
+      qaSeedImpact?: () => void;
+    };
+    effectProbe.read = effectProbe;
+    effectProbe.qaSeedImpact = () => this.effects.qaSeedImpact();
+    (window as unknown as { __ghEffects?: typeof effectProbe }).__ghEffects = effectProbe;
     // Phase 6A QA hook (read-only, not gameplay): live furniture reaction state.
     (window as unknown as { __ghReact?: () => { fid: string; amp: number }[] }).__ghReact = () => {
       const out: { fid: string; amp: number }[] = [];
