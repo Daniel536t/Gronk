@@ -15,6 +15,13 @@ export class Effects {
   private flashColor = "#ffffff";
   private touchScale = 1;
 
+  // prefers-reduced-motion gate (DESIGN.md P2 #12 / accessibility): shake and
+  // flash are pure impact decoration — dropped under reduced motion. Read live
+  // (not cached at import) so OS-level changes and test emulation apply.
+  private reducedMotion(): boolean {
+    return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  }
+
   /** Halve shake on small screens (spec #14). */
   setTouchScale(v: boolean): void {
     this.touchScale = v ? 0.5 : 1;
@@ -26,10 +33,12 @@ export class Effects {
   }
 
   addShake(mag: number): void {
+    if (this.reducedMotion()) return;
     this.shakeMag = Math.min(6, this.shakeMag + mag);
   }
 
   flash(color: string, strength: number): void {
+    if (this.reducedMotion()) return;
     if (strength > this.flashA) {
       this.flashA = strength;
       this.flashColor = color;

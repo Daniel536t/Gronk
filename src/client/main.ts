@@ -101,7 +101,7 @@ function updateApprovalModal(state: GameState): void {
   if (state.pendingBank) {
     if (modalTeam !== state.pendingBank.team) {
       modalTeam = state.pendingBank.team;
-      approvalTitle.textContent = `TEAM ${state.pendingBank.team + 1} IS BANKING THE TREASURE!`;
+      approvalTitle.textContent = `Team ${state.pendingBank.team + 1} is banking the treasure!`;
     }
     approvalModal.classList.remove("hidden");
   } else if (!approvalModal.classList.contains("hidden")) {
@@ -110,14 +110,26 @@ function updateApprovalModal(state: GameState): void {
   }
 }
 
-// ---- confetti (M5 demo climax) -------------------------------------------
-function spawnConfetti(): void {
-  const colors = ["#ffd700", "#ff6b6b", "#4ecdc4", "#ffe66d", "#a29bfe", "#55efc4"];
+// ---- confetti (win feedback) ----------------------------------------------
+// DESIGN.md: confetti uses the gold/warm family + the 4 seat colors ONLY —
+// no arbitrary web palette. Reduced motion skips the spawn entirely.
+const CONFETTI_COLORS = [
+  "#ffd166", // accent-gold
+  "#ffe08a", // gold-warm
+  "#c9a34a", // gold-trim
+  "#4aa8e8", // seat 0
+  "#f2765b", // seat 1
+  "#8ee36b", // seat 2
+  "#e072f0", // seat 3
+];
+
+function spawnConfetti(): number {
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return 0;
   for (let i = 0; i < 80; i++) {
     const piece = document.createElement("div");
     piece.className = "confetti";
     piece.style.left = `${Math.random() * 100}vw`;
-    piece.style.background = colors[i % colors.length];
+    piece.style.background = CONFETTI_COLORS[i % CONFETTI_COLORS.length];
     piece.style.animationDelay = `${Math.random() * 0.6}s`;
     piece.style.animationDuration = `${2.2 + Math.random() * 2}s`;
     piece.style.width = `${6 + Math.random() * 6}px`;
@@ -125,6 +137,7 @@ function spawnConfetti(): void {
     document.body.appendChild(piece);
     setTimeout(() => piece.remove(), 5000);
   }
+  return 80;
 }
 
 // ---- HUD: riddle banner, timer, toasts -----------------------------------
@@ -150,7 +163,15 @@ function updateTimer(state: GameState): void {
   const mm = String(Math.floor(secs / 60)).padStart(2, "0");
   const ss = String(secs % 60).padStart(2, "0");
   timerEl.textContent = `${mm}:${ss} / ${formatDuration(state.matchDuration)}`;
+  // Timer states (DESIGN.md): normal → warning (≤120s left) → critical
+  // (sudden death) → finished. Critical/warning never rely on color alone:
+  // critical pulses (motion), warning glows (luminance). `sudden-death` is
+  // kept as a legacy alias of critical.
+  const remaining = state.matchDuration - state.elapsed;
+  timerEl.classList.toggle("timer-warning", !state.suddenDeath && remaining <= 120);
+  timerEl.classList.toggle("timer-critical", state.suddenDeath);
   timerEl.classList.toggle("sudden-death", state.suddenDeath);
+  timerEl.classList.toggle("timer-finished", state.status === "finished");
 }
 
 function formatDuration(secs: number): string {
@@ -160,13 +181,33 @@ function formatDuration(secs: number): string {
 }
 
 // Same per-seat palette as the renderer (wizard-0..3): Player 1 cyan,
-// Player 2 coral, Player 3 green, Player 4 purple.
+// Player 2 coral, Player 3 green, Player 4 purple. Dark companions are the
+// trim/boot colors from the character rig (DESIGN.md player table).
 const SEAT_COLORS_HUD = ["#4aa8e8", "#f2765b", "#8ee36b", "#e072f0"];
+const SEAT_DARK_HUD = ["#2f6fa3", "#b04b36", "#5ba83f", "#a843bd"];
 const playersHudEl = $("players-hud");
 
-function seatColor(playerId: string): string {
+function seatIndex(playerId: string): number {
   const m = /-(\d)$/.exec(playerId);
-  return m ? SEAT_COLORS_HUD[parseInt(m[1], 10) % 4] : "#9aa7bd";
+  return m ? parseInt(m[1], 10) % 4 : 0;
+}
+
+// Mini hooded-adventurer glyph for HUD chips — mirrors the in-world Phase 3/6A
+// character (pointed hood, glowing warm eyes, dark belt + gold buckle, boots).
+// Replaces the old Among-Us bean + visor avatar (DESIGN.md inconsistency #5).
+function avatarSvg(seat: number): string {
+  const body = SEAT_COLORS_HUD[seat];
+  const dark = SEAT_DARK_HUD[seat];
+  return `<svg viewBox="0 0 20 20" class="avatar-svg" aria-hidden="true" focusable="false">` +
+    `<path d="M10 1.2 L14.6 7 Q15.1 8.3 15.6 9.6 Q17.1 13 16.1 16.2 Q15.8 17.6 14.2 17.6 L5.8 17.6 Q4.2 17.6 3.9 16.2 Q2.9 13 4.4 9.6 Q4.9 8.3 5.4 7 Z" fill="${body}"/>` +
+    `<ellipse cx="10" cy="7.7" rx="3.1" ry="2" fill="rgba(0,0,0,0.38)"/>` +
+    `<circle cx="8.6" cy="7.7" r="0.9" fill="#ffe9b0"/>` +
+    `<circle cx="11.4" cy="7.7" r="0.9" fill="#ffe9b0"/>` +
+    `<rect x="5.9" y="11.4" width="8.2" height="1.7" rx="0.8" fill="${dark}"/>` +
+    `<circle cx="10" cy="12.25" r="0.85" fill="#ffd166"/>` +
+    `<rect x="6" y="16.1" width="2.7" height="1.7" rx="0.8" fill="${dark}"/>` +
+    `<rect x="11.3" y="16.1" width="2.7" height="1.7" rx="0.8" fill="${dark}"/>` +
+    `</svg>`;
 }
 
 function updatePlayersHud(state: GameState): void {
@@ -186,15 +227,15 @@ function updatePlayersHud(state: GameState): void {
     if (p.carrying) chip.classList.add("carrying");
     if (p.state === "in_closet") chip.classList.add("closeted");
     if (p.state === "stunned") chip.classList.add("stunned");
-    const bean = document.createElement("div");
-    bean.className = "bean";
-    bean.style.setProperty("--pc", seatColor(p.id));
+    const avatar = document.createElement("span");
+    avatar.className = "avatar";
+    avatar.innerHTML = avatarSvg(seatIndex(p.id));
     const name = document.createElement("span");
     name.className = "name";
     name.textContent = p.id === me ? `${p.name} (you)` : p.name;
     const dot = document.createElement("span");
     dot.className = "state-dot";
-    chip.append(bean, name, dot);
+    chip.append(avatar, name, dot);
     playersHudEl.appendChild(chip);
   }
 }
@@ -212,9 +253,14 @@ function updateToasts(state: GameState): void {
   }
 }
 
-function addToast(text: string): void {
+// Toast kinds (DESIGN.md): only notable events; each kind carries ≥2 visual
+// cues (surface + border + state dot) and is announced to screen readers via
+// the #toasts aria-live region.
+type ToastKind = "danger" | "success" | "warning" | "info";
+
+function addToast(text: string, kind: ToastKind = "danger"): void {
   const t = document.createElement("div");
-  t.className = "toast";
+  t.className = `toast toast-${kind}`;
   t.textContent = text;
   toastsEl.appendChild(t);
   setTimeout(() => t.remove(), 3200);
@@ -229,7 +275,7 @@ $("btn-approve").addEventListener("click", async () => {
   if (!session || modalTeam === null) return;
   await api.approveBank(session.roomCode, session.playerId).catch(() => {});
   approvalModal.classList.add("hidden");
-  addToast("Bank approved!");
+  addToast("Bank approved!", "success");
   modalTeam = null;
 });
 
@@ -237,7 +283,7 @@ $("btn-reject").addEventListener("click", async () => {
   if (!session || modalTeam === null) return;
   await api.rejectBank(session.roomCode, session.playerId).catch(() => {});
   approvalModal.classList.add("hidden");
-  addToast(`Bank rejected — ${BANK_COOLDOWN}s cooldown.`);
+  addToast(`Bank rejected — ${BANK_COOLDOWN}s cooldown.`, "warning");
   modalTeam = null;
 });
 
@@ -712,7 +758,9 @@ initAudioOnGesture();
 
 const btnMute = $<HTMLButtonElement>("btn-mute");
 function updateMuteBtn(): void {
-  btnMute.textContent = audio.isMuted() ? "🔇" : "🔊";
+  const muted = audio.isMuted();
+  btnMute.textContent = muted ? "🔇" : "🔊";
+  btnMute.setAttribute("aria-pressed", String(muted));
 }
 btnMute.addEventListener("click", () => {
   audio.init(); // the click IS a gesture — safe to start audio here
@@ -722,3 +770,8 @@ btnMute.addEventListener("click", () => {
 
 show("title");
 void resumeSession();
+
+// ---- QA hooks (deterministic UI probes; no gameplay surface) -------------
+// Same pattern as the renderer's __gh* hooks: read-only introspection plus
+// explicit triggers for effects that are otherwise event-driven.
+(window as unknown as { __ghUI?: object }).__ghUI = { addToast, spawnConfetti, CONFETTI_COLORS };

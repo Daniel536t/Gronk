@@ -1550,8 +1550,213 @@ async function joystickReleaseProbe(browser: Browser): Promise<void> {
       !!settled && !!base && settled.y <= base.y - 0.5 && settled.y <= (released?.y ?? 999) + 0.6,
       `base=${base?.y.toFixed(2)} settled=${settled?.y.toFixed(2)}`,
     );
+    await p.screenshot({ path: `${SHOTS}/p6b-mobile-controls.png` });
   } catch (e) {
     check("p6a1: joystick release probe completed", false, `exception: ${(e as Error).message}`);
+  } finally {
+    await ctx.close();
+  }
+}
+
+// ---- Phase 6B: UI/HUD design-system probes ---------------------------------
+// Automated checks prove the token layer RESOLVES and the semantic rules are
+// wired — they cannot prove the interface "belongs to the game"; that judgment
+// is the human visual gate (screenshots captured below serve it).
+
+const RGB = {
+  gold: "rgb(255, 209, 102)", // --accent-gold
+  danger: "rgb(255, 123, 114)", // --danger
+  success: "rgb(79, 195, 107)", // --success
+  info: "rgb(79, 195, 247)", // --info
+  panel: "rgb(16, 22, 31)", // --bg-panel
+  border: "rgb(58, 70, 96)", // --surface-border
+};
+
+// Confetti palette must be exactly the in-world family: gold/warm + 4 seats.
+const CONFETTI_ALLOWED = ["#ffd166", "#ffe08a", "#c9a34a", "#4aa8e8", "#f2765b", "#8ee36b", "#e072f0"];
+
+async function hudProbes(page: Page): Promise<void> {
+  // HUD avatar: the Among-Us bean + visor must be gone; chips render the mini
+  // hooded-adventurer SVG instead (P1 #5).
+  const chips = await page.evaluate(() => ({
+    chips: document.querySelectorAll(".player-chip").length,
+    beans: document.querySelectorAll(".player-chip .bean").length,
+    avatars: document.querySelectorAll(".player-chip .avatar svg").length,
+  }));
+  check(
+    "p6b: HUD avatar is the hooded adventurer (no bean/visor)",
+    chips.chips === 4 && chips.beans === 0 && chips.avatars === 4,
+    JSON.stringify(chips),
+  );
+
+  // Toast semantic kinds: surface + border + state dot per kind.
+  const toastColors = await page.evaluate(() => {
+    const ui = (window as any).__ghUI;
+    if (!ui) return null;
+    const kinds = ["danger", "success", "info", "warning"];
+    for (const k of kinds) ui.addToast(`probe ${k}`, k);
+    const out: Record<string, { border: string; dot: string }> = {};
+    for (const k of kinds) {
+      const el = document.querySelector(`.toast-${k}`) as HTMLElement;
+      const cs = getComputedStyle(el);
+      const dot = getComputedStyle(el, "::before");
+      out[k] = { border: cs.borderTopColor, dot: dot.backgroundColor };
+    }
+    return out;
+  });
+  const toastsOk =
+    !!toastColors &&
+    toastColors.danger.border === RGB.danger &&
+    toastColors.success.border === RGB.success &&
+    toastColors.info.border === RGB.info &&
+    toastColors.warning.border === RGB.gold &&
+    Object.values(toastColors).every((t) => t.dot === t.border);
+  check("p6b: toast kinds carry semantic tokens", toastsOk, JSON.stringify(toastColors));
+  await page.screenshot({ path: `${SHOTS}/p6b-toasts.png` });
+
+  // Timer states resolve to their tokens (class wiring on the live element).
+  const timerStates = await page.evaluate(() => {
+    const el = document.getElementById("timer-hud") as HTMLElement;
+    const base = el.className;
+    el.classList.add("timer-warning");
+    const warning = getComputedStyle(el).color;
+    el.classList.remove("timer-warning");
+    el.classList.add("timer-critical");
+    const critical = getComputedStyle(el).color;
+    el.classList.remove("timer-critical");
+    el.className = base;
+    return { warning, critical };
+  });
+  check(
+    "p6b: timer warning/critical tokens resolve",
+    timerStates.warning === RGB.gold && timerStates.critical === RGB.danger,
+    JSON.stringify(timerStates),
+  );
+
+  // P0: modal tokens — the surface must be opaque bg-panel with the surface
+  // border and gold title (the old undefined vars rendered transparent).
+  const modal = await page.evaluate(() => {
+    const backdrop = document.getElementById("approval-modal") as HTMLElement;
+    backdrop.classList.remove("hidden");
+    const m = backdrop.querySelector(".modal") as HTMLElement;
+    const cs = getComputedStyle(m);
+    const title = getComputedStyle(m.querySelector("h2") as HTMLElement);
+    return { bg: cs.backgroundColor, border: cs.borderTopColor, title: title.color };
+  });
+  check(
+    "p6b: modal tokens defined (P0)",
+    modal.bg === RGB.panel && modal.border === RGB.border && modal.title === RGB.gold,
+    JSON.stringify(modal),
+  );
+  // Re-hide: the 10Hz poll re-hides a DOM-shown approval modal anyway (the
+  // server has no pendingBank — authoritative state wins, by design), so the
+  // VISUAL capture of the shared .modal component happens on a poll-free
+  // screen in menuLobbyProbes (p6b-modal.png via the reconnect overlay).
+  await page.evaluate(() => (document.getElementById("approval-modal") as HTMLElement).classList.add("hidden"));
+
+  // Touch target: mute ≥44px on every pointer (P1 #7).
+  const muteBox = await page.evaluate(() => {
+    const cs = getComputedStyle(document.getElementById("btn-mute") as HTMLElement);
+    return { w: cs.width, h: cs.height };
+  });
+  check(
+    "p6b: mute button ≥44px touch target",
+    parseFloat(muteBox.w) >= 44 && parseFloat(muteBox.h) >= 44,
+    JSON.stringify(muteBox),
+  );
+}
+
+// Menu/lobby system checks in a fresh context (title + multi + lobby screens).
+async function menuLobbyProbes(browser: Browser): Promise<void> {
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const p = await ctx.newPage();
+  p.on("pageerror", (e) => failures.push(`p6b menu pageerror: ${e.message}`));
+  try {
+    await p.goto(BASE, { waitUntil: "domcontentloaded" });
+
+    // Focus-visible (P1 #8): keyboard focus shows the gold outline.
+    await p.keyboard.press("Tab");
+    for (let i = 0; i < 5 && (await p.evaluate(() => document.activeElement?.id)) !== "btn-single"; i++) {
+      await p.keyboard.press("Tab");
+    }
+    const focus = await p.evaluate(() => {
+      const el = document.activeElement as HTMLElement;
+      return { id: el.id, outline: getComputedStyle(el).outlineColor, width: getComputedStyle(el).outlineWidth };
+    });
+    check(
+      "p6b: keyboard focus-visible is gold",
+      focus.id === "btn-single" && focus.outline === RGB.gold && parseFloat(focus.width) > 0,
+      JSON.stringify(focus),
+    );
+
+    // Confetti palette is in-world (P1 #4).
+    const pal = await p.evaluate(() => (window as any).__ghUI?.CONFETTI_COLORS ?? null);
+    check(
+      "p6b: confetti palette in-world (gold + seats only)",
+      JSON.stringify(pal) === JSON.stringify(CONFETTI_ALLOWED),
+      JSON.stringify(pal),
+    );
+
+    // Reduced motion gates the confetti spawn (P2 #12)...
+    await p.emulateMedia({ reducedMotion: "reduce" });
+    const rmSpawn = await p.evaluate(() => (window as any).__ghUI.spawnConfetti());
+    check("p6b: reduced motion skips confetti", rmSpawn === 0, `spawned=${rmSpawn}`);
+    // ...and normal motion still spawns the full burst.
+    await p.emulateMedia({ reducedMotion: "no-preference" });
+    const spawn = await p.evaluate(() => (window as any).__ghUI.spawnConfetti());
+    const pieces = await p.evaluate(() => document.querySelectorAll(".confetti").length);
+    check("p6b: confetti spawns under normal motion", spawn === 80 && pieces >= 70, `spawned=${spawn} pieces=${pieces}`);
+    await p.evaluate(() => document.querySelectorAll(".confetti").forEach((n) => n.remove()));
+
+    // Modal surface, captured on a screen with no poll loop fighting the
+    // authoritative state (the in-game approval modal is re-hidden by the 10Hz
+    // poll — by design; its tokens are probe-verified in hudProbes). The
+    // reconnect overlay uses the same .modal component.
+    await p.evaluate(() => (document.getElementById("reconnect-overlay") as HTMLElement).classList.remove("hidden"));
+    await p.waitForTimeout(80);
+    await p.screenshot({ path: `${SHOTS}/p6b-modal.png` });
+    await p.evaluate(() => (document.getElementById("reconnect-overlay") as HTMLElement).classList.add("hidden"));
+
+    // Screen h2 headers are styled (P1 #3) — not browser-default.
+    await p.click("#btn-multi");
+    const h2 = await p.evaluate(() => {
+      const el = document.querySelector("#screen-multi h2") as HTMLElement;
+      const cs = getComputedStyle(el);
+      return { size: cs.fontSize, weight: cs.fontWeight, transform: cs.textTransform };
+    });
+    check(
+      "p6b: screen h2 styled",
+      h2.weight === "700" && h2.transform === "uppercase" && parseFloat(h2.size) >= 20,
+      JSON.stringify(h2),
+    );
+
+    // Lobby renders the team columns + code; capture for the human gate.
+    await p.click("#btn-create");
+    await p.waitForSelector("#screen-lobby:not(.hidden)", { timeout: 10000 });
+    const lobby = await p.evaluate(() => ({
+      cols: document.querySelectorAll(".team-col").length,
+      seats: document.querySelectorAll(".seat").length,
+      code: (document.getElementById("lobby-code") as HTMLElement).textContent,
+    }));
+    check(
+      "p6b: lobby renders team columns",
+      lobby.cols === 2 && lobby.seats === 4 && !!lobby.code && lobby.code !== "----",
+      JSON.stringify(lobby),
+    );
+    await p.screenshot({ path: `${SHOTS}/p6b-lobby.png` });
+
+    // Accessibility wiring: live region + toggle state.
+    const aria = await p.evaluate(() => ({
+      live: document.getElementById("toasts")?.getAttribute("aria-live"),
+      pressed: document.getElementById("btn-mute")?.getAttribute("aria-pressed"),
+    }));
+    check(
+      "p6b: toasts aria-live + mute aria-pressed present",
+      aria.live === "polite" && aria.pressed === "false",
+      JSON.stringify(aria),
+    );
+  } catch (e) {
+    check("p6b: menu/lobby probes completed", false, `exception: ${(e as Error).message}`);
   } finally {
     await ctx.close();
   }
@@ -1592,6 +1797,9 @@ async function main(): Promise<void> {
       await p.screenshot({ path: `${SHOTS}/${view.name}-title.png` });
       await staticProbes(p, view);
       await characterProbes(p, view);
+      if (view.name === "desktop") {
+        await hudProbes(p);
+      }
       await p.screenshot({ path: `${SHOTS}/${view.name}-game-spawn.png` });
       if (view.name === "desktop") {
         await transformProbe(p);
@@ -1614,6 +1822,7 @@ async function main(): Promise<void> {
       }
       await ctx.close();
     }
+    await menuLobbyProbes(browser);
   } finally {
     await browser.close();
     stopServer();
