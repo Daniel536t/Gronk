@@ -1582,23 +1582,27 @@ async function accessibilityRegressionProbes(page: Page): Promise<void> {
     const effects = (window as any).__ghEffects;
     if (typeof effects !== "function") return null;
     effects.qaSeedImpact?.();
-    return { before: effects(), hasLiveGate: true };
+    return { before: effects() };
   });
   await page.emulateMedia({ reducedMotion: "reduce" });
   const reduced = await page.evaluate(() => {
     const effects = (window as any).__ghEffects;
     return typeof effects === "function" ? effects() : null;
   });
-  const reducedCamera = await page.evaluate(() => {
+  check(
+    "p6b: active effects clear on live reduced motion",
+    !!motion && !!reduced && motion.before.shake > 0 && motion.before.flash > 0 && reduced.shake === 0 && reduced.flash === 0,
+    JSON.stringify({ motion, reduced }),
+  );
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  const restored = await page.evaluate(() => {
     const effects = (window as any).__ghEffects;
     return typeof effects === "function" ? effects() : null;
   });
-  check("p6b: reduced motion keeps active camera feedback suppressed", !!reducedCamera && reducedCamera.shake === 0 && reducedCamera.flash === 0, JSON.stringify(reducedCamera));
-  await page.emulateMedia({ reducedMotion: "no-preference" });
   check(
-    "p6b: active shake/flash clears on live reduced motion",
-    !!motion && !!reduced && motion.hasLiveGate && reduced.shake === 0 && reduced.flash === 0,
-    JSON.stringify({ motion, reduced }),
+    "p6b: cleared effects do not resurrect after motion restores",
+    !!restored && restored.shake === 0 && restored.flash === 0,
+    JSON.stringify(restored),
   );
 
   // Qodo: announcements live outside #screen-game so a result transition

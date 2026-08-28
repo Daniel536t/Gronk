@@ -29,6 +29,8 @@ export class Effects {
       // A preference change can happen while an impact is already visible.
       // Clear nonessential active shake/flash immediately, not only future
       // requests, so the live accessibility preference is honored.
+      this.impX = 0;
+      this.impY = 0;
       this.shakeMag = 0;
       this.flashA = 0;
     }
@@ -48,12 +50,12 @@ export class Effects {
   }
 
   addShake(mag: number): void {
-    if (this.reducedMotion()) return;
+    if (this.applyMotionPreference()) return;
     this.shakeMag = Math.min(6, this.shakeMag + mag);
   }
 
   flash(color: string, strength: number): void {
-    if (this.reducedMotion()) return;
+    if (this.applyMotionPreference()) return;
     if (strength > this.flashA) {
       this.flashA = strength;
       this.flashColor = color;
