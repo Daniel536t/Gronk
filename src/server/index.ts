@@ -12,6 +12,7 @@ import { createMcpHttpBridge } from "./mcpHttp";
 import { createHttpServer } from "./http";
 import { trueforgeBackendFactory } from "./trueforgeFactory";
 import { loadConfig } from "./config";
+import { createAstrixService } from "../astrix/server";
 
 const botMode: BotMode = (process.env.BOTS as BotMode) ?? "scripted";
 const port = Number(process.env.PORT ?? 8787);
@@ -35,10 +36,13 @@ const manager = new LobbyManager({
 const stdioMcp = createMcpServer(manager);
 const mcpHttp = createMcpHttpBridge(() => createMcpServer(manager));
 
+const astrix = createAstrixService();
 const httpServer = createHttpServer(manager, port, {
   mcp: mcpHttp,
+  astrix,
   staticDir: existsSync(distDir) ? distDir : undefined,
 });
+setInterval(() => astrix.tick(1), 1000);
 httpServer.listen(port, () => {
   console.error(`[gronks-hoard] HTTP listening on :${port} (BOTS=${botMode})`);
 });

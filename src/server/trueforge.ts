@@ -359,24 +359,21 @@ export async function registerSkill(
  */
 export async function registerMcpConnector(
   cfg: TrueForgeConfig,
+  name = MCP_CONNECTOR_NAME,
+  url = cfg.mcpServerUrl ?? "http://localhost:8787/mcp",
 ): Promise<{ name: string; status: string }> {
-  const url = cfg.mcpServerUrl ?? "http://localhost:8787/mcp";
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (cfg.apiKey) headers.Authorization = `Bearer ${cfg.apiKey}`;
+  const listed = await fetch(`${cfg.baseUrl}/api/v1/settings/mcp-servers`, { headers });
+  if (listed.ok) {
+    const json = (await listed.json()) as { data?: { name?: string; manifest?: Record<string, unknown> }[] };
+    const existing = json.data?.find((server) => server.name === name || server.manifest?.name === name);
+    if (existing) return { name, status: "already configured" };
+  }
   const res = await fetch(`${cfg.baseUrl}/api/v1/settings/mcp-servers`, {
     method: "POST",
     headers,
-    body: JSON.stringify({
-      manifest: {
-        type: "remote",
-        name: MCP_CONNECTOR_NAME,
-        url,
-        description: "Gronk's Hoard game MCP server (lobby, state, movement, action, bank).",
-      },
-    }),
+    body: JSON.stringify({ manifest: { type: "remote", name, url, description: `ASTrix MCP server (${name}).` } }),
   });
-  return {
-    name: MCP_CONNECTOR_NAME,
-    status: res.ok ? `registered (${res.status})` : `error (${res.status}): ${await res.text()}`,
-  };
+  return { name, status: res.ok ? `registered (${res.status})` : `error (${res.status}): ${await res.text()}` };
 }

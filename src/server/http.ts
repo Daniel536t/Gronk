@@ -14,6 +14,8 @@ import { readFileSync, existsSync, statSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
 import { LobbyManager } from "./lobby";
 import type { McpHttpHandler } from "./mcpHttp";
+import type { AstrixService } from "../astrix/server";
+import { readAstrixBody } from "../astrix/server";
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -76,7 +78,7 @@ function readBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
 export function createHttpServer(
   manager: LobbyManager,
   port = 8787,
-  opts: { mcp?: McpHttpHandler; staticDir?: string } = {},
+  opts: { mcp?: McpHttpHandler; staticDir?: string; astrix?: AstrixService } = {},
 ): http.Server {
   return http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
@@ -88,6 +90,16 @@ export function createHttpServer(
       res.writeHead(204);
       res.end();
       return;
+    }
+
+    // ---- ASTrix parallel world API --------------------------------------
+    if (opts.astrix && url.pathname.startsWith("/astrix/")) {
+      let astrixBody: Record<string, unknown> | undefined;
+      if (req.method === "POST") {
+        try { astrixBody = await readAstrixBody(req); }
+        catch (e) { sendJson(res, 400, { error: (e as Error).message }); return; }
+      }
+      if (await opts.astrix.handle(req, res, url.pathname, astrixBody)) return;
     }
 
     // ---- POST /mcp (Streamable HTTP MCP — where TrueForge agents connect) --
