@@ -53,6 +53,13 @@ export function createAstrixService(opts: { authToken?: string } = {}): AstrixSe
           sendJson(res, 401, { success: false, error: "unauthorized" });
           return true;
         }
+        const rawName = String(body.command ?? "").toLowerCase();
+        if (rawName === "simulate_plan") {
+          // Read-only plan simulation: route to the simulator, never the bus.
+          const params = body.params && typeof body.params === "object" ? body.params as Record<string, unknown> : body;
+          sendJson(res, 200, await tools.callTool("simulate_plan", { plan: params.plan }));
+          return true;
+        }
         sendJson(res, 200, bus.execute(normalizeCommand(body)));
         return true;
       }

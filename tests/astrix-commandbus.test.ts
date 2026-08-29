@@ -116,7 +116,9 @@ describe("ASTrix command bus", () => {
       islandB: "frost",
     });
     const stored = state.pendingApprovals[0];
-    (stored.impact as Record<string, unknown>).position = undefined;
+    // Corrupt a field that validation genuinely requires (a bridge needs two
+    // distinct islands), so the stored approval can no longer execute.
+    (stored.impact as Record<string, unknown>).islandA = undefined;
     const result = bus.resolveApproval(stored.id, "approve");
     expect(result.success).toBe(false);
     expect(result.error).toContain("approval invalid");
@@ -124,6 +126,20 @@ describe("ASTrix command bus", () => {
     expect(state.pendingApprovals).toHaveLength(0);
     expect(state.buildings).toHaveLength(1);
     expect(state.resources.wood).toBe(30);
+  });
+
+  it("resolves a positionless bridge approval", () => {
+    const { state, bus } = fresh();
+    // Position is optional for bridges; a positionless approval must be
+    // consumable instead of staying pending forever.
+    const request = bus.execute({ command: "BUILD_BRIDGE", islandA: "meadow", islandB: "frost" });
+    expect(request.success).toBe(false);
+    expect(request.pendingApproval).toBeDefined();
+    const approved = bus.resolveApproval(request.pendingApproval!.id, "approve");
+    expect(approved.success).toBe(true);
+    expect(state.bridges).toHaveLength(1);
+    expect(state.pendingApprovals).toHaveLength(0);
+    expect(state.resources.wood).toBe(27);
   });
 
   it("simulate rejects unsupported commands explicitly", () => {

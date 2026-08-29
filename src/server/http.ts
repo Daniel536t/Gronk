@@ -17,6 +17,31 @@ import type { McpHttpHandler } from "./mcpHttp";
 import type { AstrixService } from "../astrix/server";
 import { readAstrixBody } from "../astrix/server";
 
+// ASTrix tools that mutate the world. When ASTRIX_API_KEY is configured,
+// invoking these through the legacy POST /mcp channel (used by TrueForge)
+// requires the same Bearer token as /astrix/command. Read-only inspect_* and
+// simulate_plan tools stay open so agents can always observe the world.
+const ASTRIX_MUTATING_TOOLS = new Set([
+  "gather",
+  "build",
+  "plant",
+  "clear_terrain",
+  "build_bridge",
+]);
+
+function isAstrixMutatingMcpCall(body: unknown): boolean {
+  const messages = Array.isArray(body) ? body : [body];
+  return messages.some((msg) => {
+    if (!msg || typeof msg !== "object") return false;
+    const m = msg as Record<string, unknown>;
+    if (m.method !== "tools/call") return false;
+    const params = m.params;
+    if (!params || typeof params !== "object") return false;
+    const name = (params as Record<string, unknown>).name;
+    return typeof name === "string" && ASTRIX_MUTATING_TOOLS.has(name);
+  });
+}
+
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -117,6 +142,15 @@ export function createHttpServer(
       } catch (e) {
         sendJson(res, 400, { error: (e as Error).message });
         return;
+      }
+      // ASTrix world mutations must carry the same Bearer token here as on
+      // /astrix/command; read-only inspect/simulate tools remain open.
+      const authToken = opts.astrix?.authToken;
+      if (authToken && isAstrixMutatingMcpCall(body)) {
+        if (req.headers.authorization !== `Bearer ${authToken}`) {
+          sendJson(res, 401, { error: "unauthorized" });
+          return;
+        }
       }
       await opts.mcp.handle(req, res, body);
       return;

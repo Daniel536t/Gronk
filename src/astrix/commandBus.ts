@@ -211,7 +211,15 @@ function approvalMatchesCommand(approval: AstrixApproval, command: AstrixCommand
   if (approval.command !== command.command) return false;
   const impact = approval.impact;
   if (command.command === "CLEAR_TERRAIN") return samePosition(impact.position, command.position) && impact.radius === command.radius;
-  return impact.islandA === command.islandA && impact.islandB === command.islandB && samePosition(impact.position, command.position);
+  return impact.islandA === command.islandA && impact.islandB === command.islandB && positionMatches(impact.position, command.position);
+}
+
+// Bridge position is optional: both absent is a match, both present must be
+// equal, and present-vs-absent is a mismatch (never silently approves a
+// different command than the one that was recorded).
+function positionMatches(a: unknown, b: unknown): boolean {
+  if (!a && !b) return true;
+  return samePosition(a, b);
 }
 
 function samePosition(a: unknown, b: unknown): boolean {
