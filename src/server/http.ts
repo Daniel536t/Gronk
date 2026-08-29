@@ -32,6 +32,11 @@ const MIME: Record<string, string> = {
   ".svg": "image/svg+xml",
   ".png": "image/png",
   ".ico": "image/x-icon",
+  // Godot 4 Web export: browsers refuse to execute WASM without the correct
+  // MIME type, and the .pck must be served as a plain binary stream.
+  ".wasm": "application/wasm",
+  ".pck": "application/octet-stream",
+  ".ogg": "audio/ogg",
 };
 
 function sendJson(res: http.ServerResponse, code: number, body: unknown): void {

@@ -11,7 +11,7 @@ signal astrix_command_succeeded(result: Dictionary)
 signal astrix_command_failed(error: String)
 signal astrix_approval_requested(request: Dictionary)
 
-@export var api_origin: String = "http://127.0.0.1:8787"
+@export var api_origin: String = ""  # empty -> auto (web: same origin as the page; native: localhost)
 @export var poll_interval_seconds: float = 0.5
 @export var astrix_api_key: String = ""
 
@@ -24,6 +24,13 @@ var _last_event_fingerprint := ""
 var _astrix_poll_in_flight := false
 
 func _ready() -> void:
+    if api_origin.is_empty():
+        if OS.has_feature("web"):
+            # Browser build: talk to the origin that served this page (relative
+            # URLs do not work with HTTPRequest, so resolve the full origin).
+            api_origin = str(JavaScriptBridge.eval("window.location.origin", true))
+        else:
+            api_origin = "http://127.0.0.1:8787"
     _poll_timer = Timer.new()
     _poll_timer.wait_time = poll_interval_seconds
     _poll_timer.timeout.connect(_poll_state)
