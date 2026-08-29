@@ -1,16 +1,22 @@
-// Throwaway QA script: load the live Godot HTML5 client and screenshot it via CDP.
-// Not part of the shipped app; used only to verify the web export boots, renders,
-// exposes mobile controls, and moves the player when the joystick is dragged.
+// Throwaway QA script: load the live Godot HTML5 client, emulate touch via CDP,
+// capture before/after joystick-drag frames, and log progress + errors to a file.
+// Not part of the shipped app.
 import { chromium } from "playwright";
-import { writeFileSync } from "node:fs";
+import { writeFileSync, appendFileSync } from "node:fs";
 
 const url = process.env.CAPTURE_URL ?? "https://astrixx.duckdns.org/";
 const out = process.env.CAPTURE_OUT ?? "/tmp/astrix-web.png";
-const waitMs = Number(process.env.CAPTURE_WAIT_MS ?? "16000");
+const waitMs = Number(process.env.CAPTURE_WAIT_MS ?? "18000");
 const vw = Number(process.env.CAPTURE_W || "1280");
 const vh = Number(process.env.CAPTURE_H || "720");
 const isMobile = process.env.CAPTURE_MOBILE === "1";
 const simulateDragger = process.env.CAPTURE_DRAG_JOY === "1";
+const log = process.env.CAPTURE_LOG_FILE ?? "/tmp/cap.log";
+const tl = (s: string) => {
+  try { appendFileSync(log, `[${new Date().toISOString()}] ${s}\n`); } catch {}
+};
+
+tl(`start url=${url} vw=${vw} vh=${vh} mobile=${isMobile} drag=${simulateDragger}`);
 
 const browser = await chromium.launch({
   args: [
@@ -21,24 +27,39 @@ const browser = await chromium.launch({
     "--enable-unsafe-swiftshader",
   ],
 });
+tl("browser launched");
 const page = await browser.newPage({
   viewport: { width: vw, height: vh, isMobile, hasTouch: isMobile },
 });
 
 const errors: string[] = [];
 page.on("console", (m) => {
-  if (m.type() === "error") errors.push(m.text().slice(0, 300));
+  if (m.type() === "error") {
+    const t = m.text().slice(0, 300);
+    errors.push(t);
+    tl("console-error: " + t);
+  }
 });
-page.on("pageerror", (e) => errors.push(String(e).slice(0, 300)));
+page.on("pageerror", (e) => {
+  const t = String(e).slice(0, 300);
+  errors.push(t);
+  tl("page-error: " + t);
+});
+page.on("crash", () => tl("PAGE CRASH EVENT"));
 
 const cdp = await page.context().newCDPSession(page);
 async function shot(p: string) {
   const s: { data: string } = await cdp.send("Page.captureScreenshot", { format: "png" });
   writeFileSync(p, Buffer.from(s.data, "base64"));
+  tl("shot written: " + p);
 }
 
+tl("navigating");
 await page.goto(url, { waitUntil: "load", timeout: 60_000 });
+tl("navigated, waiting");
 await page.waitForTimeout(waitMs);
+tl("wait done, before-shot");
+await shot(out);
 
 const ctx = await page.evaluate(() => {
   const c = document.querySelector("canvas");
@@ -49,24 +70,47 @@ const ctx = await page.evaluate(() => {
     canvas: r ? { cssW: r.width, cssH: r.height, attrW: c.width, attrH: c.height } : null,
   };
 });
-await shot(out);
+tl("ctx: " + JSON.stringify(ctx));
 
 let drag: unknown = null;
 if (simulateDragger) {
-  // Drag across the lower-left virtual-joystick area (mouse works for touch UI in Godot web).
-  const joy = { x: Math.round(vw * 0.14), y: Math.round(vh * 0.86) };
-  const endX = Math.round(vw * 0.45);
-  await page.mouse.move(joy.x, joy.y);
-  await page.mouse.down();
-  for (let i = 1; i <= 12; i++) {
-    await page.mouse.move(joy.x + Math.round((endX - joy.x) * (i / 12)), joy.y);
-    await page.waitForTimeout(40);
+  tl("starting drag");
+  const joy = { x: Math.round(vw * 0.16), y: Math.round(vh * 0.84) };
+  const endX = Math.round(vw * 0.5);
+  try {
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [{ x: joy.x, y: joy.y, id: 0, radiusX: 6, radiusY: 6, force: 1 }],
+    });
+    tl("touchStart sent");
+    for (let i = 1; i <= 10; i++) {
+      const x = joy.x + Math.round((endX - joy.x) * (i / 10));
+      await cdp.send("Input.dispatchTouchEvent", {
+        type: "touchMove",
+        touchPoints: [{ x, y: joy.y, id: 0, radiusX: 6, radiusY: 6, force: 1 }],
+      });
+    }
+    tl("touchMove sequence sent");
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    tl("touchEnd sent");
+    await page.waitForTimeout(900);
+    tl("post-drag wait done, after-shot");
+    await shot(out.replace(".png", "-after.png"));
+    drag = { joystick: joy, endX, before: out, after: out.replace(".png", "-after.png") };
+    tl("drag complete");
+  } catch (e) {
+    const m = String(e).slice(0, 300);
+    drag = { error: m };
+    tl("drag error: " + m);
   }
-  await page.mouse.up();
-  await page.waitForTimeout(900);
-  await shot(out.replace(".png", "-after.png"));
-  drag = { joystick: joy, endX, afterShot: out.replace(".png", "-after.png") };
 }
 
-console.log(JSON.stringify({ title: await page.title(), ctx, drag, errors, out }, null, 2));
+tl("capturing final console result");
+try {
+  console.log(JSON.stringify({ title: await page.title(), ctx, drag, errors, out }, null, 2));
+} catch (e) {
+  tl("title threw: " + String(e).slice(0, 200));
+  console.log(JSON.stringify({ title: null, ctx, drag, errors, out }, null, 2));
+}
 await browser.close();
+tl("done");

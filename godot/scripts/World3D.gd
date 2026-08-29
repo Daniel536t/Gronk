@@ -19,13 +19,14 @@ const MEADOW_SURFACE := 3.3
 const FROST_SURFACE := 4.3
 const DUSK_SURFACE := 2.8
 
-# Isometric gameplay camera. A constant world offset relative to the player and
-# a fixed look_at gives a consistent (non-rolling) diamond-isometric view.
-const CAMERA_OFFSET := Vector3(10.0, 21.0, 10.0)
-const CAMERA_LOOK_HEIGHT := 0.9
+# Isometric gameplay camera. A deliberate lower pitch (~32deg from horizontal)
+# reveals object sides (tree trunks, cliff faces, bridge elevation, hut walls) so
+# the world reads as a 2.5D miniature rather than a top-down bird's-eye view.
+const CAMERA_OFFSET := Vector3(13.0, 14.5, 13.0)
+const CAMERA_LOOK_HEIGHT := 0.8
 # Look slightly ahead along the southern path so the player stays prominent
 # while the shoreline, bridge and magic islet remain in frame.
-const CAMERA_LOOK_AHEAD := 5.0
+const CAMERA_LOOK_AHEAD := 4.0
 const CAMERA_SMOOTH := 6.0
 
 var player: AstrixPlayer3D
@@ -531,16 +532,26 @@ func _build_camera() -> void:
     _apply_camera_framing()
     camera.look_at(player.global_position + Vector3(0.0, CAMERA_LOOK_HEIGHT, CAMERA_LOOK_AHEAD), Vector3.UP)
     camera.current = true
+    # Re-framing on rotation/resize keeps the player a clear anchor on tablets.
+    get_viewport().size_changed.connect(_on_viewport_resized)
+
+
+func _on_viewport_resized() -> void:
+    _apply_camera_framing()
 
 # Keep the player a readable size on both landscape (desktop) and portrait
 # (mobile) viewports while showing the clearing, shoreline and bridge landmarks.
+# Portrait/tall screens get a SMALLER ortho size (more zoom) so the player stays
+# a clear anchor instead of floating tiny in a huge frame.
 func _apply_camera_framing() -> void:
     var vp := get_viewport()
     if not vp:
         return
     var size := vp.get_visible_rect().size
     var aspect := size.x / maxf(1.0, size.y)
-    camera.size = 16.0 if aspect < 1.05 else 14.5
+    # Tall (portrait) viewports get more zoom so the player stays a clear anchor;
+    # wide (landscape) viewports show a little more world.
+    camera.size = 11.5 if aspect < 1.05 else 13.5
 
 func _mesh_box(node_name: String, position: Vector3, size: Vector3, color: Color) -> MeshInstance3D:
     var node := MeshInstance3D.new()

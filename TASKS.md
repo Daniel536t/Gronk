@@ -145,6 +145,24 @@ Caddy config: `/etc/caddy/Caddyfile` (see deployment report). Backup at `/etc/ca
 - Actual game logic authority remains the ASTrix server; Godot collision is presentation-only.
 - Gronk is not yet a separate chaser in this Godot build — recast as the companion follow placeholder pending the agent/Gronk scope.
 
+## Milestone — mobile-first gameplay camera + visible touch controls
+
+Real Android tablet testing (post-HTTPs deploy) showed the build was a *viewer*, not a *game*: the camera was near-vertical (dev/bird's-eye), the player was a tiny speck, and no controls were visible in the shipped build.
+
+- [x] Gameplay camera: retargeted to a deliberate low-pitch isometric (~32deg from horizontal) with constant offset + non-rolling yaw + smooth follow + look-ahead. Reveals object sides/cliff faces/bridge elevation (true 2.5D depth) instead of a top-down view.
+- [x] Player-anchored framing: portrait/tall viewports get a smaller ortho size (more zoom) so the player is a clear anchor; fixed the reversed framing logic; re-frame on `size_changed` for tablet rotation. Player is prominent in both portrait and landscape.
+- [x] Visible touch controls: rewrote `MobileHUD.gd` with a large high-contrast virtual joystick (dark base + bright ring + teal thumb) and a gold action button, safe-margin positioned (no longer off-edge), plus ASTRIX label and pause button.
+- [x] Fixed the REAL reason controls were invisible: `class_name Circle` was declared inside `MobileHUD.gd` (invalid in GDScript 4.7 → the whole HUD script failed to load in the exported build with "Unexpected class_name in class body"). Moved to standalone `godot/scripts/Circle.gd` (also fixed a 3-arg `minf` misuse) and wired it by `preload`.
+- [x] Unified input: joystick + action button feed the same `AstrixInput` abstraction as WASD/arrows + E; desktop keyboard unchanged.
+- [x] Touch drag moves the player: Playwright/CDP emulated a 390x844 touch joystick drag against the public HTTPS URL; before/after frames show the player moving and the camera following, zero console errors.
+- [x] Both viewports verified: 390x844 portrait and 1280x720 desktop render the world + all controls with zero console errors; export boots clean.
+- [x] Regression: typecheck passes, 80/80 tests pass.
+
+### Mobile-first milestone notes / limitations
+- Headless Playwright cannot reproduce exact Android hardware+multi-touch behavior; the CDP-emulated drag validates the input path but true device feel needs a real-device pass.
+- Title top area / camera look-ahead leave some sky at the top in portrait (acceptable exploration framing).
+- Action button currently triggers `AstrixInput.request_interact()` (interact action); contextual hide prompt is a follow-up.
+
 ## Guardrails
 
 - The existing TypeScript browser client remains the reference client and must not be modified for ASTrix work.
