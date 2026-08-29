@@ -25,6 +25,7 @@ func _ready() -> void:
     var world_state := get_node_or_null("/root/WorldState")
     if world_state:
         world_state.resource_nodes.clear()
+    GameClient.astrix_state_received.connect(_on_astrix_state_received)
     _build_environment()
     _build_water()
     _build_islands()
@@ -223,6 +224,21 @@ func _add_grass(position: Vector3, index: int, color: Color) -> void:
         var blade := _mesh_box("Blade", Vector3((i - 2) * 0.18, 0.35, sin(float(i)) * 0.15), Vector3(0.12, 0.7 + float(i % 2) * 0.15, 0.12), color)
         blade.rotation.z = float(i - 2) * 0.12
         tuft.add_child(blade)
+
+func _on_astrix_state_received(state: Dictionary) -> void:
+    var remote_buildings: Array = state.get("buildings", [])
+    var world_state := get_node_or_null("/root/WorldState")
+    if world_state:
+        world_state.day = int(state.get("day", world_state.day))
+        world_state.food = int(state.get("food", world_state.food))
+        var remote_resources: Variant = state.get("resources", {})
+        if remote_resources is Dictionary:
+            for key in remote_resources:
+                world_state.resources[str(key)] = int(remote_resources[key])
+        world_state.buildings.clear()
+        for building in remote_buildings:
+            if building is Dictionary:
+                world_state.buildings[str(building.get("id", "building"))] = building.duplicate(true)
 
 func _build_systems() -> void:
     var building_system := Node3D.new()

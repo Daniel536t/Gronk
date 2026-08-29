@@ -6,6 +6,8 @@ extends Node
 signal command_completed(command_name: String, result: Dictionary)
 signal command_rejected(command_name: String, reason: String)
 signal approval_requested(request: Dictionary)
+signal command_succeeded(result: Dictionary)
+signal command_failed(error: String)
 
 const RESOURCE_IDS := [&"wood", &"stone", &"food", &"water", &"crystal"]
 const BUILD_COSTS := {
@@ -19,6 +21,21 @@ var world_state: Node
 
 func _ready() -> void:
     world_state = get_node_or_null("/root/WorldState")
+    GameClient.astrix_command_succeeded.connect(_on_server_command_succeeded)
+    GameClient.astrix_command_failed.connect(_on_server_command_failed)
+
+func _on_server_command_succeeded(result: Dictionary) -> void:
+    command_succeeded.emit(result)
+
+func _on_server_command_failed(error: String) -> void:
+    command_failed.emit(error)
+
+func validate(command_name: String, params: Dictionary) -> Dictionary:
+    if command_name.is_empty():
+        return {"ok": false, "error": "command is required"}
+    if command_name == "build" and not params.has("building_type"):
+        return {"ok": false, "error": "building_type is required"}
+    return {"ok": true}
 
 func place_building(building_type: String, location: Vector3) -> Dictionary:
     if not BUILD_COSTS.has(building_type):
@@ -32,6 +49,13 @@ func place_building(building_type: String, location: Vector3) -> Dictionary:
     if bool(result.get("pending", false)):
         return result
     return result
+
+func send_command(command_name: String, params: Dictionary) -> void:
+    var validation := validate(command_name, params)
+    if not bool(validation.get("ok", false)):
+        command_failed.emit(str(validation.get("error", "invalid command")))
+        return
+    GameClient.send_astrix_command({"command": command_name, "params": params})
 
 func commit_building(building_type: String, location: Vector3) -> Dictionary:
     if not BUILD_COSTS.has(building_type) or not _valid_location(location):
