@@ -1,7 +1,7 @@
-// HTTP-level coverage for the ASTrix parallel API: the auth gate on the legacy
-// POST /mcp channel (TrueForge's entry point) and the read-only simulate_plan
-// command route. Mutation tools require the Bearer token when ASTRIX_API_KEY
-// is configured; inspect/simulate stay open so agents can always observe.
+// HTTP-level coverage for the ASTrix parallel API: the read-only simulate_plan
+// command route, the fully-open legacy POST /mcp channel (TrueForge is a
+// same-host client and sends no Authorization header), and the auth gate on
+// the public /astrix/* mutation surface (browser client -> server).
 // We use the SDK's real streamable-HTTP client (the same transport TrueForge
 // uses) so the session handshake, Accept headers, and session IDs are exact.
 import assert from "node:assert/strict";
@@ -79,19 +79,11 @@ describe("ASTrix HTTP API", () => {
     assert.equal(state.resources.wood, 30);
   });
 
-  it("rejects ASTrix mutation tools on legacy /mcp without the bearer token", async () => {
+  it("allows ASTrix mutation tools on legacy /mcp without a bearer token", async () => {
+    // TrueForge connects here from the same host and sends no Authorization
+    // header; /mcp must be fully open for the steward to act on the world.
     const { base } = await startTestServer({ authToken: "sekret" });
-    await assert.rejects(
-      withClient(base, {}, async (client) => {
-        await client.callTool({ name: "gather", arguments: { resource_type: "wood" } });
-      }),
-      /unauthorized|401/,
-    );
-  });
-
-  it("allows ASTrix mutation tools on legacy /mcp with the bearer token", async () => {
-    const { base } = await startTestServer({ authToken: "sekret" });
-    await withClient(base, { Authorization: "Bearer sekret" }, async (client) => {
+    await withClient(base, {}, async (client) => {
       const result = await client.callTool({ name: "gather", arguments: { resource_type: "wood" } });
       const parsed = jsonOf(result);
       assert.equal(parsed.success, true);
@@ -114,5 +106,30 @@ describe("ASTrix HTTP API", () => {
       const created = jsonOf(result);
       assert.match(created.roomCode, /^[A-Z]{4}-\d{2}$/);
     });
+  });
+
+  it("still requires the bearer token on the public /astrix/command surface", async () => {
+    const { base } = await startTestServer({ authToken: "sekret" });
+    const build = {
+      command: "build",
+      params: { building_type: "farm", position: { x: 5, y: 0, z: 5 }, island_id: "meadow" },
+      player_id: "test",
+    };
+    const denied = await fetch(`${base}/astrix/command`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(build),
+    });
+    assert.equal(denied.status, 401);
+
+    const allowed = await fetch(`${base}/astrix/command`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer sekret" },
+      body: JSON.stringify(build),
+    });
+    assert.equal(allowed.status, 200);
+    const parsed = (await allowed.json()) as any;
+    assert.equal(parsed.success, true);
+    assert.ok(typeof parsed.buildingId === "string" || parsed.buildingId === undefined, "build resolves through the command bus");
   });
 });
