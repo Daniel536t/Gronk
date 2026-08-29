@@ -26,6 +26,7 @@ func _ready() -> void:
 
 func _on_server_command_succeeded(result: Dictionary) -> void:
     command_succeeded.emit(result)
+    command_completed.emit(str(result.get("command", "")), result)
 
 func _on_server_command_failed(error: String) -> void:
     command_failed.emit(error)

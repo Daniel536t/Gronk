@@ -20,6 +20,7 @@ export interface AstrixCommand {
   islandA?: BiomeId;
   islandB?: BiomeId;
   approved?: boolean;
+  approvalId?: string;
 }
 
 export interface AstrixCommandResult {
@@ -66,7 +67,7 @@ export class AstrixGameCommandBus {
       radius: typeof impact.radius === "number" ? impact.radius : undefined,
       islandA: impact.islandA as BiomeId | undefined,
       islandB: impact.islandB as BiomeId | undefined,
-      approved: true,
+      approvalId,
     };
     return this.execute(command);
   }
@@ -75,7 +76,13 @@ export class AstrixGameCommandBus {
     const irreversible = command.command === "CLEAR_TERRAIN" || command.command === "BUILD_BRIDGE";
     const validation = this.validate(command);
     if (!validation.success) return validation;
-    if (irreversible && command.approved !== true) {
+    if (irreversible && command.approvalId !== undefined) {
+      const approvalExists = this.state.pendingApprovals.some((approval) => approval.id === command.approvalId);
+      if (!approvalExists) return { success: false, command: command.command, irreversible, error: "approval not found" };
+      const approvalIndex = this.state.pendingApprovals.findIndex((approval) => approval.id === command.approvalId);
+      this.state.pendingApprovals.splice(approvalIndex, 1);
+    }
+    if (irreversible && command.approvalId === undefined) {
       const approval: AstrixApproval = {
         id: this.state.nextEntityId("approval"),
         command: command.command,
@@ -84,6 +91,7 @@ export class AstrixGameCommandBus {
         createdAt: Date.now(),
       };
       this.state.pendingApprovals.push(approval);
+      this.emitState();
       return { success: false, command: command.command, irreversible, pendingApproval: approval, error: "human approval required" };
     }
 
@@ -94,6 +102,7 @@ export class AstrixGameCommandBus {
       case "PLANT_CROP": result = this.plant(command, irreversible); break;
       case "CLEAR_TERRAIN": result = this.clearTerrain(command, irreversible); break;
       case "BUILD_BRIDGE": result = this.buildBridge(command, irreversible); break;
+      default: return { success: false, command: command.command, irreversible, error: "unknown command" };
     }
     if (result.success) this.emitState();
     return result;
@@ -115,6 +124,7 @@ export class AstrixGameCommandBus {
     }
     if (command.command === "GATHER_RESOURCE" && !command.resourceId && !command.resourceType) return { success: false, command: command.command, irreversible, error: "resourceId or resourceType is required" };
     if (command.command === "PLANT_CROP" && (!command.farmPlotId || !command.cropType)) return { success: false, command: command.command, irreversible, error: "farmPlotId and cropType are required" };
+    if (command.command === "CLEAR_TERRAIN" && (!command.position || !Number.isFinite(command.radius) || command.radius! <= 0 || command.radius! > 20)) return { success: false, command: command.command, irreversible, error: "position and radius between 0 and 20 are required" };
     if (command.command === "BUILD_BRIDGE" && (!command.islandA || !command.islandB || command.islandA === command.islandB)) return { success: false, command: command.command, irreversible, error: "two distinct islands are required" };
     return { success: true, command: command.command, irreversible };
   }
@@ -138,7 +148,9 @@ export class AstrixGameCommandBus {
   }
 
   private plant(command: AstrixCommand, irreversible: boolean): AstrixCommandResult {
-    return { success: true, command: command.command, irreversible, farmPlotId: command.farmPlotId, cropType: command.cropType, growthStage: 0 };
+    const crop = { id: this.state.nextEntityId("crop"), farmPlotId: command.farmPlotId!, cropType: command.cropType!, growthStage: 0 };
+    this.state.crops.push(crop);
+    return { success: true, command: command.command, irreversible, farmPlotId: crop.farmPlotId, cropType: crop.cropType, growthStage: crop.growthStage, cropId: crop.id };
   }
 
   private clearTerrain(command: AstrixCommand, irreversible: boolean): AstrixCommandResult {
@@ -150,6 +162,11 @@ export class AstrixGameCommandBus {
   }
 
   private buildBridge(command: AstrixCommand, irreversible: boolean): AstrixCommandResult {
+    const cost = COSTS.bridge_segment;
+    for (const [resource, amount] of Object.entries(cost)) {
+      if (this.state.resources[resource as ResourceType] < amount) return { success: false, command: command.command, irreversible, error: `insufficient ${resource}` };
+    }
+    for (const [resource, amount] of Object.entries(cost)) this.state.resources[resource as ResourceType] -= amount;
     const building = { id: this.state.nextEntityId("bridge"), type: "bridge_segment" as const, position: command.position ?? { x: 0, y: 0, z: 0 }, health: 1, islandId: command.islandA! };
     this.state.buildings.push(building);
     return { success: true, command: command.command, irreversible, bridgeId: building.id, cost: { wood: 3, stone: 1 }, length: 8, permanent: true };

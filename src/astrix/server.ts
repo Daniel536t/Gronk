@@ -18,7 +18,7 @@ export function createAstrixService(): AstrixService {
   const tools = createAstrixToolRegistry(state, bus);
   const eventClients = new Set<http.ServerResponse>();
   bus.onStateChanged((snapshot) => {
-    const payload = `event: state\\ndata: ${JSON.stringify(snapshot)}\\n\\n`;
+    const payload = `event: state\ndata: ${JSON.stringify(snapshot)}\n\n`;
     for (const client of eventClients) client.write(payload);
   });
 
@@ -40,7 +40,7 @@ export function createAstrixService(): AstrixService {
       }
       if (pathname === "/astrix/events" && req.method === "GET") {
         res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive", "Access-Control-Allow-Origin": "*" });
-        res.write(`event: state\\ndata: ${JSON.stringify(state.snapshot())}\\n\\n`);
+        res.write(`event: state\ndata: ${JSON.stringify(state.snapshot())}\n\n`);
         eventClients.add(res);
         req.on("close", () => eventClients.delete(res));
         return true;
@@ -58,6 +58,16 @@ export function createAstrixService(): AstrixService {
         }
         const result = bus.resolveApproval(approvalId, decision);
         sendJson(res, result.success ? 200 : 404, result);
+        return true;
+      }
+      if (pathname === "/astrix/mcp" && (req.method === "GET" || req.method === "POST")) {
+        if (req.method === "GET") {
+          sendJson(res, 200, { tools: tools.listTools() });
+        } else {
+          const name = typeof body.name === "string" ? body.name : typeof body.params === "object" && body.params ? String((body.params as Record<string, unknown>).name ?? "") : "";
+          const args = body.arguments && typeof body.arguments === "object" ? body.arguments as Record<string, unknown> : body.params && typeof body.params === "object" ? body.params as Record<string, unknown> : {};
+          sendJson(res, 200, await tools.callTool(name, args));
+        }
         return true;
       }
       if (pathname === "/astrix/mcp/tools/list" && req.method === "GET") {
@@ -114,7 +124,7 @@ function normalizeCommand(body: Record<string, unknown>): AstrixCommand {
     build_bridge: "BUILD_BRIDGE",
   };
   return {
-    command: map[command] ?? command as AstrixCommand["command"],
+    command: map[command] ?? "__INVALID__" as AstrixCommand["command"],
     position: params.position as AstrixCommand["position"],
     resourceId: params.resource_id as string | undefined,
     resourceType: params.resource_type as AstrixCommand["resourceType"],
@@ -125,6 +135,6 @@ function normalizeCommand(body: Record<string, unknown>): AstrixCommand {
     radius: typeof params.radius === "number" ? params.radius : undefined,
     islandA: params.island_a as AstrixCommand["islandA"],
     islandB: params.island_b as AstrixCommand["islandB"],
-    approved: body.approved === true || params.approved === true,
+    approvalId: typeof body.approval_id === "string" ? body.approval_id : undefined,
   };
 }

@@ -29,9 +29,9 @@ func _ready() -> void:
     reject_button.text = "REJECT"
     reject_button.pressed.connect(_reject)
     box.add_child(reject_button)
-    var bus := get_node_or_null("/root/GameCommandBus")
-    if bus:
-        bus.approval_requested.connect(show_request)
+    GameClient.astrix_approval_requested.connect(show_request)
+    approved.connect(_respond_approved)
+    rejected.connect(_respond_rejected)
 
 func show_request(request: Dictionary) -> void:
     current_request = request.duplicate(true)
@@ -47,3 +47,9 @@ func _approve() -> void:
 func _reject() -> void:
     panel.visible = false
     rejected.emit(current_request)
+
+func _respond_approved(request: Dictionary) -> void:
+    GameClient.respond_to_astrix_approval(str(request.get("id", "")), "approve")
+
+func _respond_rejected(request: Dictionary) -> void:
+    GameClient.respond_to_astrix_approval(str(request.get("id", "")), "reject")

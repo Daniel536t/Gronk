@@ -30,6 +30,29 @@ func snapshot() -> Dictionary:
         "pending_approvals": pending_approvals.duplicate(true),
     }
 
+func apply_snapshot(snapshot_data: Dictionary) -> void:
+    day = int(snapshot_data.get("day", day))
+    population = int(snapshot_data.get("population", population))
+    food = int(snapshot_data.get("food", food))
+    var health: Variant = snapshot_data.get("biomeHealth", snapshot_data.get("biome_health", biome_health))
+    if health is Dictionary:
+        biome_health = health.duplicate(true)
+    var remote_resources: Variant = snapshot_data.get("resources", resources)
+    if remote_resources is Dictionary:
+        resources = remote_resources.duplicate(true)
+        food = int(resources.get("food", food))
+    var remote_buildings: Variant = snapshot_data.get("buildings", buildings)
+    if remote_buildings is Array:
+        buildings.clear()
+        for building in remote_buildings:
+            if building is Dictionary:
+                buildings[str(building.get("id", "building"))] = building.duplicate(true)
+    var approvals: Variant = snapshot_data.get("pendingApprovals", snapshot_data.get("pending_approvals", pending_approvals))
+    if approvals is Array:
+        pending_approvals = approvals.duplicate(true)
+    _recalculate_food_security()
+    changed.emit()
+
 func set_resource(resource_id: String, amount: int) -> void:
     resources[resource_id] = maxi(0, amount)
     if resource_id == "food":

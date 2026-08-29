@@ -32,6 +32,7 @@ export interface AstrixStateSnapshot {
   foodSecurity: number;
   resources: Record<ResourceType, number>;
   biomeHealth: Record<BiomeId, number>;
+  crops: Array<{ id: string; farmPlotId: string; cropType: string; growthStage: number }>;
   buildings: AstrixBuilding[];
   resourceNodes: AstrixResourceNode[];
   islands: { id: BiomeId; biome: string; health: number; connectivity: string[] }[];
@@ -66,7 +67,9 @@ export class AstrixWorldState {
     frost: 0.6,
     dusk: 0.4,
   };
-  readonly buildings: AstrixBuilding[] = [
+  readonly crops: Array<{ id: string; farmPlotId: string; cropType: string; growthStage: number }> = [];
+  buildings: AstrixBuilding[] = [
+
     { id: "house-001", type: "house", position: { x: 20, y: 3.6, z: 30 }, health: 1, islandId: "meadow" },
   ];
   readonly resourceNodes: AstrixResourceNode[] = [
@@ -118,6 +121,7 @@ export class AstrixWorldState {
       foodSecurity: this.foodSecurity,
       resources: { ...this.resources },
       biomeHealth: { ...this.biomeHealth },
+      crops: this.crops.map((crop) => ({ ...crop })),
       buildings: this.buildings.map((building) => ({ ...building, position: { ...building.position } })),
       resourceNodes: this.resourceNodes.map((node) => ({ ...node, position: { ...node.position } })),
       islands: [

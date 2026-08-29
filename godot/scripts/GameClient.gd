@@ -20,13 +20,14 @@ var astrix_state: Dictionary = {}
 var _poll_timer: Timer
 var _requests: Array[HTTPRequest] = []
 var _last_event_fingerprint := ""
+var _astrix_poll_in_flight := false
 
 func _ready() -> void:
     _poll_timer = Timer.new()
     _poll_timer.wait_time = poll_interval_seconds
     _poll_timer.timeout.connect(_poll_state)
     add_child(_poll_timer)
-    get_astrix_state_once()
+    _start_astrix_polling()
 
 func create_room(mode: String = "solo", player_name: String = "Wizard") -> void:
     _post_json("/api/create", {"mode": mode, "name": player_name}, func(data: Dictionary) -> void:
@@ -62,10 +63,21 @@ func get_state_once_legacy() -> void:
     )
 
 func get_astrix_state_once() -> void:
+    if _astrix_poll_in_flight:
+        return
+    _astrix_poll_in_flight = true
     _get_json("/astrix/state", func(data: Dictionary) -> void:
+        _astrix_poll_in_flight = false
         _apply_astrix_state(data)
         astrix_state_received.emit(astrix_state)
+    , func() -> void:
+        _astrix_poll_in_flight = false
     )
+
+func _start_astrix_polling() -> void:
+    if _poll_timer.is_stopped():
+        _poll_timer.start()
+    get_astrix_state_once()
 
 func send_astrix_command(command: Dictionary) -> void:
     var payload := command.duplicate(true)
@@ -133,18 +145,21 @@ func _post_json(path: String, body: Dictionary, on_success: Callable) -> void:
     )
     request.request(api_origin + path, ["Content-Type: application/json"], HTTPClient.METHOD_POST, JSON.stringify(body))
 
-func _get_json(path: String, on_success: Callable) -> void:
+func _get_json(path: String, on_success: Callable, on_complete: Callable = Callable()) -> void:
     var request := HTTPRequest.new()
     add_child(request)
     _requests.append(request)
     request.request_completed.connect(func(result: int, response_code: int, _headers: PackedStringArray, payload: PackedByteArray) -> void:
         _finish_request(request)
         if result != HTTPRequest.RESULT_SUCCESS or response_code < 200 or response_code >= 300:
+            if on_complete.is_valid(): on_complete.call()
             request_failed.emit("HTTP state request failed (%d/%d)" % [result, response_code])
             return
         var parsed = JSON.parse_string(payload.get_string_from_utf8())
         if parsed is Dictionary: on_success.call(parsed)
-        else: request_failed.emit("State endpoint returned invalid JSON")
+        else:
+            request_failed.emit("State endpoint returned invalid JSON")
+            if on_complete.is_valid(): on_complete.call()
     )
     request.request(api_origin + path, ["Accept: application/json"], HTTPClient.METHOD_GET)
 

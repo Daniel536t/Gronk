@@ -229,16 +229,7 @@ func _on_astrix_state_received(state: Dictionary) -> void:
     var remote_buildings: Array = state.get("buildings", [])
     var world_state := get_node_or_null("/root/WorldState")
     if world_state:
-        world_state.day = int(state.get("day", world_state.day))
-        world_state.food = int(state.get("food", world_state.food))
-        var remote_resources: Variant = state.get("resources", {})
-        if remote_resources is Dictionary:
-            for key in remote_resources:
-                world_state.resources[str(key)] = int(remote_resources[key])
-        world_state.buildings.clear()
-        for building in remote_buildings:
-            if building is Dictionary:
-                world_state.buildings[str(building.get("id", "building"))] = building.duplicate(true)
+        world_state.apply_snapshot(state)
 
 func _build_systems() -> void:
     var building_system := Node3D.new()
