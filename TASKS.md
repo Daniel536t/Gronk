@@ -76,6 +76,23 @@
 - Full voxel GridMap tile library and authored voxel assets.
 - Complete mobile touch UI, combat, farming progression, NPCs, quests, buildings UX, and multiplayer presentation.
 
+## Phase 2 — parallel ASTrix server + Godot sync
+
+- [x] Commit the existing ASTrix foundation on `feat/astrix-world` (`3c65a6b`).
+- [x] Add authoritative server-side ASTrix state and command bus under `src/astrix/`.
+- [x] Add parallel `/astrix/state`, `/astrix/command`, `/astrix/mcp/tools/list`, `/astrix/mcp/tools/call`, and `/astrix/events` routes.
+- [x] Add `/astrix/approval/respond` and server-side approval resolution.
+- [x] Wire Godot command requests and authoritative state polling to `/astrix/*`.
+- [x] Validate ASTrix state, command, MCP listing/call, and legacy route preservation on a local server.
+- [x] Add `scripts/provision-astrix-agents.ts` using the existing TrueForge provisioning function.
+- [x] Inspect the live TrueForge MCP-server listing; existing connector is `gronks-hoard-mcp` at `http://localhost:8787/mcp`.
+- [x] Update provisioning to register/reference a separate `astrix` connector using the existing TrueForge API pattern.
+- [ ] Complete live connector registration: current TrueForge host returns HTTP 409 for the existing connector registration attempt and still rejects ASTrix agent manifests until `astrix` is configured.
+- [ ] Provision ASTrix agents and run a live steward turn after the connector is configured.
+- [ ] Add a Godot Web/HTML5 export preset and export template; `godot --export-list` currently reports no export preset.
+- [x] Godot 4.7.2 editor parse validation after ASTrix sync changes.
+- [x] Godot 4.7.2 Xvfb/software runtime launch and 1280×720 capture (`/tmp/astrix-phase2/world.ogv`).
+
 ## Guardrails
 
 - The existing TypeScript browser client remains the reference client and must not be modified for ASTrix work.

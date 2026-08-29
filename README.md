@@ -144,6 +144,61 @@ safety net — a slow or dead agent is replaced per-seat and the match never cra
 needed. `npx @truefoundry/trueforge --port 8790` also works for a foreground harness during
 dev.
 
+## ASTrix Parallel Architecture
+
+The ASTrix migration is additive. The reviewed Gronk's Hoard system remains available while ASTrix introduces its own world state and command boundary:
+
+```text
+Legacy browser client ──→ legacy HTTP/MCP ──→ Gronk's Hoard engine
+
+Godot ASTrix client ────→ /astrix/* API ──→ ASTrix WorldState
+                                      └──→ ASTrix GameCommandBus
+TrueForge World Steward ─→ ASTrix MCP tools ──┘
+                                      └──→ human approval gate
+```
+
+## ASTrix API Endpoints
+
+### ASTrix world API
+
+- `GET /astrix/state`
+- `POST /astrix/command`
+- `GET /astrix/mcp/tools/list`
+- `POST /astrix/mcp/tools/call`
+- `GET /astrix/events` (SSE)
+- `POST /astrix/approval/respond`
+
+### Legacy game API (preserved)
+
+- `GET /state`
+- `GET /api/lobby`
+- `POST /api/create`, `/api/join`, `/api/start`
+- `POST /api/move`, `/api/transform`, `/api/action`
+- `POST /api/approve-bank`, `/api/reject-bank`
+- `POST /mcp`, `GET /mcp`
+
+## ASTrix TrueForge Integration
+
+TrueForge runs at `:8790`. ASTrix exposes its tool surface through the parallel `/astrix/mcp/*` HTTP endpoints. The intended agents are:
+
+- `astrix-steward`
+- `astrix-agriculture`
+- `astrix-construction`
+- `astrix-ecology`
+
+Irreversible ASTrix commands require an explicit human approval response before the command bus commits them. Provisioning uses the existing TrueForge `/api/v1/agents` manifest pattern and existing `/api/v1/sessions/{id}/turns` session pattern.
+
+## ASTrix Local Development
+
+```bash
+npm install
+npm run build
+PORT=8787 npm run server
+npm run provision:astrix
+```
+
+Godot connects to `http://127.0.0.1:8787` and polls `/astrix/state` at 2Hz. The Godot project is under `godot/`.
+
 ## How it works
 
 - **Engine (pure TS, zero deps):** authoritative `GameState`, 10 ticks/sec. Secret boundary: `treasureFurnitureId` lives on the engine instance only and can never cross `getPublicState()` — clients and agents see riddles and their own search results, nothing more.
