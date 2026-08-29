@@ -3,7 +3,7 @@
 import { chromium } from "playwright";
 import { writeFileSync } from "node:fs";
 
-const url = process.env.CAPTURE_URL ?? "http://127.0.0.1:8787/";
+const url = process.env.CAPTURE_URL ?? "https://astrixx.duckdns.org/";
 const out = process.env.CAPTURE_OUT ?? "/tmp/astrix-web.png";
 const waitMs = Number(process.env.CAPTURE_WAIT_MS ?? "15000");
 
@@ -27,11 +27,14 @@ page.on("pageerror", (e) => errors.push(String(e).slice(0, 300)));
 await page.goto(url, { waitUntil: "load", timeout: 60_000 });
 await page.waitForTimeout(waitMs);
 
-const canvasInfo = await page.evaluate(() => {
+const ctx = await page.evaluate(() => {
   const c = document.querySelector("canvas");
-  if (!c) return null;
-  const r = c.getBoundingClientRect();
-  return { cssW: r.width, cssH: r.height, attrW: c.width, attrH: c.height };
+  const r = c ? c.getBoundingClientRect() : null;
+  return {
+    secureContext: window.isSecureContext === true,
+    protocol: window.location.protocol,
+    canvas: r ? { cssW: r.width, cssH: r.height, attrW: c.width, attrH: c.height } : null,
+  };
 });
 
 // CDP capture bypasses Playwright's font-settling wait, which stalls on the
@@ -42,5 +45,5 @@ const shot: { data: string } = await cdp.send("Page.captureScreenshot", {
 });
 writeFileSync(out, Buffer.from(shot.data, "base64"));
 
-console.log(JSON.stringify({ title: await page.title(), canvasInfo, errors, out }, null, 2));
+console.log(JSON.stringify({ title: await page.title(), ctx, errors, out }, null, 2));
 await browser.close();

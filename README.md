@@ -27,7 +27,7 @@ npm run prod  # serves everything on http://localhost:8787
 
 Open http://localhost:8787. The root now serves the **ASTrix** Godot 4 HTML5 client (the voxel world where a TrueForge steward manages the environment). The old hide-and-seek client is replaced at the root; its API routes remain intact under `/api/*`.
 
-- **Play ASTrix (deployed):** http://44.197.181.77:8787/
+- **Play ASTrix (deployed):** https://astrixx.duckdns.org/  (Caddy → HTTPS → `127.0.0.1:8787`; app is not publicly reachable on 8787)
 - **TrueForge dashboard:** http://44.197.181.77:8790/
 - **ASTrix world API:** `GET /astrix/state`, `POST /astrix/command`, `GET /astrix/events` (SSE), `POST /astrix/approval/respond`
 - **MCP tools** (TrueForge channel): `POST /mcp` — `inspect_world`, `inspect_island`, `inspect_resources`, `inspect_buildings`, `gather`, `build`, `plant`, `clear_terrain`, `build_bridge`, `simulate_plan`

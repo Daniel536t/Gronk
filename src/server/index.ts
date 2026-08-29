@@ -50,8 +50,11 @@ const httpServer = createHttpServer(manager, port, {
       : undefined,
 });
 setInterval(() => astrix.tick(1), 1000);
-httpServer.listen(port, () => {
-  console.error(`[gronks-hoard] HTTP listening on :${port} (BOTS=${botMode})`);
+// HOST env lets ops rebind the app to 127.0.0.1 behind the Caddy reverse
+// proxy so 8787 is not exposed on the public interface (default: all).
+const host = process.env.HOST ?? "0.0.0.0";
+httpServer.listen(port, host, () => {
+  console.error(`[gronks-hoard] HTTP listening on ${host}:${port} (BOTS=${botMode})`);
 });
 
 void connectStdio(stdioMcp)

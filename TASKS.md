@@ -111,6 +111,19 @@
 - [x] Removed the duplicate `WorldEnvironment` from `scenes/Main.tscn` so `World3D._build_environment()`'s lighting (ambient + background) actually applies.
 - [x] Headless `--export-release` produced a corrupt pck (`project.binary` size 0); export via the GUI editor under Xvfb produces a valid pck.
 
+## Phase 2.6 — HTTPS deployment via Caddy + DuckDNS
+
+- [x] Install Caddy v2.11.4 via official apt repo.
+- [x] DuckDNS: `astrixx.duckdns.org` updated → `A 44.197.181.77` (replaces stale `172.105.83.142` entry).
+- [x] Caddy reverse proxy: `https://astrixx.duckdns.org` → `http://127.0.0.1:8787`.
+- [x] HTTP → HTTPS redirect (308) working; Let's Encrypt cert issued (CN=astrixx.duckdns.org, valid 90 days, auto-renews).
+- [x] App rebind: added `HOST` env in `src/server/index.ts`; pm2 `gronks-hoard` now binds `127.0.0.1:8787` only.
+- [x] Public `44.197.181.77:8787` refused (no longer exposed).
+- [x] All API routes, `.wasm`, `.pck` MIME served correctly through the proxy.
+- [x] Browser acceptance: Chromium → `https://astrixx.duckdns.org` → `window.isSecureContext === true` → game boots + renders, zero console errors.
+
+Caddy config: `/etc/caddy/Caddyfile` (see deployment report). Backup at `/etc/caddy/Caddyfile.bak`.
+
 ## Guardrails
 
 - The existing TypeScript browser client remains the reference client and must not be modified for ASTrix work.
