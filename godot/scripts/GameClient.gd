@@ -13,6 +13,7 @@ signal astrix_approval_requested(request: Dictionary)
 
 @export var api_origin: String = "http://127.0.0.1:8787"
 @export var poll_interval_seconds: float = 0.5
+@export var astrix_api_key: String = ""
 
 var session: Dictionary = {}
 var latest_state: Dictionary = {}
@@ -82,7 +83,7 @@ func _start_astrix_polling() -> void:
 func send_astrix_command(command: Dictionary) -> void:
     var payload := command.duplicate(true)
     payload["player_id"] = str(session.get("playerId", "godot-player"))
-    _post_json("/astrix/command", payload, func(result: Dictionary) -> void:
+    _post_json_astrix("/astrix/command", payload, func(result: Dictionary) -> void:
         if bool(result.get("success", false)):
             astrix_command_succeeded.emit(result)
             get_astrix_state_once()
@@ -91,7 +92,7 @@ func send_astrix_command(command: Dictionary) -> void:
     )
 
 func respond_to_astrix_approval(approval_id: String, decision: String) -> void:
-    _post_json("/astrix/approval/respond", {"approval_id": approval_id, "decision": decision}, func(result: Dictionary) -> void:
+    _post_json_astrix("/astrix/approval/respond", {"approval_id": approval_id, "decision": decision}, func(result: Dictionary) -> void:
         if not bool(result.get("success", false)):
             astrix_command_failed.emit(str(result.get("error", "approval failed")))
         get_astrix_state_once()
@@ -124,7 +125,14 @@ func _has_session() -> bool:
 func _parse_game_state(raw: Dictionary) -> Dictionary:
     return {"matchId": str(raw.get("matchId", "")), "status": str(raw.get("status", "lobby")), "tick": int(raw.get("tick", 0)), "elapsed": float(raw.get("elapsed", 0.0)), "matchDuration": float(raw.get("matchDuration", 300.0)), "winnerTeam": raw.get("winnerTeam", null), "winReason": raw.get("winReason", null), "suddenDeath": bool(raw.get("suddenDeath", false)), "enraged": bool(raw.get("enraged", false)), "riddleSet": int(raw.get("riddleSet", 0)), "visibleRiddleLines": _array_of_strings(raw.get("visibleRiddleLines", [])), "players": _array_of_dictionaries(raw.get("players", [])), "furniture": _array_of_dictionaries(raw.get("furniture", [])), "gronk": _dictionary(raw.get("gronk", {})), "pedestals": _array_of_dictionaries(raw.get("pedestals", [])), "closetSpots": _array_of_dictionaries(raw.get("closetSpots", [])), "groundTreasure": raw.get("groundTreasure", null), "treasurePings": _array_of_dictionaries(raw.get("treasurePings", [])), "pendingBank": raw.get("pendingBank", null), "bankCooldownUntilTick": raw.get("bankCooldownUntilTick", [0, 0]), "latestNoise": raw.get("latestNoise", null)}
 
-func _post_json(path: String, body: Dictionary, on_success: Callable) -> void:
+func _post_json_astrix(path: String, body: Dictionary, on_success: Callable) -> void:
+    var headers: Array = ["Content-Type: application/json"]
+    if not astrix_api_key.is_empty():
+        headers.append("Authorization: Bearer %s" % astrix_api_key)
+    _post_json(path, body, on_success, headers)
+
+func _post_json(path: String, body: Dictionary, on_success: Callable, headers_override: Array = []) -> void:
+    var headers: Array = ["Content-Type: application/json"] if headers_override.is_empty() else headers_override
     var request := HTTPRequest.new()
     add_child(request)
     _requests.append(request)
@@ -143,7 +151,7 @@ func _post_json(path: String, body: Dictionary, on_success: Callable) -> void:
             return
         on_success.call(parsed)
     )
-    request.request(api_origin + path, ["Content-Type: application/json"], HTTPClient.METHOD_POST, JSON.stringify(body))
+    request.request(api_origin + path, headers, HTTPClient.METHOD_POST, JSON.stringify(body))
 
 func _get_json(path: String, on_success: Callable, on_complete: Callable = Callable()) -> void:
     var request := HTTPRequest.new()

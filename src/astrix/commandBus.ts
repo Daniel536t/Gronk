@@ -68,7 +68,23 @@ export class AstrixGameCommandBus {
       islandB: impact.islandB as BiomeId | undefined,
       approvalId,
     };
-    return this.execute(command);
+    const validation = this.validate(command);
+    if (!validation.success) {
+      // The stored approval can no longer execute (e.g. invalid/absent params).
+      // Remove it so it cannot stay pending forever; report why it was dropped.
+      this.state.pendingApprovals.splice(index, 1);
+      this.emitState();
+      return { success: false, command: command.command, irreversible: true, error: "approval invalid: " + validation.error };
+    }
+    const result = this.execute(command);
+    if (result.error === "approval does not match command" || result.error === "approval not found") {
+      // The stored approval can no longer be satisfied by the command it captured:
+      // clear it so it cannot stay pending forever.
+      this.state.pendingApprovals.splice(index, 1);
+      this.emitState();
+      return { success: false, command: command.command, irreversible: true, error: "approval invalid: " + result.error };
+    }
+    return result;
   }
 
   execute(command: AstrixCommand): AstrixCommandResult {
@@ -114,6 +130,8 @@ export class AstrixGameCommandBus {
   }
 
   simulate(command: AstrixCommand): AstrixCommandResult {
+    const known: AstrixCommandName[] = ["PLACE_BUILDING", "GATHER_RESOURCE", "PLANT_CROP", "CLEAR_TERRAIN", "BUILD_BRIDGE"];
+    if (!known.includes(command.command)) return { success: false, command: command.command, irreversible: false, error: "unsupported command for simulation" };
     const validation = this.validate(command);
     return { ...validation, irreversible: command.command === "CLEAR_TERRAIN" || command.command === "BUILD_BRIDGE" };
   }

@@ -1,6 +1,5 @@
 import { loadConfig } from "../src/server/config";
-import { provisionTrueForgeAgents, TrueForgeBackend, type AgentSpecInput } from "../src/server/trueforge";
-import { AstrixWorldState } from "../src/astrix/state";
+import { provisionTrueForgeAgents, runAstrixStewardTurn, type AgentSpecInput } from "../src/server/trueforge";
 
 const cfg = loadConfig().trueforge;
 const model = cfg.botsModel?.name ? cfg.botsModel : cfg.gronkModel;
@@ -39,17 +38,20 @@ for (const result of results) console.log(JSON.stringify(result));
 if (results.some((result) => result.status.startsWith("error"))) {
   process.exitCode = 1;
 } else if (process.env.ASTRIX_STEWARD_SMOKE === "1") {
-  const backend = new TrueForgeBackend("astrix-steward", "astrix-steward", cfg);
-  const started = Date.now();
-  try {
-    const decision = await backend.decide({
-      tick: 0, elapsed: 0, enraged: false, suddenDeath: false, riddleSet: 0,
-      visibleRiddleLines: [], players: [], furniture: [], gronk: { x: 0, y: 0, enraged: false },
-      pedestals: [], groundTreasure: null, latestNoise: null,
-    });
-    console.log(JSON.stringify({ step: "steward_turn", latencyMs: Date.now() - started, decision }));
-  } catch (error) {
-    console.error(JSON.stringify({ step: "steward_turn", latencyMs: Date.now() - started, error: String(error) }));
+  const astrixBase = (process.env.ASTRIX_URL ?? "http://127.0.0.1:8787").replace(/\/+$/, "");
+  const worldResponse = await fetch(`${astrixBase}/astrix/state`);
+  const snapshot = await worldResponse.json();
+  if (!worldResponse.ok) {
+    console.error(JSON.stringify({ step: "steward_turn", error: `ASTrix state ${worldResponse.status}` }));
     process.exitCode = 1;
+  } else {
+    try {
+      const result = await runAstrixStewardTurn(cfg, snapshot, Number(process.env.STEWARD_DEADLINE_MS ?? 60000));
+      console.log(JSON.stringify({ step: "steward_turn", latencyMs: result.latencyMs, status: result.status, response: result.response }));
+      if (result.status !== "done") process.exitCode = 1;
+    } catch (error) {
+      console.error(JSON.stringify({ step: "steward_turn", error: String(error) }));
+      process.exitCode = 1;
+    }
   }
 }

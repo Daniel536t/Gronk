@@ -106,6 +106,33 @@ describe("ASTrix command bus", () => {
     expect(state.crops[0].farmPlotId).toBe(farmId);
   });
 
+  it("rejects irreversible approval when the stored params are invalid", () => {
+    const { state, bus } = fresh();
+    // Force a malformed stored approval directly (simulating a legacy/bad stored entry).
+    bus.execute({
+      command: "BUILD_BRIDGE",
+      position: { x: 40, y: 0, z: 20 },
+      islandA: "meadow",
+      islandB: "frost",
+    });
+    const stored = state.pendingApprovals[0];
+    (stored.impact as Record<string, unknown>).position = undefined;
+    const result = bus.resolveApproval(stored.id, "approve");
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("approval invalid");
+    // The stuck approval is cleared rather than left pending forever.
+    expect(state.pendingApprovals).toHaveLength(0);
+    expect(state.buildings).toHaveLength(1);
+    expect(state.resources.wood).toBe(30);
+  });
+
+  it("simulate rejects unsupported commands explicitly", () => {
+    const { bus } = fresh();
+    const result = bus.simulate({ command: "__UNSUPPORTED__" as never });
+    expect(result.success).toBe(false);
+    expect(result.error).toBe("unsupported command for simulation");
+  });
+
   it("simulate_plan validates the submitted plan without mutation", () => {
     const { state, bus } = fresh();
     const snapshot = state.snapshot();

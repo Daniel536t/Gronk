@@ -8,11 +8,15 @@ export interface AstrixService {
   state: AstrixWorldState;
   bus: AstrixGameCommandBus;
   tools: ReturnType<typeof createAstrixToolRegistry>;
+  authToken?: string;
   tick(deltaSeconds: number): void;
   handle(req: http.IncomingMessage, res: http.ServerResponse, pathname: string, body?: Record<string, unknown>): Promise<boolean>;
 }
 
-export function createAstrixService(): AstrixService {
+let activeAuthToken: string | undefined;
+
+export function createAstrixService(opts: { authToken?: string } = {}): AstrixService {
+  activeAuthToken = opts.authToken;
   const state = new AstrixWorldState();
   const bus = new AstrixGameCommandBus(state);
   const tools = createAstrixToolRegistry(state, bus);
@@ -26,6 +30,7 @@ export function createAstrixService(): AstrixService {
     state,
     bus,
     tools,
+    authToken: activeAuthToken,
     tick(deltaSeconds: number): void {
       if (state.tick(deltaSeconds)) {
         const snapshot = state.snapshot();
@@ -35,21 +40,29 @@ export function createAstrixService(): AstrixService {
     },
     async handle(req, res, pathname, body = {}): Promise<boolean> {
       if (pathname === "/astrix/state" && req.method === "GET") {
-        sendJson(res, 200, state.snapshot());
+        sendJson(res, 200, state.snapshot(), req);
         return true;
       }
       if (pathname === "/astrix/events" && req.method === "GET") {
-        res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive", "Access-Control-Allow-Origin": "*" });
+        res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive", "Access-Control-Allow-Origin": req.headers.origin ?? "*" });
         res.write(`event: state\ndata: ${JSON.stringify(state.snapshot())}\n\n`);
         eventClients.add(res);
         req.on("close", () => eventClients.delete(res));
         return true;
       }
       if (pathname === "/astrix/command" && req.method === "POST") {
+        if (!authorized(req)) {
+          sendJson(res, 401, { success: false, error: "unauthorized" });
+          return true;
+        }
         sendJson(res, 200, bus.execute(normalizeCommand(body)));
         return true;
       }
       if (pathname === "/astrix/approval/respond" && req.method === "POST") {
+        if (!authorized(req)) {
+          sendJson(res, 401, { success: false, error: "unauthorized" });
+          return true;
+        }
         const approvalId = typeof body.approval_id === "string" ? body.approval_id : "";
         const decision = body.decision === "approve" || body.decision === "reject" ? body.decision : "";
         if (!approvalId || !decision) {
@@ -64,6 +77,10 @@ export function createAstrixService(): AstrixService {
         if (req.method === "GET") {
           sendJson(res, 200, { tools: tools.listTools() });
         } else {
+          if (!authorized(req)) {
+            sendJson(res, 401, { success: false, error: "unauthorized" });
+            return true;
+          }
           const name = typeof body.name === "string" ? body.name : typeof body.params === "object" && body.params ? String((body.params as Record<string, unknown>).name ?? "") : "";
           const args = body.arguments && typeof body.arguments === "object" ? body.arguments as Record<string, unknown> : body.params && typeof body.params === "object" ? body.params as Record<string, unknown> : {};
           sendJson(res, 200, await tools.callTool(name, args));
@@ -75,6 +92,10 @@ export function createAstrixService(): AstrixService {
         return true;
       }
       if (pathname === "/astrix/mcp/tools/call" && req.method === "POST") {
+        if (!authorized(req)) {
+          sendJson(res, 401, { success: false, error: "unauthorized" });
+          return true;
+        }
         const name = typeof body.name === "string" ? body.name : "";
         const args = body.arguments && typeof body.arguments === "object" ? body.arguments as Record<string, unknown> : {};
         sendJson(res, 200, await tools.callTool(name, args));
@@ -85,9 +106,19 @@ export function createAstrixService(): AstrixService {
   };
 }
 
-export function sendJson(res: http.ServerResponse, code: number, value: unknown): void {
-  res.writeHead(code, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+export function sendJson(res: http.ServerResponse, code: number, value: unknown, req?: http.IncomingMessage): void {
+  const origin = req?.headers.origin;
+  res.writeHead(code, {
+    "Content-Type": "application/json",
+    "Access-Control-Allow-Origin": origin || "*",
+  });
   res.end(JSON.stringify(value));
+}
+
+function authorized(req: http.IncomingMessage): boolean {
+  if (!activeAuthToken) return true; // no token configured -> open (default local mode)
+  const header = req.headers.authorization;
+  return header === `Bearer ${activeAuthToken}`;
 }
 
 export function readAstrixBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
