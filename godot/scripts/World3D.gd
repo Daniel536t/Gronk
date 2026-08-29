@@ -97,14 +97,19 @@ func _add_island_slabs(biome_id: String, data: Dictionary) -> void:
     var top: float = data["top"]
     var base := _mesh_box("%s_StoneBase" % biome_id, center + Vector3(0.0, 0.0, 0.0), Vector3(radius.x * 2.0, 1.0, radius.y * 2.0), Color("77828d"))
     base.rotation.y = 0.12
+    add_child(base)
     var middle := _mesh_box("%s_SoilStep" % biome_id, center + Vector3(0.0, 0.8, 0.0), Vector3(radius.x * 1.86, 1.6, radius.y * 1.86), data["color"])
     middle.rotation.y = -0.08
+    add_child(middle)
     var top_mesh := _mesh_box("%s_GrassTop" % biome_id, center + Vector3(0.0, top - 0.2, 0.0), Vector3(radius.x * 1.68, 1.0, radius.y * 1.68), data["color"])
     top_mesh.rotation.y = 0.05
+    add_child(top_mesh)
     if biome_id == "frost":
-        _mesh_box("FrostSnowCap", center + Vector3(0.0, top + 0.45, 0.0), Vector3(radius.x * 1.38, 0.25, radius.y * 1.38), Color("f3fbf4"))
+        var snow_cap := _mesh_box("FrostSnowCap", center + Vector3(0.0, top + 0.45, 0.0), Vector3(radius.x * 1.38, 0.25, radius.y * 1.38), Color("f3fbf4"))
+        add_child(snow_cap)
     elif biome_id == "dusk":
-        _mesh_box("DuskSandCap", center + Vector3(0.0, top + 0.38, 0.0), Vector3(radius.x * 1.42, 0.18, radius.y * 1.42), Color("e4bd9b"))
+        var sand_cap := _mesh_box("DuskSandCap", center + Vector3(0.0, top + 0.38, 0.0), Vector3(radius.x * 1.42, 0.18, radius.y * 1.42), Color("e4bd9b"))
+        add_child(sand_cap)
 
 func _add_biome_features(biome_id: String, data: Dictionary) -> void:
     var c: Vector3 = data["center"]
@@ -142,10 +147,10 @@ func _add_bridge(node_name: String, center: Vector3, angle: float) -> void:
         bridge.add_child(rail)
 
 func _build_paths() -> void:
-    _mesh_box("MeadowClearing", Vector3(22.0, 3.58, 30.0), Vector3(12.0, 0.12, 9.0), Color("d8b083"))
-    _mesh_box("MeadowPath", Vector3(25.0, 3.65, 30.0), Vector3(25.0, 0.12, 2.6), Color("c99a70"))
-    _mesh_box("FrostPath", Vector3(50.0, 4.65, 14.0), Vector3(3.0, 0.12, 16.0), Color("c9dde0"))
-    _mesh_box("DuskPath", Vector3(76.0, 3.1, 39.0), Vector3(20.0, 0.12, 2.8), Color("c48b78"))
+    add_child(_mesh_box("MeadowClearing", Vector3(22.0, 3.58, 30.0), Vector3(12.0, 0.12, 9.0), Color("d8b083")))
+    add_child(_mesh_box("MeadowPath", Vector3(25.0, 3.65, 30.0), Vector3(25.0, 0.12, 2.6), Color("c99a70")))
+    add_child(_mesh_box("FrostPath", Vector3(50.0, 4.65, 14.0), Vector3(3.0, 0.12, 16.0), Color("c9dde0")))
+    add_child(_mesh_box("DuskPath", Vector3(76.0, 3.1, 39.0), Vector3(20.0, 0.12, 2.8), Color("c48b78")))
 
 func _build_decor() -> void:
     _add_rock(Vector3(12.0, 3.5, 36.0), 0, Color("909ba6"))

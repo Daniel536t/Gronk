@@ -25,13 +25,29 @@ npm install
 npm run prod  # serves everything on http://localhost:8787
 ```
 
-Open http://localhost:8787, hit **Single Player** — one click to a live match (you + 3 scripted bots). For development (hot-reload frontend):
+Open http://localhost:8787. The root now serves the **ASTrix** Godot 4 HTML5 client (the voxel world where a TrueForge steward manages the environment). The old hide-and-seek client is replaced at the root; its API routes remain intact under `/api/*`.
+
+- **Play ASTrix (deployed):** http://44.197.181.77:8787/
+- **TrueForge dashboard:** http://44.197.181.77:8790/
+- **ASTrix world API:** `GET /astrix/state`, `POST /astrix/command`, `GET /astrix/events` (SSE), `POST /astrix/approval/respond`
+- **MCP tools** (TrueForge channel): `POST /mcp` — `inspect_world`, `inspect_island`, `inspect_resources`, `inspect_buildings`, `gather`, `build`, `plant`, `clear_terrain`, `build_bridge`, `simulate_plan`
+
+For development (hot-reload frontend of the legacy Vite client):
 
 ```bash
 npm run dev:all  # game server :8787 + Vite frontend :5173
 ```
 
 Open http://localhost:5173.
+
+### Godot HTML5 deployment
+
+The Godot 4.7.2 Web export lives in `server/static/` (`index.html`, `index.js`, `index.wasm`, `index.pck`) and is served at the root. Rebuild it with:
+
+```bash
+cd godot
+DISPLAY=:99 godot --path . --export-release "Web" ../server/static/index.html  # needs an X display (headless export is broken in 4.7.2)
+```
 
 ## Running it forever (VPS / pm2 / nohup)
 

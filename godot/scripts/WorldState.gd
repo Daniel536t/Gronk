@@ -55,7 +55,13 @@ func apply_snapshot(snapshot_data: Dictionary) -> void:
                 buildings[str(building.get("id", "building"))] = building.duplicate(true)
     var approvals: Variant = snapshot_data.get("pendingApprovals", snapshot_data.get("pending_approvals", pending_approvals))
     if approvals is Array:
-        pending_approvals = approvals.duplicate(true)
+        # JSON.parse yields untyped Arrays; rebuild as a typed Array[Dictionary]
+        # or the assignment below fails at runtime.
+        var typed: Array[Dictionary] = []
+        for a in approvals:
+            if a is Dictionary:
+                typed.append(a.duplicate(true))
+        pending_approvals = typed
     _recalculate_food_security()
     changed.emit()
 

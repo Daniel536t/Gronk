@@ -89,9 +89,27 @@
 - [x] Update provisioning to register/reference a separate `astrix` connector using the existing TrueForge API pattern.
 - [ ] Complete live connector registration: current TrueForge host returns HTTP 409 for the existing connector registration attempt and still rejects ASTrix agent manifests until `astrix` is configured.
 - [ ] Provision ASTrix agents and run a live steward turn after the connector is configured.
-- [ ] Add a Godot Web/HTML5 export preset and export template; `godot --export-list` currently reports no export preset.
 - [x] Godot 4.7.2 editor parse validation after ASTrix sync changes.
 - [x] Godot 4.7.2 Xvfb/software runtime launch and 1280×720 capture (`/tmp/astrix-phase2/world.ogv`).
+
+## Phase 2.5 — Godot HTML5 export + browser deployment
+
+- [x] Install the Godot 4.7.2 Web export template (`~/.local/share/godot/export_templates/4.7.2.stable/`).
+- [x] Add the Web export preset in `godot/export_presets.cfg` (export_path `../server/static/index.html`, canvas_resize_policy=2, threads off).
+- [x] Export ASTrix to `server/static/` (`index.html`, `index.js`, `index.wasm`, `index.pck`).
+- [x] Serve `server/static/` at the server root (preferred over the old Vite `dist/`) with correct MIME types: `.wasm → application/wasm`, `.pck → application/octet-stream`, `.ogg → audio/ogg`.
+- [x] API routes (`/astrix/*`, `/api/*`, `/mcp`) run before static serving so nothing is shadowed.
+- [x] Godot client resolves its API origin from `window.location.origin` in browser builds (native keeps `127.0.0.1:8787`).
+- [x] Verified live: `GET /` serves the Godot index.html, `.wasm`/`.pck` MIME headers correct, `/astrix/state` 200, legacy `/api/*` intact, old Vite assets no longer served.
+- [x] Playwright/Chromium browser check: ASTrix boots with zero console errors and renders the 3D world (see `scripts/capture-web.ts`).
+
+### Rendering/startup bugs fixed during export validation
+
+- [x] `World3D.gd` `_add_island_slabs()` and `_build_paths()` created terrain meshes but never added them to the scene tree — the islands, paths and water were invisible in every build. Added the missing `add_child()` calls.
+- [x] `WorldState.gd` `apply_snapshot()` assigned an untyped JSON `Array` to `Array[Dictionary]`, crashing at runtime in the exported build. Rebuild the typed array explicitly.
+- [x] `window/stretch/mode="canvas_items"` produced a transparent/empty 3D viewport; set to `disabled` (correct for a 3D game; HUD CanvasLayers still scale).
+- [x] Removed the duplicate `WorldEnvironment` from `scenes/Main.tscn` so `World3D._build_environment()`'s lighting (ambient + background) actually applies.
+- [x] Headless `--export-release` produced a corrupt pck (`project.binary` size 0); export via the GUI editor under Xvfb produces a valid pck.
 
 ## Guardrails
 

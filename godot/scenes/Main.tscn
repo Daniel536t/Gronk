@@ -1,22 +1,10 @@
-[gd_scene load_steps=4 format=3]
+[gd_scene load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://scripts/Main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/World3D.gd" id="2_world"]
 
-[sub_resource type="Environment" id="Environment_main"]
-background_mode = 1
-background_color = Color(0.72, 0.84, 0.86, 1)
-ambient_light_source = 3
-ambient_light_color = Color(0.86, 0.92, 0.84, 1)
-ambient_light_energy = 0.55
-
-tonemap_mode = 2
-
 [node name="Main" type="Node3D"]
 script = ExtResource("1_main")
-
-[node name="Environment" type="WorldEnvironment" parent="."]
-environment = SubResource("Environment_main")
 
 [node name="World3D" type="Node3D" parent="."]
 script = ExtResource("2_world")
