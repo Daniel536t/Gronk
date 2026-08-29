@@ -124,6 +124,27 @@
 
 Caddy config: `/etc/caddy/Caddyfile` (see deployment report). Backup at `/etc/caddy/Caddyfile.bak`.
 
+## Milestone — first playable mobile build
+
+- [x] Fix massive overexposure: toned sun to `light_energy 0.5`, ambient `0.5` with `TONE_MAPPER_FILMIC` + `tonemap_exposure 0.78`, removed duplicate Environment in `Main.tscn`. Verified via render frames (blowout dropped from ~9.6% to ~0.4–1%).
+- [x] Make water readable: raised to a clearly-teal, near-opaque surface (`Color("53c0cd")`, alpha 0.98) with gentle vertex bob, distinct from the meadow/foam so the shoreline transition reads.
+- [x] Fix terrain misalignment root cause: every ground prop/path/bridge now aligns to a computed `_surface_of(biome)` walkable height instead of hardcoded Y, so nothing floats or is buried.
+- [x] Tighten camera: isometric ortho with constant offset, fixed non-rolling yaw, smooth-follow, and look-ahead so the player stays prominent and the clearing→path→shoreline→bridge→magic-landmark composition fits one frame on mobile.
+- [x] Build a curated starting clearing (hut, signpost, lantern, bench, crate, trees, rocks, shrubs, dirt path, shoreline, bridge, magic landmark) that guides the player.
+- [x] Collision pass: `StaticBody3D` floor per biome (player rests/froze correctly) plus obstacle collisions on trees, rocks, hut, bench, crate, signpost, lantern.
+- [x] Player: procedural idle/walk/run animation, facing direction, contact shadow, swim presentation, small scale bump, zero-input→idle / input→walk / full-input→run.
+- [x] Mobile controls: virtual joystick (lower-left) + action/interact button (lower-right) in `MobileHUD.gd`, feeding the unified `AstrixInput` autoload; keyboard (WASD/arrows + E) still works through the same InputMap.
+- [x] Minimal HUD: ASTRIX label + top area; joystick + action button; pastel miniature styling; no permanent crosshair.
+- [x] Re-exported Godot Web (GUI/Xvfb) to `server/static/`; main scene + exported pck boot with zero script errors.
+- [x] Mobile-sized Chromium acceptance (390×844, touch): `isSecureContext true`, zero console errors, joystick drag produced a changed frame (player moves), world readable, no overexposure.
+- [x] Regression: typecheck passes, 80/80 tests pass.
+
+### Mobile build notes / limitations
+- Portrait framing leaves sky at the top of the frame (acceptable exploration framing; player stays in the lower 2/3).
+- Collision uses simple boxes (walk-in-space prevention), not bespoke per-mesh hulls.
+- Actual game logic authority remains the ASTrix server; Godot collision is presentation-only.
+- Gronk is not yet a separate chaser in this Godot build — recast as the companion follow placeholder pending the agent/Gronk scope.
+
 ## Guardrails
 
 - The existing TypeScript browser client remains the reference client and must not be modified for ASTrix work.
