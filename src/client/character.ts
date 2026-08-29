@@ -70,6 +70,26 @@ export interface CharacterOpts {
 const GOLD = "#ffd166";
 const EYE = "#ffe08a";
 
+// Scene light: a single warm key from the upper-left (west-north). In the
+// character's local draw frame (+x east, +y down) the lit side is west (-x)
+// and slightly north (-y). Every rim/shading value below derives from this
+// one light so characters sit in the same world as the props and floor.
+const RIM_WARM = "rgba(255,214,150,0.22)";
+const RIM_WARM_STRONG = "rgba(255,214,150,0.38)";
+const RIM_LIT = "rgba(255,224,186,0.10)";
+const RIM_SHADE = "rgba(4,6,12,0.20)";
+const OUTLINE_RGBA = "rgba(8,10,18,0.55)";
+const OUTLINE_W = 0.09;
+
+/** Dark silhouette outline — strokes the current path after a fill. */
+function outline(ctx: CanvasRenderingContext2D): void {
+  ctx.strokeStyle = OUTLINE_RGBA;
+  ctx.lineWidth = OUTLINE_W;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.stroke();
+}
+
 /** lighten (f>1) or darken (f<1) a hex color. */
 function shade(hex: string, f: number): string {
   const n = parseInt(hex.slice(1), 16);
@@ -283,6 +303,21 @@ function drawPose(ctx: CanvasRenderingContext2D, o: CharacterOpts, pose: Pose): 
   ctx.fill();
   ctx.restore();
 
+  // Carried treasure lights the floor: a warm gold pool under the carrier
+  // (light as gameplay — the same gold as the aura/diamond).
+  if (o.carrying) {
+    ctx.save();
+    ctx.globalAlpha = 0.18 * fade;
+    const goldPool = ctx.createRadialGradient(o.x, o.y + 0.45, 0.1, o.x, o.y + 0.45, 1.9);
+    goldPool.addColorStop(0, "rgba(255,209,102,0.55)");
+    goldPool.addColorStop(1, "rgba(255,209,102,0)");
+    ctx.fillStyle = goldPool;
+    ctx.beginPath();
+    ctx.ellipse(o.x, o.y + 0.45, 1.9, 0.72, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
   // Carrier: warm gold aura behind the body (kept per DESIGN.md).
   if (o.carrying) {
     const pulse = 1 + 0.12 * Math.sin(o.timeMs / 120) * rm;
@@ -311,7 +346,7 @@ function drawPose(ctx: CanvasRenderingContext2D, o: CharacterOpts, pose: Pose): 
   ctx.save();
   ctx.translate(0, pose.droop * 0.22);
   ctx.scale(1 + pose.droop * 0.03, 1 - pose.droop * 0.12);
-  drawCloakBody(ctx, pose, body, dark, baseAlpha);
+  drawCloakBody(ctx, pose, body, dark, baseAlpha, o.carrying);
   drawArms(ctx, pose, body, baseAlpha, o.facing);
   drawHoodHead(ctx, o, pose, body, baseAlpha);
   ctx.restore();
@@ -380,6 +415,14 @@ function drawFeet(
     ctx.beginPath();
     ctx.roundRect(-0.18 - lift * 0.03, -0.25 - lift * 0.09, 0.4, 0.26, 0.12);
     ctx.fill();
+    outline(ctx);
+    // Tiny top highlight so the boot reads as a lit surface.
+    ctx.strokeStyle = "rgba(255,255,255,0.14)";
+    ctx.lineWidth = 0.05;
+    ctx.beginPath();
+    ctx.moveTo(-0.12, -0.2 - lift * 0.09);
+    ctx.lineTo(0.12, -0.2 - lift * 0.09);
+    ctx.stroke();
     ctx.restore();
   }
 }
@@ -391,6 +434,7 @@ function drawCloakBody(
   body: string,
   dark: string,
   baseAlpha: number,
+  carrying: boolean,
 ): void {
   // Torso lean shifts the shoulders toward the movement axis.
   ctx.save();
@@ -413,6 +457,35 @@ function drawCloakBody(
   ctx.quadraticCurveTo(hemW * 1.1 + sway * 0.1, -1.3 + stream * 0.3, cw, -2.0);
   ctx.closePath();
   ctx.fill();
+  // Form shading: warm light falls on the west (lit) side, cool shadow on the
+  // east — one horizontal pass across the same cloak path (the path persists
+  // after fill, so this is a re-fill, not a re-draw).
+  const shadeG = ctx.createLinearGradient(-cw, 0, cw, 0);
+  shadeG.addColorStop(0, RIM_LIT);
+  shadeG.addColorStop(0.45, "rgba(255,224,186,0)");
+  shadeG.addColorStop(0.62, "rgba(0,0,0,0)");
+  shadeG.addColorStop(1, RIM_SHADE);
+  ctx.fillStyle = shadeG;
+  ctx.fill();
+  outline(ctx);
+  // Warm rim light along the west edge (the scene's one key light).
+  ctx.strokeStyle = carrying ? RIM_WARM_STRONG : RIM_WARM;
+  ctx.lineWidth = 0.14;
+  ctx.beginPath();
+  ctx.moveTo(-cw, -2.0);
+  ctx.quadraticCurveTo(-hemW * 1.05 + sway * 0.1, -1.3 + stream * 0.3, -hemW + sway + stream, -0.42);
+  ctx.stroke();
+  // Cloth folds: two faint vertical drape lines inside the cloak.
+  ctx.strokeStyle = "rgba(10,12,20,0.26)";
+  ctx.lineWidth = 0.07;
+  ctx.beginPath();
+  ctx.moveTo(-cw * 0.35, -1.85);
+  ctx.quadraticCurveTo(-cw * 0.55, -1.15, -hemW * 0.6 + sway * 0.6, -0.52);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(cw * 0.28, -1.8);
+  ctx.quadraticCurveTo(cw * 0.42, -1.15, hemW * 0.5 + sway * 0.4, -0.52);
+  ctx.stroke();
 
   // Hem band follows the sway + trail.
   ctx.globalAlpha = baseAlpha * 0.85;
@@ -420,6 +493,7 @@ function drawCloakBody(
   ctx.beginPath();
   ctx.roundRect(-hemW + sway + stream, -0.5 + sway * 0.3, hemW * 2, 0.2, 0.09);
   ctx.fill();
+  outline(ctx);
 
   // Belt + gold buckle.
   ctx.globalAlpha = baseAlpha * 0.9;
@@ -427,6 +501,7 @@ function drawCloakBody(
   ctx.beginPath();
   ctx.roundRect(-cw * 0.9, -1.28 + pose.hipSway * 0.1, cw * 1.8, 0.24, 0.08);
   ctx.fill();
+  outline(ctx);
   ctx.fillStyle = GOLD;
   ctx.fillRect(-0.1, -1.25, 0.2, 0.18);
   ctx.globalAlpha = baseAlpha;
@@ -456,16 +531,20 @@ function drawArms(
     ctx.beginPath();
     ctx.roundRect(-0.62, shY + 0.05, armW, armH * 0.9, 0.14);
     ctx.fill();
+    outline(ctx);
     ctx.beginPath();
     ctx.roundRect(0.36, shY + 0.05, armW, armH * 0.9, 0.14);
     ctx.fill();
+    outline(ctx);
   } else {
     ctx.beginPath();
     ctx.roundRect(-0.62 + pose.armSwingL * DX * 0.5, shY + pose.armSwingL, armW, armH, 0.14);
     ctx.fill();
+    outline(ctx);
     ctx.beginPath();
     ctx.roundRect(0.36 + pose.armSwingR * DX * 0.5, shY - pose.armSwingR, armW, armH, 0.14);
     ctx.fill();
+    outline(ctx);
   }
 }
 
@@ -501,6 +580,20 @@ function drawHoodHead(
   ctx.quadraticCurveTo(0, rimY + 0.34, -0.52, rimY + 0.02);
   ctx.closePath();
   ctx.fill();
+  // Form shading across the hood (warm west, cool east) + silhouette outline.
+  const hShade = ctx.createLinearGradient(-0.52, 0, 0.52, 0);
+  hShade.addColorStop(0, RIM_LIT);
+  hShade.addColorStop(0.5, "rgba(255,224,186,0)");
+  hShade.addColorStop(1, RIM_SHADE);
+  ctx.fillStyle = hShade;
+  ctx.fill();
+  outline(ctx);
+  // Warm rim on the west side of the hood (the key light).
+  ctx.strokeStyle = o.carrying ? RIM_WARM_STRONG : RIM_WARM;
+  ctx.lineWidth = 0.12;
+  ctx.beginPath();
+  ctx.arc(-0.44, rimY - 0.35, 0.5, Math.PI * 1.15, Math.PI * 1.85);
+  ctx.stroke();
 
   // Hood rim band.
   ctx.globalAlpha = baseAlpha * 0.8;
@@ -508,6 +601,7 @@ function drawHoodHead(
   ctx.beginPath();
   ctx.roundRect(-0.5, rimY - 0.12, 1.0, 0.16, 0.07);
   ctx.fill();
+  outline(ctx);
 
   // Tip tassel (gold).
   ctx.globalAlpha = baseAlpha;
@@ -523,6 +617,10 @@ function drawHoodHead(
     ctx.beginPath();
     ctx.ellipse(0.05, rimY - 0.28, 0.42, 0.3, 0, 0, Math.PI * 2);
     ctx.fill();
+    // Faint gold rim around the face opening — eyes pop against the dark rooms.
+    ctx.strokeStyle = "rgba(255,209,102,0.30)";
+    ctx.lineWidth = 0.09;
+    ctx.stroke();
     ctx.fillStyle = EYE;
     ctx.globalAlpha = baseAlpha * (o.ghost ? 0.55 : 1);
     for (const ex of [-0.11, 0.11]) {
@@ -543,6 +641,9 @@ function drawHoodHead(
     ctx.beginPath();
     ctx.ellipse(DX * 0.14, rimY - 0.28, 0.32, 0.26, 0, 0, Math.PI * 2);
     ctx.fill();
+    ctx.strokeStyle = "rgba(255,209,102,0.28)";
+    ctx.lineWidth = 0.09;
+    ctx.stroke();
     ctx.fillStyle = EYE;
     ctx.globalAlpha = baseAlpha * (o.ghost ? 0.55 : 1);
     ctx.beginPath();

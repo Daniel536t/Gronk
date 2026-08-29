@@ -21,6 +21,7 @@ import {
   drawRoomProps,
   drawVisualObject,
   drawVisualObjectFront,
+  faceShade,
   isCoverKind,
   visualObjectsFor,
   type VisualLayer,
@@ -497,6 +498,7 @@ export class Renderer {
 
     this.drawFloorBase(ctx);
     this.drawRoomFloors(ctx);
+    this.drawGlobalLight(ctx);
     this.drawDust(ctx, timeMs);
     this.drawInteriorWalls(ctx);
     this.drawOuterWalls(ctx);
@@ -830,6 +832,30 @@ export class Renderer {
     ctx.stroke();
   }
 
+  // ---- the world's one light: warm key from the upper-left ---------------
+
+  // A single coherent warm light source anchored to the WORLD (northwest), so
+  // it stays fixed as the camera moves: a warm pool falls from the upper-left
+  // and the world cools toward the lower-right. Drawn right after the floors,
+  // before walls/decor/objects, so everything above it sits in the same light.
+  private drawGlobalLight(ctx: CanvasRenderingContext2D): void {
+    ctx.save();
+    const warm = ctx.createRadialGradient(14, 6, 2, 14, 6, 72);
+    warm.addColorStop(0, "rgba(255,196,130,0.085)");
+    warm.addColorStop(0.55, "rgba(255,196,130,0.035)");
+    warm.addColorStop(1, "rgba(255,196,130,0)");
+    ctx.fillStyle = warm;
+    ctx.fillRect(0, 0, ROOM_WIDTH, ROOM_HEIGHT);
+
+    const cool = ctx.createRadialGradient(ROOM_WIDTH - 8, ROOM_HEIGHT - 4, 2, ROOM_WIDTH - 8, ROOM_HEIGHT - 4, 74);
+    cool.addColorStop(0, "rgba(8,10,20,0.16)");
+    cool.addColorStop(0.6, "rgba(8,10,20,0.06)");
+    cool.addColorStop(1, "rgba(8,10,20,0)");
+    ctx.fillStyle = cool;
+    ctx.fillRect(0, 0, ROOM_WIDTH, ROOM_HEIGHT);
+    ctx.restore();
+  }
+
   // ---- per-room floors: tint wash + pattern + ambient glow ----------------
 
   private drawRoomFloors(ctx: CanvasRenderingContext2D): void {
@@ -841,9 +867,10 @@ export class Renderer {
 
       // Tint wash (kept subtle so the base slab still reads through — but
       // strong enough to aid wayfinding; DESIGN.md P1 #6: the old 0.05 wash
-      // measured ΔRGB ≈ 2/255 between rooms, too faint to help). Still only
-      // ~4-5/255 against the base — a whisper, never a wall of color.
-      ctx.fillStyle = rgba(room.tint, 0.1);
+      // measured ΔRGB ≈ 2/255 between rooms, too faint to help). Slightly
+      // strengthened in the transformation pass (~6-7/255 against the base) —
+      // a whisper, never a wall of color.
+      ctx.fillStyle = rgba(room.tint, 0.14);
       ctx.fillRect(room.x, room.y, room.w, room.h);
 
       switch (room.kind) {
@@ -857,7 +884,7 @@ export class Renderer {
       const cx = room.x + room.w / 2;
       const cy = room.y + room.h / 2;
       const glow = ctx.createRadialGradient(cx, cy, 1, cx, cy, room.w * 0.55);
-      glow.addColorStop(0, rgba(room.tint, 0.1));
+      glow.addColorStop(0, rgba(room.tint, 0.12));
       glow.addColorStop(1, "rgba(0,0,0,0)");
       ctx.fillStyle = glow;
       ctx.fillRect(room.x, room.y, room.w, room.h);
@@ -1263,10 +1290,30 @@ export class Renderer {
       const g = ctx.createRadialGradient(0, 0, 0, 0, 0, Math.SQRT2);
       g.addColorStop(0, "rgba(3,5,10,0)");
       g.addColorStop(0.39, "rgba(3,5,10,0)");
-      g.addColorStop(0.58, "rgba(3,5,10,0.10)");
-      g.addColorStop(1, "rgba(3,5,10,0.45)");
+      g.addColorStop(0.56, "rgba(3,5,10,0.12)");
+      g.addColorStop(1, "rgba(3,5,10,0.55)");
       ctx.fillStyle = g;
       ctx.fillRect(-2, -2, 4, 4);
+    } finally {
+      ctx.restore();
+    }
+
+    // Warm key-light hint from the upper-left (screen-space falloff of the
+    // world's single light) — subtle enough to never obscure gameplay.
+    ctx.save();
+    try {
+      const tl = ctx.createRadialGradient(
+        w * 0.16,
+        h * 0.1,
+        1,
+        w * 0.16,
+        h * 0.1,
+        Math.max(w, h) * 0.5,
+      );
+      tl.addColorStop(0, "rgba(255,190,130,0.05)");
+      tl.addColorStop(1, "rgba(255,190,130,0)");
+      ctx.fillStyle = tl;
+      ctx.fillRect(0, 0, w, h);
     } finally {
       ctx.restore();
     }
@@ -1347,6 +1394,10 @@ export class Renderer {
         ctx.translate(-obj.x, -obj.y);
       }
       drawVisualObject(ctx, obj, timeMs, labelAlpha);
+      // Directional light-face/shadow-face wash (back pass only — the front
+      // cover pass must not double-shade the same body). One warm key light
+      // from the upper-left for the whole world.
+      if (pass === "back") faceShade(ctx, obj.x, obj.y, obj.w, obj.h);
       ctx.restore();
     }
   }
@@ -1750,10 +1801,15 @@ export class Renderer {
     // forward lean when chasing.
     ctx.rotate(moving ? FDX * 0.12 : 0);
 
-    // Shadow.
-    ctx.fillStyle = "rgba(0,0,0,0.4)";
+    // Grounded contact shadow: soft outer drop + a tight dark core under his
+    // weight so Gronk reads as planted in the room, not floating.
+    ctx.fillStyle = "rgba(0,0,0,0.36)";
     ctx.beginPath();
-    ctx.ellipse(0.2, 2.3 + bob, bodyW * 0.75, 0.62, 0, 0, Math.PI * 2);
+    ctx.ellipse(0.2, 2.3 + bob, bodyW * 0.78, 0.62, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(0,0,0,0.32)";
+    ctx.beginPath();
+    ctx.ellipse(0.15, 2.32 + bob, bodyW * 0.52, 0.4, 0, 0, Math.PI * 2);
     ctx.fill();
 
     // Feet: heavy stomping, alternating stride projected along the facing axis
@@ -1773,17 +1829,42 @@ export class Renderer {
     ctx.save();
     ctx.translate(bellySway * 0.3, -bob);
     ctx.fillStyle = col;
-    ctx.strokeStyle = rgba(col, 0.4);
-    ctx.lineWidth = 0.5;
+    ctx.strokeStyle = "rgba(45,6,6,0.65)";
+    ctx.lineWidth = 0.16;
     ctx.beginPath();
     ctx.ellipse(0, -bodyH / 2 + 0.3, bodyW / 2, bodyH / 2, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
+    // Form shading across the body: warm light from the west, cool shadow east.
+    const bodyShade = ctx.createLinearGradient(-bodyW / 2, 0, bodyW / 2, 0);
+    bodyShade.addColorStop(0, "rgba(255,180,140,0.15)");
+    bodyShade.addColorStop(0.42, "rgba(255,180,140,0)");
+    bodyShade.addColorStop(1, "rgba(30,2,2,0.28)");
+    ctx.beginPath();
+    ctx.ellipse(0, -bodyH / 2 + 0.3, bodyW / 2, bodyH / 2, 0, 0, Math.PI * 2);
+    ctx.fillStyle = bodyShade;
+    ctx.fill();
     // Bigger lower belly (comic weight).
     ctx.beginPath();
     ctx.ellipse(bellySway, -bodyH * 0.22, bodyW * 0.4, bodyH * 0.32, 0, 0, Math.PI * 2);
     ctx.fillStyle = rgba(col, 0.2);
     ctx.fill();
+    // Belly wrinkles + a lit upper-left highlight.
+    ctx.strokeStyle = "rgba(45,6,6,0.32)";
+    ctx.lineWidth = 0.09;
+    ctx.beginPath();
+    ctx.moveTo(-bodyW * 0.3, -bodyH * 0.06);
+    ctx.quadraticCurveTo(0, -bodyH * 0.03, bodyW * 0.3, -bodyH * 0.06);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-bodyW * 0.26, -bodyH * 0.14);
+    ctx.quadraticCurveTo(0, -bodyH * 0.11, bodyW * 0.26, -bodyH * 0.14);
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(255,200,160,0.20)";
+    ctx.lineWidth = 0.14;
+    ctx.beginPath();
+    ctx.arc(-bodyW * 0.12, -bodyH * 0.34, bodyW * 0.22, Math.PI * 1.1, Math.PI * 1.6);
+    ctx.stroke();
     ctx.restore();
 
     // Arms: swing heavily; on a catch lunge they reach forward.  --
@@ -1793,20 +1874,25 @@ export class Renderer {
     const reach = lunge * 1.6; // how far the arms reach toward the target
     ctx.save();
     ctx.translate(0, -bodyH * 0.55);
+    ctx.strokeStyle = "rgba(45,6,6,0.55)";
+    ctx.lineWidth = 0.12;
     // near arm
     ctx.beginPath();
     ctx.ellipse(-bodyW * 0.42 + armSwing * FDY, armSwing * 0.5, 0.34, 0.8, FDX * 0.2 + reach * 0.1, 0, Math.PI * 2);
     ctx.fill();
+    ctx.stroke();
     // far arm
     ctx.beginPath();
     ctx.ellipse(bodyW * 0.42 - armSwing * FDY, -armSwing * 0.5, 0.34, 0.8, FDX * 0.2, 0, Math.PI * 2);
     ctx.fill();
+    ctx.stroke();
     // Reach hands on lunge (drawn forward along the facing axis).
     if (lunge > 0.05) {
       ctx.fillStyle = shade(col, 0.7);
       ctx.beginPath();
       ctx.arc(FDX * (bodyW * 0.35 + reach), FDY * (bodyW * 0.35 + reach) + 0.4, 0.3, 0, Math.PI * 2);
       ctx.fill();
+      ctx.stroke();
     }
     ctx.restore();
 
@@ -1815,13 +1901,58 @@ export class Renderer {
     const hy = -bodyH - 0.1 - headLift - bob;
     ctx.save();
     ctx.translate(hx, hy);
+    // Horns — the creature silhouette (before the head so they sit behind it).
+    ctx.fillStyle = shade(col, 0.74);
+    ctx.beginPath();
+    ctx.moveTo(-0.55, -0.5);
+    ctx.lineTo(-0.95, -1.4);
+    ctx.lineTo(-0.15, -0.72);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(0.55, -0.5);
+    ctx.lineTo(0.95, -1.4);
+    ctx.lineTo(0.15, -0.72);
+    ctx.closePath();
+    ctx.fill();
     ctx.fillStyle = col;
     ctx.beginPath();
     ctx.ellipse(0, 0, 1.05, 0.85, 0, 0, Math.PI * 2);
     ctx.fill();
+    // Form shading across the head (warm west, cool east) + dark outline.
+    const headShade = ctx.createLinearGradient(-1.05, 0, 1.05, 0);
+    headShade.addColorStop(0, "rgba(255,170,130,0.16)");
+    headShade.addColorStop(0.45, "rgba(255,170,130,0)");
+    headShade.addColorStop(1, "rgba(30,2,2,0.26)");
+    ctx.fillStyle = headShade;
+    ctx.fill();
+    ctx.strokeStyle = "rgba(45,6,6,0.6)";
+    ctx.lineWidth = 0.14;
+    ctx.stroke();
     ctx.fillStyle = shade(col, 0.8);
     ctx.beginPath();
     ctx.ellipse(FDX * 0.2, 0.05, 0.72, 0.6, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Brow highlight above the eyes.
+    ctx.strokeStyle = "rgba(255,190,150,0.22)";
+    ctx.lineWidth = 0.16;
+    ctx.beginPath();
+    ctx.moveTo(-0.45, -0.55);
+    ctx.quadraticCurveTo(0, -0.75, 0.45, -0.55);
+    ctx.stroke();
+    // Tusks.
+    ctx.fillStyle = "rgba(255,235,210,0.9)";
+    ctx.beginPath();
+    ctx.moveTo(-0.35, 0.55);
+    ctx.lineTo(-0.52, 1.15);
+    ctx.lineTo(-0.12, 0.72);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(0.35, 0.55);
+    ctx.lineTo(0.52, 1.15);
+    ctx.lineTo(0.12, 0.72);
+    ctx.closePath();
     ctx.fill();
     // Eyes: two glowing points.
     ctx.fillStyle = "#ffe08a";

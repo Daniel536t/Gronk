@@ -4,6 +4,20 @@ A real-time multiplayer hide-and-seek heist where the TrueForge agent harness IS
 
 **No blockchain. No crypto. No Solana. No MagicBlock.** Just agents, MCP tools, and a troll.
 
+## Project context files (read these first)
+
+This repo keeps its own "explain the project to the next model" docs in the
+root. If you're picking the project up fresh, read them in this order:
+
+| File | What it answers |
+|---|---|
+| `project-plan.md` | What is this, what's done, what's next |
+| `handoff.md` | Current working-tree state + immediate next actions |
+| `prd.md` | Product requirements, game rules, milestones, acceptance criteria |
+| `architecture.md` | How the engine/server/client/agents actually fit together |
+| `memory.md` | Persistent lessons, gotchas, and hard-won decisions |
+| `DESIGN.md` | The visual/design source of truth (tokens, animation, HUD) |
+
 ## Quick Start
 
 ```bash

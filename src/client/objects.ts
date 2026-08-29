@@ -127,16 +127,57 @@ function rgba(hex: string, a: number): string {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
-// Soft drop shadow sized to the object's silhouette (stacked ellipses).
+// Soft drop shadow sized to the object's silhouette (stacked ellipses) with a
+// tight dark contact core so objects sit IN the room rather than float. The
+// offset pushes lower-right — the world's one light comes from the upper-left.
 function shadow(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number): void {
-  ctx.fillStyle = "rgba(0,0,0,0.16)";
-  ctx.beginPath();
-  ctx.ellipse(x + 0.25, y + 0.3, w * 0.55, h * 0.5, 0, 0, Math.PI * 2);
-  ctx.fill();
   ctx.fillStyle = "rgba(0,0,0,0.10)";
   ctx.beginPath();
-  ctx.ellipse(x + 0.25, y + 0.3, w * 0.78, h * 0.68, 0, 0, Math.PI * 2);
+  ctx.ellipse(x + 0.3, y + 0.34, w * 0.78, h * 0.66, 0, 0, Math.PI * 2);
   ctx.fill();
+  ctx.fillStyle = "rgba(0,0,0,0.16)";
+  ctx.beginPath();
+  ctx.ellipse(x + 0.28, y + 0.32, w * 0.58, h * 0.48, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "rgba(0,0,0,0.24)";
+  ctx.beginPath();
+  ctx.ellipse(x + 0.26, y + 0.3, w * 0.4, h * 0.32, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+/**
+ * Directional light-face/shadow-face shading across an object footprint:
+ * warm light falls on the west (lit) side, cool shadow on the east — one
+ * consistent key light for the whole world. Drawn AFTER the object body so it
+ * reads as form on top of the material, not as a replacement fill. The clip
+ * keeps the wash inside the footprint so it never bleeds onto the floor.
+ */
+export function faceShade(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+): void {
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(x - w / 2, y - h, w, h, 0.5);
+  ctx.clip();
+  const g = ctx.createLinearGradient(x - w / 2, 0, x + w / 2, 0);
+  g.addColorStop(0, "rgba(255,224,186,0.10)");
+  g.addColorStop(0.42, "rgba(255,224,186,0)");
+  g.addColorStop(0.6, "rgba(0,0,0,0)");
+  g.addColorStop(1, "rgba(4,6,12,0.20)");
+  ctx.fillStyle = g;
+  ctx.fillRect(x - w / 2, y - h, w, h);
+  // Lit west edge highlight.
+  ctx.strokeStyle = "rgba(255,228,196,0.12)";
+  ctx.lineWidth = 0.14;
+  ctx.beginPath();
+  ctx.moveTo(x - w / 2 + 0.16, y - h + 0.4);
+  ctx.lineTo(x - w / 2 + 0.16, y - 0.3);
+  ctx.stroke();
+  ctx.restore();
 }
 
 // ---- furniture renderers ---------------------------------------------------
