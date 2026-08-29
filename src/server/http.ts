@@ -83,9 +83,16 @@ export function createHttpServer(
   return http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
     // Vite dev server runs on another port; allow cross-origin reads.
-    res.setHeader("Access-Control-Allow-Origin", "*");
+    // Echo the requesting Origin so the Authorization header is an accepted
+    // preflight header on cross-origin ASTrix requests, while still allowing
+    // anonymous tool-less clients (curl, same-origin) via the wildcard.
+    const origin = req.headers.origin;
+    res.setHeader("Access-Control-Allow-Origin", origin || "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    if (origin) {
+      res.setHeader("Vary", "Origin");
+    }
     if (req.method === "OPTIONS") {
       res.writeHead(204);
       res.end();

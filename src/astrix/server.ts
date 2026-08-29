@@ -13,10 +13,8 @@ export interface AstrixService {
   handle(req: http.IncomingMessage, res: http.ServerResponse, pathname: string, body?: Record<string, unknown>): Promise<boolean>;
 }
 
-let activeAuthToken: string | undefined;
-
 export function createAstrixService(opts: { authToken?: string } = {}): AstrixService {
-  activeAuthToken = opts.authToken;
+  const authToken = opts.authToken;
   const state = new AstrixWorldState();
   const bus = new AstrixGameCommandBus(state);
   const tools = createAstrixToolRegistry(state, bus);
@@ -30,7 +28,7 @@ export function createAstrixService(opts: { authToken?: string } = {}): AstrixSe
     state,
     bus,
     tools,
-    authToken: activeAuthToken,
+    authToken,
     tick(deltaSeconds: number): void {
       if (state.tick(deltaSeconds)) {
         const snapshot = state.snapshot();
@@ -51,7 +49,7 @@ export function createAstrixService(opts: { authToken?: string } = {}): AstrixSe
         return true;
       }
       if (pathname === "/astrix/command" && req.method === "POST") {
-        if (!authorized(req)) {
+        if (!authorized(req, authToken)) {
           sendJson(res, 401, { success: false, error: "unauthorized" });
           return true;
         }
@@ -59,7 +57,7 @@ export function createAstrixService(opts: { authToken?: string } = {}): AstrixSe
         return true;
       }
       if (pathname === "/astrix/approval/respond" && req.method === "POST") {
-        if (!authorized(req)) {
+        if (!authorized(req, authToken)) {
           sendJson(res, 401, { success: false, error: "unauthorized" });
           return true;
         }
@@ -77,7 +75,7 @@ export function createAstrixService(opts: { authToken?: string } = {}): AstrixSe
         if (req.method === "GET") {
           sendJson(res, 200, { tools: tools.listTools() });
         } else {
-          if (!authorized(req)) {
+          if (!authorized(req, authToken)) {
             sendJson(res, 401, { success: false, error: "unauthorized" });
             return true;
           }
@@ -92,7 +90,7 @@ export function createAstrixService(opts: { authToken?: string } = {}): AstrixSe
         return true;
       }
       if (pathname === "/astrix/mcp/tools/call" && req.method === "POST") {
-        if (!authorized(req)) {
+        if (!authorized(req, authToken)) {
           sendJson(res, 401, { success: false, error: "unauthorized" });
           return true;
         }
@@ -111,14 +109,16 @@ export function sendJson(res: http.ServerResponse, code: number, value: unknown,
   res.writeHead(code, {
     "Content-Type": "application/json",
     "Access-Control-Allow-Origin": origin || "*",
+    ...(origin ? { "Access-Control-Allow-Headers": "Content-Type, Authorization", "Access-Control-Allow-Methods": "GET, POST, OPTIONS" } : {}),
+    ...(origin ? { "Vary": "Origin" } : {}),
   });
   res.end(JSON.stringify(value));
 }
 
-function authorized(req: http.IncomingMessage): boolean {
-  if (!activeAuthToken) return true; // no token configured -> open (default local mode)
+function authorized(req: http.IncomingMessage, authToken: string | undefined): boolean {
+  if (!authToken) return true; // no legacy token configured -> open (default local/dev mode)
   const header = req.headers.authorization;
-  return header === `Bearer ${activeAuthToken}`;
+  return header === `Bearer ${authToken}`;
 }
 
 export function readAstrixBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
