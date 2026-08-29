@@ -4,6 +4,20 @@ A real-time multiplayer hide-and-seek heist where the TrueForge agent harness IS
 
 **No blockchain. No crypto. No Solana. No MagicBlock.** Just agents, MCP tools, and a troll.
 
+## Project context files (read these first)
+
+This repo keeps its own "explain the project to the next model" docs in the
+root. If you're picking the project up fresh, read them in this order:
+
+| File | What it answers |
+|---|---|
+| `project-plan.md` | What is this, what's done, what's next |
+| `handoff.md` | Current working-tree state + immediate next actions |
+| `prd.md` | Product requirements, game rules, milestones, acceptance criteria |
+| `architecture.md` | How the engine/server/client/agents actually fit together |
+| `memory.md` | Persistent lessons, gotchas, and hard-won decisions |
+| `DESIGN.md` | The visual/design source of truth (tokens, animation, HUD) |
+
 ## Quick Start
 
 ```bash
@@ -11,13 +25,29 @@ npm install
 npm run prod  # serves everything on http://localhost:8787
 ```
 
-Open http://localhost:8787, hit **Single Player** — one click to a live match (you + 3 scripted bots). For development (hot-reload frontend):
+Open http://localhost:8787. The root now serves the **ASTrix** Godot 4 HTML5 client (the voxel world where a TrueForge steward manages the environment). The old hide-and-seek client is replaced at the root; its API routes remain intact under `/api/*`.
+
+- **Play ASTrix (deployed):** https://astrixx.duckdns.org/  (Caddy → HTTPS → `127.0.0.1:8787`; app is not publicly reachable on 8787)
+- **TrueForge dashboard:** http://44.197.181.77:8790/
+- **ASTrix world API:** `GET /astrix/state`, `POST /astrix/command`, `GET /astrix/events` (SSE), `POST /astrix/approval/respond`
+- **MCP tools** (TrueForge channel): `POST /mcp` — `inspect_world`, `inspect_island`, `inspect_resources`, `inspect_buildings`, `gather`, `build`, `plant`, `clear_terrain`, `build_bridge`, `simulate_plan`
+
+For development (hot-reload frontend of the legacy Vite client):
 
 ```bash
 npm run dev:all  # game server :8787 + Vite frontend :5173
 ```
 
 Open http://localhost:5173.
+
+### Godot HTML5 deployment
+
+The Godot 4.7.2 Web export lives in `server/static/` (`index.html`, `index.js`, `index.wasm`, `index.pck`) and is served at the root. Rebuild it with:
+
+```bash
+cd godot
+DISPLAY=:99 godot --path . --export-release "Web" ../server/static/index.html  # needs an X display (headless export is broken in 4.7.2)
+```
 
 ## Running it forever (VPS / pm2 / nohup)
 
@@ -129,6 +159,61 @@ safety net — a slow or dead agent is replaced per-seat and the match never cra
 `BOTS=scripted` (the default) runs the permanent scripted-FSM fallback — same game, zero LLM
 needed. `npx @truefoundry/trueforge --port 8790` also works for a foreground harness during
 dev.
+
+## ASTrix Parallel Architecture
+
+The ASTrix migration is additive. The reviewed Gronk's Hoard system remains available while ASTrix introduces its own world state and command boundary:
+
+```text
+Legacy browser client ──→ legacy HTTP/MCP ──→ Gronk's Hoard engine
+
+Godot ASTrix client ────→ /astrix/* API ──→ ASTrix WorldState
+                                      └──→ ASTrix GameCommandBus
+TrueForge World Steward ─→ ASTrix MCP tools ──┘
+                                      └──→ human approval gate
+```
+
+## ASTrix API Endpoints
+
+### ASTrix world API
+
+- `GET /astrix/state`
+- `POST /astrix/command`
+- `GET /astrix/mcp/tools/list`
+- `POST /astrix/mcp/tools/call`
+- `GET /astrix/events` (SSE)
+- `POST /astrix/approval/respond`
+
+### Legacy game API (preserved)
+
+- `GET /state`
+- `GET /api/lobby`
+- `POST /api/create`, `/api/join`, `/api/start`
+- `POST /api/move`, `/api/transform`, `/api/action`
+- `POST /api/approve-bank`, `/api/reject-bank`
+- `POST /mcp`, `GET /mcp`
+
+## ASTrix TrueForge Integration
+
+TrueForge runs at `:8790`. ASTrix exposes its tool surface through the parallel `/astrix/mcp/*` HTTP endpoints. The intended agents are:
+
+- `astrix-steward`
+- `astrix-agriculture`
+- `astrix-construction`
+- `astrix-ecology`
+
+Irreversible ASTrix commands require an explicit human approval response before the command bus commits them. Provisioning uses the existing TrueForge `/api/v1/agents` manifest pattern and existing `/api/v1/sessions/{id}/turns` session pattern.
+
+## ASTrix Local Development
+
+```bash
+npm install
+npm run build
+PORT=8787 npm run server
+npm run provision:astrix
+```
+
+Godot connects to `http://127.0.0.1:8787` and polls `/astrix/state` at 2Hz. The Godot project is under `godot/`.
 
 ## How it works
 

@@ -221,6 +221,69 @@ export interface AgentSpecInput {
  * Create named agents in TrueForge via the HTTP API (idempotent-ish: existing
  * agents are reused). Run once before BOTS=trueforge. Returns the created names.
  */
+export interface AstrixStewardTurnResult {
+  sessionId: string | null;
+  turnId: string | null;
+  status: "done" | "error" | "cancelled" | "timeout";
+  latencyMs: number;
+  response: unknown;
+}
+
+/**
+ * Drive one ASTrix steward session/turn with a server-authoritative snapshot.
+ * Polls to a terminal 'done' state; throws on non-2xx responses, terminal
+ * error/cancelled states, missing identifiers, or polling deadline exhaustion.
+ * Returns the raw TrueForge {"data":...} turn body on success.
+ */
+export async function runAstrixStewardTurn(
+  cfg: TrueForgeConfig,
+  snapshot: unknown,
+  deadlineMs = 60_000,
+): Promise<AstrixStewardTurnResult> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (cfg.apiKey) headers.Authorization = `Bearer ${cfg.apiKey}`;
+  const base = cfg.baseUrl.replace(/\/+$/, "");
+  const started = Date.now();
+
+  const sessionRes = await fetch(`${base}/api/v1/sessions`, {
+    method: "POST", headers, body: JSON.stringify({ agent: { name: "astrix-steward" } }),
+  });
+  const sessionBody = await sessionRes.json().catch(() => ({}));
+  if (!sessionRes.ok) throw new TrueForgeBackendError(`create session failed (${sessionRes.status}): ${JSON.stringify(sessionBody)}`);
+  const sessionId: string | null = (sessionBody as any)?.data?.id ?? null;
+  if (!sessionId) throw new TrueForgeBackendError("create session returned no session id");
+
+  const prompt = `You are the ASTrix World Steward. Inspect this current authoritative ASTrix world state and return ONE structured JSON decision object (fields: decision, recommendation, toolCalls: [{tool, args}], approvalRequired: bool, reasoning). Do not mutate anything. State: ${JSON.stringify(snapshot)}`;
+  const turnRes = await fetch(`${base}/api/v1/sessions/${sessionId}/turns`, {
+    method: "POST", headers,
+    body: JSON.stringify({ input: [{ type: "user.message", content: prompt }], previous_turn_id: "auto", stream: false }),
+  });
+  const turnBody = await turnRes.json().catch(() => ({}));
+  if (!turnRes.ok) throw new TrueForgeBackendError(`create turn failed (${turnRes.status}): ${JSON.stringify(turnBody)}`);
+  const turnId: string | null = (turnBody as any)?.data?.id ?? null;
+  if (!turnId) throw new TrueForgeBackendError("create turn returned no turn id");
+
+  let result: AstrixStewardTurnResult = { sessionId, turnId, status: "timeout", latencyMs: 0, response: null };
+  const deadline = Date.now() + deadlineMs;
+  while (Date.now() < deadline) {
+    const poll = await fetch(`${base}/api/v1/sessions/${sessionId}/turns/${turnId}`, { headers });
+    const body = await poll.json().catch(() => ({}));
+    if (!poll.ok) throw new TrueForgeBackendError(`get turn failed (${poll.status}): ${JSON.stringify(body)}`);
+    const state = (body as any)?.data?.state;
+    if (state?.status === "error" || state?.status === "cancelled") {
+      result = { sessionId, turnId, status: state.status, latencyMs: 0, response: body };
+      break;
+    }
+    if (state?.status === "done") {
+      result = { sessionId, turnId, status: "done", latencyMs: 0, response: body };
+      break;
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  result.latencyMs = Date.now() - started;
+  return result;
+}
+
 export async function provisionTrueForgeAgents(
   cfg: TrueForgeConfig,
   agents: AgentSpecInput[],
@@ -359,24 +422,21 @@ export async function registerSkill(
  */
 export async function registerMcpConnector(
   cfg: TrueForgeConfig,
+  name = MCP_CONNECTOR_NAME,
+  url = cfg.mcpServerUrl ?? "http://localhost:8787/mcp",
 ): Promise<{ name: string; status: string }> {
-  const url = cfg.mcpServerUrl ?? "http://localhost:8787/mcp";
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (cfg.apiKey) headers.Authorization = `Bearer ${cfg.apiKey}`;
+  const listed = await fetch(`${cfg.baseUrl}/api/v1/settings/mcp-servers`, { headers });
+  if (listed.ok) {
+    const json = (await listed.json()) as { data?: { name?: string; manifest?: Record<string, unknown> }[] };
+    const existing = json.data?.find((server) => server.name === name || server.manifest?.name === name);
+    if (existing) return { name, status: "already configured" };
+  }
   const res = await fetch(`${cfg.baseUrl}/api/v1/settings/mcp-servers`, {
     method: "POST",
     headers,
-    body: JSON.stringify({
-      manifest: {
-        type: "remote",
-        name: MCP_CONNECTOR_NAME,
-        url,
-        description: "Gronk's Hoard game MCP server (lobby, state, movement, action, bank).",
-      },
-    }),
+    body: JSON.stringify({ manifest: { type: "remote", name, url, description: `ASTrix MCP server (${name}).` } }),
   });
-  return {
-    name: MCP_CONNECTOR_NAME,
-    status: res.ok ? `registered (${res.status})` : `error (${res.status}): ${await res.text()}`,
-  };
+  return { name, status: res.ok ? `registered (${res.status})` : `error (${res.status}): ${await res.text()}` };
 }

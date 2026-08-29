@@ -6,3 +6,5 @@ dist/
 server.pid
 *.tsbuildinfo
 qa/
+.tools/
+godot/.godot/

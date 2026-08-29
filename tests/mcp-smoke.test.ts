@@ -1,6 +1,6 @@
 // Smoke test for the MCP wire layer: a real MCP client connects to the server
-// over stdio (the same way TrueForge agents will in M4), lists the tools, and
-// runs a create -> join -> start -> intent -> get_state round trip.
+// over stdio (the same way TrueForge agents will in M4), lists the legacy and
+// additive ASTrix tools, and runs a create -> join -> start -> intent -> get_state round trip.
 import assert from "node:assert/strict";
 import { describe, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -31,10 +31,20 @@ const EXPECTED_TOOLS = [
   "reject_bank",
   "reveal_riddle",
   "agent_intent",
+  "inspect_world",
+  "inspect_island",
+  "inspect_resources",
+  "inspect_buildings",
+  "gather",
+  "build",
+  "plant",
+  "clear_terrain",
+  "build_bridge",
+  "simulate_plan",
 ].sort();
 
 describe("MCP server", () => {
-  it("exposes the 11 tools and runs a lobby round trip over stdio", async () => {
+  it("exposes legacy and ASTrix tools and runs a lobby round trip over stdio", async () => {
     const transport = new StdioClientTransport({
       command: TSX_BIN,
       args: [ENTRY],

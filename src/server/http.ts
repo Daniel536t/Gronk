@@ -14,7 +14,16 @@ import { readFileSync, existsSync, statSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
 import { LobbyManager } from "./lobby";
 import type { McpHttpHandler } from "./mcpHttp";
+import type { AstrixService } from "../astrix/server";
+import { readAstrixBody } from "../astrix/server";
 
+// NOTE ON AUTH: the legacy POST /mcp channel is deliberately left open to
+// TrueForge. TrueForge and this server run on the same host (localhost), so
+// network isolation is the security boundary for agent tool calls — TrueForge
+// does not send an Authorization header, and gating mutating tools here would
+// hang every steward turn. The public-facing mutation surface is the /astrix/*
+// routes (browser client -> server), which remain gated by ASTRIX_API_KEY in
+// src/astrix/server.ts.
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -23,6 +32,11 @@ const MIME: Record<string, string> = {
   ".svg": "image/svg+xml",
   ".png": "image/png",
   ".ico": "image/x-icon",
+  // Godot 4 Web export: browsers refuse to execute WASM without the correct
+  // MIME type, and the .pck must be served as a plain binary stream.
+  ".wasm": "application/wasm",
+  ".pck": "application/octet-stream",
+  ".ogg": "audio/ogg",
 };
 
 function sendJson(res: http.ServerResponse, code: number, body: unknown): void {
@@ -76,21 +90,39 @@ function readBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
 export function createHttpServer(
   manager: LobbyManager,
   port = 8787,
-  opts: { mcp?: McpHttpHandler; staticDir?: string } = {},
+  opts: { mcp?: McpHttpHandler; staticDir?: string; astrix?: AstrixService } = {},
 ): http.Server {
   return http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
     // Vite dev server runs on another port; allow cross-origin reads.
-    res.setHeader("Access-Control-Allow-Origin", "*");
+    // Echo the requesting Origin so the Authorization header is an accepted
+    // preflight header on cross-origin ASTrix requests, while still allowing
+    // anonymous tool-less clients (curl, same-origin) via the wildcard.
+    const origin = req.headers.origin;
+    res.setHeader("Access-Control-Allow-Origin", origin || "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    if (origin) {
+      res.setHeader("Vary", "Origin");
+    }
     if (req.method === "OPTIONS") {
       res.writeHead(204);
       res.end();
       return;
     }
 
+    // ---- ASTrix parallel world API --------------------------------------
+    if (opts.astrix && url.pathname.startsWith("/astrix/")) {
+      let astrixBody: Record<string, unknown> | undefined;
+      if (req.method === "POST") {
+        try { astrixBody = await readAstrixBody(req); }
+        catch (e) { sendJson(res, 400, { error: (e as Error).message }); return; }
+      }
+      if (await opts.astrix.handle(req, res, url.pathname, astrixBody)) return;
+    }
+
     // ---- POST /mcp (Streamable HTTP MCP — where TrueForge agents connect) --
+    // Fully open to TrueForge (same-host deployment; see note at top of file).
     if (req.method === "POST" && url.pathname === "/mcp" && opts.mcp) {
       let body: unknown;
       try {
