@@ -33,6 +33,7 @@ export interface AstrixStateSnapshot {
   resources: Record<ResourceType, number>;
   biomeHealth: Record<BiomeId, number>;
   crops: Array<{ id: string; farmPlotId: string; cropType: string; growthStage: number }>;
+  bridges: Array<{ id: string; islandA: BiomeId; islandB: BiomeId }>;
   buildings: AstrixBuilding[];
   resourceNodes: AstrixResourceNode[];
   islands: { id: BiomeId; biome: string; health: number; connectivity: string[] }[];
@@ -68,6 +69,7 @@ export class AstrixWorldState {
     dusk: 0.4,
   };
   readonly crops: Array<{ id: string; farmPlotId: string; cropType: string; growthStage: number }> = [];
+  readonly bridges: Array<{ id: string; islandA: BiomeId; islandB: BiomeId }> = [];
   buildings: AstrixBuilding[] = [
 
     { id: "house-001", type: "house", position: { x: 20, y: 3.6, z: 30 }, health: 1, islandId: "meadow" },
@@ -122,14 +124,19 @@ export class AstrixWorldState {
       resources: { ...this.resources },
       biomeHealth: { ...this.biomeHealth },
       crops: this.crops.map((crop) => ({ ...crop })),
+      bridges: this.bridges.map((bridge) => ({ ...bridge })),
       buildings: this.buildings.map((building) => ({ ...building, position: { ...building.position } })),
       resourceNodes: this.resourceNodes.map((node) => ({ ...node, position: { ...node.position } })),
       islands: [
-        { id: "meadow", biome: "meadow", health: this.biomeHealth.meadow, connectivity: ["frost", "dusk"] },
-        { id: "frost", biome: "frost", health: this.biomeHealth.frost, connectivity: ["meadow"] },
-        { id: "dusk", biome: "dusk", health: this.biomeHealth.dusk, connectivity: ["meadow"] },
+        { id: "meadow", biome: "meadow", health: this.biomeHealth.meadow, connectivity: connectivityFor("meadow", this.bridges) },
+        { id: "frost", biome: "frost", health: this.biomeHealth.frost, connectivity: connectivityFor("frost", this.bridges) },
+        { id: "dusk", biome: "dusk", health: this.biomeHealth.dusk, connectivity: connectivityFor("dusk", this.bridges) },
       ],
       pendingApprovals: this.pendingApprovals.map((approval) => ({ ...approval, impact: { ...approval.impact } })),
     };
   }
+}
+
+function connectivityFor(island: BiomeId, bridges: Array<{ id: string; islandA: BiomeId; islandB: BiomeId }>): string[] {
+  return bridges.filter((bridge) => bridge.islandA === island || bridge.islandB === island).map((bridge) => bridge.islandA === island ? bridge.islandB : bridge.islandA);
 }

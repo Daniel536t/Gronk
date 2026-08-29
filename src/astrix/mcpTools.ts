@@ -35,10 +35,14 @@ export function createAstrixToolRegistry(state: AstrixWorldState, bus: AstrixGam
 function inspectIsland(state: AstrixWorldState, id: string): unknown {
   if (!( ["meadow", "frost", "dusk"] as string[]).includes(id)) return { success: false, error: "unknown island" };
   const biome = id as BiomeId;
-  return { id: biome, biome, health: state.biomeHealth[biome], resources: state.resourceNodes.filter((node) => node.islandId === biome), buildings: state.buildings.filter((building) => building.islandId === biome), connectivity: biome === "meadow" ? ["frost", "dusk"] : ["meadow"] };
+  const island = state.snapshot().islands.find((candidate) => candidate.id === biome)!;
+  return { id: biome, biome, health: state.biomeHealth[biome], resources: state.resourceNodes.filter((node) => node.islandId === biome), buildings: state.buildings.filter((building) => building.islandId === biome), connectivity: island.connectivity };
 }
 
 function simulatePlan(state: AstrixWorldState, bus: AstrixGameCommandBus, value: unknown): unknown {
+  if (typeof value === "string") {
+    try { value = JSON.parse(value); } catch { return { success: false, readOnly: true, error: "plan must be valid JSON" }; }
+  }
   if (!value || typeof value !== "object") return { success: false, readOnly: true, error: "plan must be an object" };
   const plan = value as Record<string, unknown>;
   const commands = Array.isArray(plan.commands) ? plan.commands : [plan];

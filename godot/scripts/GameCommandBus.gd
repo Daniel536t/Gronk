@@ -1,7 +1,7 @@
 extends Node
-## ASTrix mutation boundary. Every world-changing request is validated here.
-## The Phase 1 steward integration is intentionally a local seam; no agent loop
-## or server authority is added in this milestone.
+## ASTrix mutation boundary. Every world-changing request is validated here
+## and forwarded to the authoritative server. No local mutation happens:
+## visuals update only after a server response / snapshot.
 
 signal command_completed(command_name: String, result: Dictionary)
 signal command_rejected(command_name: String, reason: String)
@@ -36,20 +36,9 @@ func validate(command_name: String, params: Dictionary) -> Dictionary:
         return {"ok": false, "error": "command is required"}
     if command_name == "build" and not params.has("building_type"):
         return {"ok": false, "error": "building_type is required"}
+    if command_name == "gather" and not (params.has("resource_id") or params.has("resource_type")):
+        return {"ok": false, "error": "resource_id or resource_type is required"}
     return {"ok": true}
-
-func place_building(building_type: String, location: Vector3) -> Dictionary:
-    if not BUILD_COSTS.has(building_type):
-        return _reject("PlaceBuilding", "unknown building type")
-    if not _valid_location(location):
-        return _reject("PlaceBuilding", "location is outside the buildable world")
-    var cost: Dictionary = BUILD_COSTS[building_type]
-    if not _can_afford(cost):
-        return _reject("PlaceBuilding", "insufficient resources")
-    var result := request_approval("PlaceBuilding", "Build %s" % building_type, {"cost": cost, "location": location})
-    if bool(result.get("pending", false)):
-        return result
-    return result
 
 func send_command(command_name: String, params: Dictionary) -> void:
     var validation := validate(command_name, params)
@@ -58,63 +47,40 @@ func send_command(command_name: String, params: Dictionary) -> void:
         return
     GameClient.send_astrix_command({"command": command_name, "params": params})
 
-func commit_building(building_type: String, location: Vector3) -> Dictionary:
-    if not BUILD_COSTS.has(building_type) or not _valid_location(location):
-        return _reject("PlaceBuilding", "invalid building")
-    var cost: Dictionary = BUILD_COSTS[building_type]
-    if not _can_afford(cost):
+func place_building(building_type: String, location: Vector3) -> Dictionary:
+    if not BUILD_COSTS.has(building_type):
+        return _reject("PlaceBuilding", "unknown building type")
+    if not _valid_location(location):
+        return _reject("PlaceBuilding", "location is outside the buildable world")
+    if not _can_afford(BUILD_COSTS[building_type]):
         return _reject("PlaceBuilding", "insufficient resources")
-    for resource_id in cost:
-        world_state.consume(resource_id, int(cost[resource_id]))
-    var building_id := "%s_%03d" % [building_type, world_state.buildings.size() + 1]
-    world_state.buildings[building_id] = {"id": building_id, "type": building_type, "location": location}
-    var result := {"ok": true, "command": "PlaceBuilding", "building_id": building_id}
-    world_state.changed.emit()
-    command_completed.emit("PlaceBuilding", result)
-    return result
+    return _dispatch("build", {"building_type": building_type, "position": {"x": location.x, "y": location.y, "z": location.z}, "island_id": "meadow"})
 
-func build_bridge(location: Vector3) -> Dictionary:
-    return place_building("bridge_segment", location)
+func build_bridge(location: Vector3, island_a: String = "meadow", island_b: String = "frost") -> Dictionary:
+    return _dispatch("bridge", {"position": {"x": location.x, "y": location.y, "z": location.z}, "island_a": island_a, "island_b": island_b})
 
-func gather_resource(resource_id: String, location: Vector3) -> Dictionary:
-    if not RESOURCE_IDS.has(resource_id) or not _valid_location(location):
-        return _reject("GatherResource", "invalid resource or location")
-    var result := {"ok": true, "command": "GatherResource", "resource_id": resource_id, "location": location}
-    world_state.add_resource(resource_id, 1)
-    world_state.changed.emit()
-    command_completed.emit("GatherResource", result)
-    return result
+func gather_resource(resource_id: String, _location: Vector3) -> Dictionary:
+    if not RESOURCE_IDS.has(resource_id):
+        return _reject("GatherResource", "invalid resource")
+    return _dispatch("gather", {"resource_id": resource_id})
 
 func plant_crop(plot_id: String, crop: String) -> Dictionary:
     if plot_id.is_empty() or crop.is_empty():
         return _reject("PlantCrop", "plot_id and crop are required")
-    var result := {"ok": true, "command": "PlantCrop", "plot_id": plot_id, "crop": crop}
-    command_completed.emit("PlantCrop", result)
-    return result
+    return _dispatch("plant", {"farm_plot_id": plot_id, "crop_type": crop})
 
 func clear_terrain(location: Vector3) -> Dictionary:
     if not _valid_location(location):
         return _reject("ClearTerrain", "location is outside the world")
-    var result := {"ok": true, "command": "ClearTerrain", "location": location}
-    command_completed.emit("ClearTerrain", result)
-    return result
+    return _dispatch("clear", {"position": {"x": location.x, "y": location.y, "z": location.z}, "radius": 1})
 
 func simulate_plan(plan: Dictionary) -> Dictionary:
-    return {"ok": true, "validated": true, "plan": plan.duplicate(true)}
+    GameClient.send_astrix_command({"command": "simulate_plan", "params": {"plan": plan}})
+    return {"ok": true, "pending": true}
 
-func request_approval(action: String, reason: String, impact: Dictionary) -> Dictionary:
-    var request := {"action": action, "reason": reason, "impact": impact.duplicate(true)}
-    approval_requested.emit(request)
-    return {"ok": true, "pending": true, "request": request}
-
-func approve(request: Dictionary) -> Dictionary:
-    var impact: Dictionary = request.get("impact", {})
-    var location: Vector3 = impact.get("location", Vector3.ZERO)
-    var building_type := str(request.get("reason", "")).trim_prefix("Build ")
-    return commit_building(building_type, location)
-
-func reject(_request: Dictionary) -> Dictionary:
-    return {"ok": true, "approved": false}
+func _dispatch(command_name: String, params: Dictionary) -> Dictionary:
+    send_command(command_name, params)
+    return {"ok": true, "pending": true}
 
 func _can_afford(cost: Dictionary) -> bool:
     if not world_state:

@@ -29,7 +29,7 @@ export function createAstrixService(): AstrixService {
     tick(deltaSeconds: number): void {
       if (state.tick(deltaSeconds)) {
         const snapshot = state.snapshot();
-        const payload = `event: state\\ndata: ${JSON.stringify(snapshot)}\\n\\n`;
+        const payload = `event: state\ndata: ${JSON.stringify(snapshot)}\n\n`;
         for (const client of eventClients) client.write(payload);
       }
     },
@@ -57,7 +57,7 @@ export function createAstrixService(): AstrixService {
           return true;
         }
         const result = bus.resolveApproval(approvalId, decision);
-        sendJson(res, result.success ? 200 : 404, result);
+        sendJson(res, result.success || result.error === "approval rejected" ? 200 : 404, result);
         return true;
       }
       if (pathname === "/astrix/mcp" && (req.method === "GET" || req.method === "POST")) {

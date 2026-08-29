@@ -19,7 +19,6 @@ export interface AstrixCommand {
   radius?: number;
   islandA?: BiomeId;
   islandB?: BiomeId;
-  approved?: boolean;
   approvalId?: string;
 }
 
@@ -55,8 +54,8 @@ export class AstrixGameCommandBus {
     const index = this.state.pendingApprovals.findIndex((approval) => approval.id === approvalId);
     if (index < 0) return { success: false, command: "CLEAR_TERRAIN", irreversible: true, error: "approval not found" };
     const approval = this.state.pendingApprovals[index];
-    this.state.pendingApprovals.splice(index, 1);
     if (decision === "reject") {
+      this.state.pendingApprovals.splice(index, 1);
       this.emitState();
       return { success: false, command: approval.command as AstrixCommandName, irreversible: true, error: "approval rejected" };
     }
@@ -77,10 +76,10 @@ export class AstrixGameCommandBus {
     const validation = this.validate(command);
     if (!validation.success) return validation;
     if (irreversible && command.approvalId !== undefined) {
-      const approvalExists = this.state.pendingApprovals.some((approval) => approval.id === command.approvalId);
-      if (!approvalExists) return { success: false, command: command.command, irreversible, error: "approval not found" };
       const approvalIndex = this.state.pendingApprovals.findIndex((approval) => approval.id === command.approvalId);
-      this.state.pendingApprovals.splice(approvalIndex, 1);
+      if (approvalIndex < 0) return { success: false, command: command.command, irreversible, error: "approval not found" };
+      const approval = this.state.pendingApprovals[approvalIndex];
+      if (!approvalMatchesCommand(approval, command)) return { success: false, command: command.command, irreversible, error: "approval does not match command" };
     }
     if (irreversible && command.approvalId === undefined) {
       const approval: AstrixApproval = {
@@ -104,7 +103,13 @@ export class AstrixGameCommandBus {
       case "BUILD_BRIDGE": result = this.buildBridge(command, irreversible); break;
       default: return { success: false, command: command.command, irreversible, error: "unknown command" };
     }
-    if (result.success) this.emitState();
+    if (result.success) {
+      if (irreversible && command.approvalId !== undefined) {
+        const index = this.state.pendingApprovals.findIndex((approval) => approval.id === command.approvalId);
+        if (index >= 0) this.state.pendingApprovals.splice(index, 1);
+      }
+      this.emitState();
+    }
     return result;
   }
 
@@ -124,6 +129,7 @@ export class AstrixGameCommandBus {
     }
     if (command.command === "GATHER_RESOURCE" && !command.resourceId && !command.resourceType) return { success: false, command: command.command, irreversible, error: "resourceId or resourceType is required" };
     if (command.command === "PLANT_CROP" && (!command.farmPlotId || !command.cropType)) return { success: false, command: command.command, irreversible, error: "farmPlotId and cropType are required" };
+    if (command.command === "PLANT_CROP" && !this.state.buildings.some((building) => building.type === "farm" && building.id === command.farmPlotId)) return { success: false, command: command.command, irreversible, error: "farm plot not found" };
     if (command.command === "CLEAR_TERRAIN" && (!command.position || !Number.isFinite(command.radius) || command.radius! <= 0 || command.radius! > 20)) return { success: false, command: command.command, irreversible, error: "position and radius between 0 and 20 are required" };
     if (command.command === "BUILD_BRIDGE" && (!command.islandA || !command.islandB || command.islandA === command.islandB)) return { success: false, command: command.command, irreversible, error: "two distinct islands are required" };
     return { success: true, command: command.command, irreversible };
@@ -144,7 +150,7 @@ export class AstrixGameCommandBus {
     const gathered = Math.min(1, node.quantity);
     node.quantity -= gathered;
     this.state.resources[node.type] += gathered;
-    return { success: true, command: command.command, irreversible, gathered, resourceType: node.type, inventoryAfter: { ...this.state.resources } };
+    return { success: true, command: command.command, irreversible, gathered, resourceId: node.id, resourceType: node.type, inventoryAfter: { ...this.state.resources } };
   }
 
   private plant(command: AstrixCommand, irreversible: boolean): AstrixCommandResult {
@@ -169,7 +175,8 @@ export class AstrixGameCommandBus {
     for (const [resource, amount] of Object.entries(cost)) this.state.resources[resource as ResourceType] -= amount;
     const building = { id: this.state.nextEntityId("bridge"), type: "bridge_segment" as const, position: command.position ?? { x: 0, y: 0, z: 0 }, health: 1, islandId: command.islandA! };
     this.state.buildings.push(building);
-    return { success: true, command: command.command, irreversible, bridgeId: building.id, cost: { wood: 3, stone: 1 }, length: 8, permanent: true };
+    this.state.bridges.push({ id: building.id, islandA: command.islandA!, islandB: command.islandB! });
+    return { success: true, command: command.command, irreversible, bridgeId: building.id, costDeducted: cost, length: 8, permanent: true };
   }
 
   private validPosition(position: AstrixPosition): boolean {
@@ -180,6 +187,20 @@ export class AstrixGameCommandBus {
     const snapshot = this.state.snapshot();
     for (const listener of this.listeners) listener(snapshot);
   }
+}
+
+function approvalMatchesCommand(approval: AstrixApproval, command: AstrixCommand): boolean {
+  if (approval.command !== command.command) return false;
+  const impact = approval.impact;
+  if (command.command === "CLEAR_TERRAIN") return samePosition(impact.position, command.position) && impact.radius === command.radius;
+  return impact.islandA === command.islandA && impact.islandB === command.islandB && samePosition(impact.position, command.position);
+}
+
+function samePosition(a: unknown, b: unknown): boolean {
+  if (!a || !b || typeof a !== "object" || typeof b !== "object") return false;
+  const left = a as AstrixPosition;
+  const right = b as AstrixPosition;
+  return left.x === right.x && left.y === right.y && left.z === right.z;
 }
 
 function distance(a: AstrixPosition, b: AstrixPosition): number {

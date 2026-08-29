@@ -41,6 +41,12 @@ func apply_snapshot(snapshot_data: Dictionary) -> void:
     if remote_resources is Dictionary:
         resources = remote_resources.duplicate(true)
         food = int(resources.get("food", food))
+    resource_nodes.clear()
+    var remote_nodes: Variant = snapshot_data.get("resourceNodes", [])
+    if remote_nodes is Array:
+        for node in remote_nodes:
+            if node is Dictionary:
+                resource_nodes[str(node.get("id", "resource"))] = node.duplicate(true)
     var remote_buildings: Variant = snapshot_data.get("buildings", buildings)
     if remote_buildings is Array:
         buildings.clear()

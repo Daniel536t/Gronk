@@ -20,11 +20,14 @@ func gather() -> Dictionary:
     if request_pending:
         return {"ok": false, "error": "resource request pending"}
     request_pending = true
-    bus.send_command("gather", {"resource_id": server_node_id if not server_node_id.is_empty() else resource_id})
+    var params := {"resource_type": resource_id}
+    if not server_node_id.is_empty():
+        params = {"resource_id": server_node_id}
+    bus.send_command("gather", params)
     return {"ok": true, "pending": true}
 
 func _on_command_succeeded(result: Dictionary) -> void:
-    if str(result.get("command", "")) == "GATHER_RESOURCE" and not gathered:
+    if str(result.get("command", "")) == "GATHER_RESOURCE" and not gathered and (server_node_id.is_empty() or str(result.get("resourceId", "")) == server_node_id):
         gathered = true
         request_pending = false
         scale = Vector3.ZERO

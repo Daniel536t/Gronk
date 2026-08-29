@@ -1,11 +1,13 @@
 import { loadConfig } from "../src/server/config";
-import { AstrixWorldState } from "../src/astrix/state";
 
 const cfg = loadConfig().trueforge;
 const base = cfg.baseUrl.replace(/\/+$/, "");
 const headers: Record<string, string> = { "Content-Type": "application/json" };
 if (cfg.apiKey) headers.Authorization = `Bearer ${cfg.apiKey}`;
-const world = new AstrixWorldState().snapshot();
+const astrixBase = (process.env.ASTRIX_URL ?? "http://127.0.0.1:8787").replace(/\/+$/, "");
+const worldResponse = await fetch(`${astrixBase}/astrix/state`);
+const world = await worldResponse.json();
+if (!worldResponse.ok) throw new Error(`ASTrix state ${worldResponse.status}: ${JSON.stringify(world)}`);
 const started = Date.now();
 
 const sessionResponse = await fetch(`${base}/api/v1/sessions`, {
@@ -28,8 +30,11 @@ let finalBody: unknown = null;
 for (let attempt = 0; attempt < 30; attempt++) {
   const poll = await fetch(`${base}/api/v1/sessions/${sessionId}/turns/${turnId}`, { headers });
   finalBody = await poll.json();
+  if (!poll.ok) throw new Error(`turn poll ${poll.status}: ${JSON.stringify(finalBody)}`);
   const state = finalBody?.data?.state;
-  if (state?.status === "done" || state?.status === "error" || state?.status === "cancelled") break;
+  if (state?.status === "error" || state?.status === "cancelled") throw new Error(`turn ended ${state.status}: ${JSON.stringify(finalBody)}`);
+  if (state?.status === "done") break;
   await new Promise((resolve) => setTimeout(resolve, 1000));
 }
-console.log(JSON.stringify({ session: { status: sessionResponse.status, id: sessionId }, turn: { status: turnResponse.status, id: turnId }, elapsedMs: Date.now() - started, response: finalBody }));
+if (finalBody?.data?.state?.status !== "done") throw new Error(`turn timeout: ${JSON.stringify(finalBody)}`);
+console.log(JSON.stringify({ worldRequest: { method: "GET", url: `${astrixBase}/astrix/state` }, world, session: { status: sessionResponse.status, id: sessionId }, turn: { status: turnResponse.status, id: turnId, request: prompt }, elapsedMs: Date.now() - started, response: finalBody }));
