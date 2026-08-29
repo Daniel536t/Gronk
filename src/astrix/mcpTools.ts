@@ -1,12 +1,8 @@
 import { z } from "zod";
 import type { AstrixCommand, AstrixGameCommandBus } from "./commandBus";
-import type { AstrixWorldState, BiomeId } from "./state";
+import type { AstrixWorldState, BiomeId, ResourceType } from "./state";
 
-export const ASTRIX_TOOL_NAMES = [
-  "inspect_world", "inspect_island", "inspect_resources", "inspect_buildings",
-  "gather", "build", "plant", "clear_terrain", "build_bridge", "simulate_plan",
-] as const;
-
+export const ASTRIX_TOOL_NAMES = ["inspect_world", "inspect_island", "inspect_resources", "inspect_buildings", "gather", "build", "plant", "clear_terrain", "build_bridge", "simulate_plan"] as const;
 export type AstrixToolName = typeof ASTRIX_TOOL_NAMES[number];
 
 export interface AstrixToolDefinition {
@@ -28,12 +24,12 @@ export function createAstrixToolRegistry(state: AstrixWorldState, bus: AstrixGam
         case "inspect_island": return inspectIsland(state, String(args.island_id ?? ""));
         case "inspect_resources": return state.resourceNodes.map((node) => ({ ...node, position: { ...node.position } }));
         case "inspect_buildings": return state.buildings.map((building) => ({ ...building, position: { ...building.position } }));
-        case "gather": return bus.execute({ command: "GATHER_RESOURCE", resourceId: typeof args.resource_id === "string" ? args.resource_id : undefined, resourceType: typeof args.resource_type === "string" ? args.resource_type as never : undefined });
-        case "build": return bus.execute({ command: "PLACE_BUILDING", buildingType: args.building_type as never, position: positionOf(args.position), islandId: args.island_id as never });
+        case "gather": return bus.execute({ command: "GATHER_RESOURCE", resourceId: typeof args.resource_id === "string" ? args.resource_id : undefined, resourceType: typeof args.resource_type === "string" ? args.resource_type as ResourceType : undefined });
+        case "build": return bus.execute({ command: "PLACE_BUILDING", buildingType: args.building_type as AstrixCommand["buildingType"], position: positionOf(args.position), islandId: args.island_id as BiomeId });
         case "plant": return bus.execute({ command: "PLANT_CROP", farmPlotId: String(args.farm_plot_id ?? ""), cropType: String(args.crop_type ?? "") });
-        case "clear_terrain": return bus.execute({ command: "CLEAR_TERRAIN", position: positionOf(args.position), radius: Number(args.radius ?? 1) });
-        case "build_bridge": return bus.execute({ command: "BUILD_BRIDGE", position: positionOf(args.position), islandA: args.island_a as never, islandB: args.island_b as never });
-        case "simulate_plan": return bus.simulate({ command: "PLACE_BUILDING", buildingType: "house", position: { x: 0, y: 0, z: 0 }, islandId: "meadow", ...(args.plan && typeof args.plan === "object" ? {} : {}) });
+        case "clear_terrain": return bus.execute({ command: "CLEAR_TERRAIN", position: positionOf(args.position), radius: Number(args.radius ?? 1), approved: args.approved === true });
+        case "build_bridge": return bus.execute({ command: "BUILD_BRIDGE", position: positionOf(args.position), islandA: args.island_a as BiomeId, islandB: args.island_b as BiomeId, approved: args.approved === true });
+        case "simulate_plan": return { success: true, readOnly: true, projected: state.snapshot(), plan: args.plan ?? "" };
         default: return { success: false, error: `unknown ASTrix tool: ${name}` };
       }
     },
@@ -41,16 +37,9 @@ export function createAstrixToolRegistry(state: AstrixWorldState, bus: AstrixGam
 }
 
 function inspectIsland(state: AstrixWorldState, id: string): unknown {
-  if (!(["meadow", "frost", "dusk"] as string[]).includes(id)) return { success: false, error: "unknown island" };
+  if (!( ["meadow", "frost", "dusk"] as string[]).includes(id)) return { success: false, error: "unknown island" };
   const biome = id as BiomeId;
-  return {
-    id: biome,
-    biome,
-    health: state.biomeHealth[biome],
-    resources: state.resourceNodes.filter((node) => node.islandId === biome),
-    buildings: state.buildings.filter((building) => building.islandId === biome),
-    connectivity: biome === "meadow" ? ["frost", "dusk"] : ["meadow"],
-  };
+  return { id: biome, biome, health: state.biomeHealth[biome], resources: state.resourceNodes.filter((node) => node.islandId === biome), buildings: state.buildings.filter((building) => building.islandId === biome), connectivity: biome === "meadow" ? ["frost", "dusk"] : ["meadow"] };
 }
 
 function positionOf(value: unknown): { x: number; y: number; z: number } | undefined {

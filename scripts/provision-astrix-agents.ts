@@ -1,9 +1,10 @@
 import { loadConfig } from "../src/server/config";
-import { provisionTrueForgeAgents, registerMcpConnector, type AgentSpecInput } from "../src/server/trueforge";
+import { provisionTrueForgeAgents, TrueForgeBackend, type AgentSpecInput } from "../src/server/trueforge";
+import { AstrixWorldState } from "../src/astrix/state";
 
 const cfg = loadConfig().trueforge;
 const model = cfg.botsModel?.name ? cfg.botsModel : cfg.gronkModel;
-const astrixMcp = { name: "astrix", url: "http://localhost:8787/astrix/mcp" };
+const astrixMcp = { name: "gronks-hoard-mcp", url: "http://localhost:8787/mcp" };
 
 const agents: AgentSpecInput[] = [
   {
@@ -11,7 +12,7 @@ const agents: AgentSpecInput[] = [
     model,
     instructions: "You are the ASTrix World Steward. You manage three islands: Meadow, Frost, Dusk. Population: 4. Food is critical — only 12 units remain (3 days). Your goal: keep the village alive. You have MCP tools to inspect and modify the world. Before any irreversible action (clear_terrain, build_bridge, demolish), you MUST request human approval by setting approval_required: true. Delegate to subagents for specialized analysis. Return your decisions as structured JSON.",
     mcpServers: [astrixMcp],
-    skills: ["planning", "resource_management"],
+    skills: [],
   },
   {
     name: "astrix-agriculture",
@@ -33,13 +34,22 @@ const agents: AgentSpecInput[] = [
   },
 ];
 
-const connector = await registerMcpConnector({ ...cfg, mcpServerUrl: astrixMcp.url }, astrixMcp.name, astrixMcp.url);
-console.log(JSON.stringify({ step: "register_mcp", ...connector }));
-if (connector.status.startsWith("error") && !connector.status.includes("409")) {
-  console.error("ASTrix agents were not provisioned: configure the ASTrix MCP connector first.");
+const results = await provisionTrueForgeAgents(cfg, agents);
+for (const result of results) console.log(JSON.stringify(result));
+if (results.some((result) => result.status.startsWith("error"))) {
   process.exitCode = 1;
-} else {
-  const results = await provisionTrueForgeAgents(cfg, agents);
-  for (const result of results) console.log(JSON.stringify(result));
-  if (results.some((result) => result.status.startsWith("error"))) process.exitCode = 1;
+} else if (process.env.ASTRIX_STEWARD_SMOKE === "1") {
+  const backend = new TrueForgeBackend("astrix-steward", "astrix-steward", cfg);
+  const started = Date.now();
+  try {
+    const decision = await backend.decide({
+      tick: 0, elapsed: 0, enraged: false, suddenDeath: false, riddleSet: 0,
+      visibleRiddleLines: [], players: [], furniture: [], gronk: { x: 0, y: 0, enraged: false },
+      pedestals: [], groundTreasure: null, latestNoise: null,
+    });
+    console.log(JSON.stringify({ step: "steward_turn", latencyMs: Date.now() - started, decision }));
+  } catch (error) {
+    console.error(JSON.stringify({ step: "steward_turn", latencyMs: Date.now() - started, error: String(error) }));
+    process.exitCode = 1;
+  }
 }

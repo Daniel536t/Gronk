@@ -33,10 +33,10 @@ const manager = new LobbyManager({
 
 // stdio gets its own McpServer; each HTTP session gets one too (the SDK
 // connects one server to one transport). All share the single LobbyManager.
-const stdioMcp = createMcpServer(manager);
-const mcpHttp = createMcpHttpBridge(() => createMcpServer(manager));
-
 const astrix = createAstrixService();
+const stdioMcp = createMcpServer(manager, astrix);
+const mcpHttp = createMcpHttpBridge(() => createMcpServer(manager, astrix));
+
 const httpServer = createHttpServer(manager, port, {
   mcp: mcpHttp,
   astrix,

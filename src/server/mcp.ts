@@ -10,6 +10,10 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { LobbyManager, type LobbyMode } from "./lobby";
 import { type AgentIntentType } from "./intents";
+import { createAstrixToolRegistry } from "../astrix/mcpTools";
+import { AstrixGameCommandBus } from "../astrix/commandBus";
+import type { AstrixWorldState } from "../astrix/state";
+import { AstrixWorldState as AstrixWorldStateClass } from "../astrix/state";
 
 const INTENTS = [
   "SEARCH_FURNITURE",
@@ -44,8 +48,10 @@ function ctxOf(extra: ToolExtra, sessions: Map<string, SessionCtx>): SessionCtx 
   return ctx;
 }
 
-export function createMcpServer(manager: LobbyManager): McpServer {
+export function createMcpServer(manager: LobbyManager, astrix?: { state: AstrixWorldState; bus: AstrixGameCommandBus }): McpServer {
   const sessions = new Map<string, SessionCtx>();
+  const localAstrix = astrix ?? (() => { const state = new AstrixWorldStateClass(); return { state, bus: new AstrixGameCommandBus(state) }; })();
+  const astrixTools = createAstrixToolRegistry(localAstrix.state, localAstrix.bus);
   const server = new McpServer({
     name: "gronks-hoard",
     version: "0.2.0",
@@ -253,6 +259,19 @@ export function createMcpServer(manager: LobbyManager): McpServer {
       return text(res.ok ? res.value : res);
     },
   );
+
+  if (astrixTools) {
+    server.registerTool("inspect_world", { description: "Inspect the complete ASTrix world state.", inputSchema: z.object({}) }, async () => text(await astrixTools.callTool("inspect_world", {})));
+    server.registerTool("inspect_island", { description: "Inspect one ASTrix island.", inputSchema: z.object({ island_id: z.enum(["meadow", "frost", "dusk"]) }) }, async (args) => text(await astrixTools.callTool("inspect_island", args)));
+    server.registerTool("inspect_resources", { description: "Inspect ASTrix resource nodes.", inputSchema: z.object({}) }, async () => text(await astrixTools.callTool("inspect_resources", {})));
+    server.registerTool("inspect_buildings", { description: "Inspect ASTrix buildings.", inputSchema: z.object({}) }, async () => text(await astrixTools.callTool("inspect_buildings", {})));
+    server.registerTool("gather", { description: "Gather an ASTrix resource through the command bus.", inputSchema: z.object({ resource_id: z.string().optional(), resource_type: z.enum(["wood", "stone", "food", "water", "crystal"]).optional() }) }, async (args) => text(await astrixTools.callTool("gather", args)));
+    server.registerTool("build", { description: "Build an ASTrix structure through the command bus.", inputSchema: z.object({ building_type: z.enum(["house", "farm", "storage", "bridge_segment"]), position: z.object({ x: z.number(), y: z.number(), z: z.number() }), island_id: z.enum(["meadow", "frost", "dusk"]) }) }, async (args) => text(await astrixTools.callTool("build", args)));
+    server.registerTool("plant", { description: "Plant an ASTrix crop.", inputSchema: z.object({ farm_plot_id: z.string(), crop_type: z.string() }) }, async (args) => text(await astrixTools.callTool("plant", args)));
+    server.registerTool("clear_terrain", { description: "Clear ASTrix terrain; requires human approval.", inputSchema: z.object({ position: z.object({ x: z.number(), y: z.number(), z: z.number() }), radius: z.number().int().positive() }) }, async (args) => text(await astrixTools.callTool("clear_terrain", args)));
+    server.registerTool("build_bridge", { description: "Build an ASTrix bridge; requires human approval.", inputSchema: z.object({ position: z.object({ x: z.number(), y: z.number(), z: z.number() }), island_a: z.enum(["meadow", "frost", "dusk"]), island_b: z.enum(["meadow", "frost", "dusk"]) }) }, async (args) => text(await astrixTools.callTool("build_bridge", args)));
+    server.registerTool("simulate_plan", { description: "Simulate an ASTrix plan without mutation.", inputSchema: z.object({ plan: z.string() }) }, async (args) => text(await astrixTools.callTool("simulate_plan", args)));
+  }
 
   return server;
 }
