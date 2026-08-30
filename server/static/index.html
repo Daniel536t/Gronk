@@ -198,28 +198,37 @@ body {
 	['dragleave','drop'].forEach(function (t) { drop.addEventListener(t, function (e) { e.preventDefault(); drop.classList.remove('drag'); }); });
 	function upload(f) {
 		return new Promise(function (resolve) {
-			if (!f) { resolve(); return; }
-			if (f.size > 15 * 1024 * 1024) { setStatus('That file is over 15 MB.', false); resolve(); return; }
+			if (!f) { resolve({ ok: false, name: null }); return; }
+			if (f.size > 15 * 1024 * 1024) { setStatus('That file is over 15 MB.', false); resolve({ ok: false, name: f.name }); return; }
 			var form = new FormData();
 			form.append('clip', f);
 			setStatus('Uploading ' + f.name + '…', true);
 			fetch('/api/upload-watch', { method: 'POST', body: form }).then(function (r) { return r.json(); }).then(function (j) {
-				if (!j.ok) { setStatus('Upload failed: ' + (j.error || ''), false); resolve(); return; }
+				if (!j.ok) { setStatus('Upload failed: ' + (j.error || ''), false); resolve({ ok: false, name: f.name }); return; }
 				setStatus('Uploaded ✓ ' + f.name + ' (' + Math.round(j.bytes/1024) + ' KB)', true);
-				resolve();
-			}).catch(function () { setStatus('Upload error', false); resolve(); });
+				resolve({ ok: true, name: f.name });
+			}).catch(function () { setStatus('Upload error', false); resolve({ ok: false, name: f.name }); });
 		});
 	}
 	function uploadMany(list) {
 		var fs = Array.prototype.slice.call(list || []).filter(Boolean);
 		if (!fs.length) return;
 		var done = [];
+		var failed = [];
 		var i = 0;
 		setStatus('Uploading ' + fs.length + ' file(s)…', true);
 		(function next() {
-			if (i >= fs.length) { setStatus('Uploaded ✓ ' + done.length + ' — filenames: ' + done.join(', '), true); setTimeout(hideDone, 3000); return; }
+			if (i >= fs.length) {
+				if (failed.length) { setStatus('Uploaded ' + done.length + ' ✓ — failed: ' + failed.join(', '), false); return; }
+				setStatus('Uploaded ✓ ' + done.length + ' — filenames: ' + done.join(', '), true);
+				setTimeout(hideDone, 3000);
+				return;
+			}
 			var f = fs[i++];
-			upload(f).then(function () { done.push(f.name); next(); });
+			upload(f).then(function (r) {
+				if (r && r.ok) { done.push(r.name); } else if (r) { failed.push(r.name); }
+				next();
+			});
 		}());
 	}
 	drop.addEventListener('drop', function (e) { uploadMany(e.dataTransfer.files); });
