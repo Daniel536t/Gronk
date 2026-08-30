@@ -1,5 +1,25 @@
 # ASTrix Tasks
 
+## P1 — live steward action + approval flow (partially complete — see blockers)
+
+- [x] **Steward tool grounding fixed.** Root cause of the P0 live failure: the provisioned steward instructions were planner-oriented ("return JSON", "set approval_required: true"), never enumerated the ASTrix tools, ran on the fast nano model, and had native MCP access (second mutation path + meta-tool confusion). Fixed: steward now runs on `nvidia/gpt-oss-20b`, has NO native MCP tools (single execution path through the loop), and instructions + turn prompt share `ASTRIX_TOOL_GUIDE` (exact snake_case arg schemas, meta-tool rejection, "ACT, do not merely observe").
+- [x] **Real live mutations now execute.** Live demos (real TrueForge steward → real loop → real bus): demo3 built farms + planted; demo4 executed 29 actions across 12 turns; demo6 executed 31 actions across 15 turns (build/plant/gather), every mutation `ACTION_SUCCEEDED` + `VERIFICATION_SUCCEEDED` against authoritative state, with the agent reusing returned farm ids (memory) and adapting. Protocol tools (`list_tools`/`get_tool_info`) are safely rejected; a >60s LLM turn produced an honest `TURN_FAILED` → `FAILED`.
+- [x] **Arg contract hardened.** `ASTRIX_TOOL_GUIDE` documents exact args; tool registry accepts camelCase aliases (`buildingType`→`building_type`, etc.) so a model naming slip never rejects a call.
+- [x] **clear_terrain is now economically real** (design spec: `wood_gained` was stubbed to 0): yields 1 wood per cleared tree and lowers the cleared island's biome health. Live-verified via the real gate.
+- [x] **Connectivity enforced** (design spec chain #3): gathering Frost/Dusk resources without a bridge fails with `no bridge to <island>`. Live-verified.
+- [x] **Approval gate live-verified on the deployed server**: `clear_terrain` via `/astrix/mcp/tools/call` → `human approval required` (approval-024) → `POST /astrix/approval/respond approve` → tree cleared, +1 wood, meadow health 0.8→0.7, node removed.
+- [x] **Demo driver** `scripts/astrix-demo.ts` (`npm run astrix:demo`): records BEFORE, starts the loop with the canonical objective, auto-approves at the real gate, dumps the full event log + AFTER. Reproducible via `ASTRIX_MAX_TURNS_PER_RUN` / `ASTRIX_DECIDE_TIMEOUT_MS` (env → server) and `ASTRIX_DEMO_DEADLINE_MS` (env → script).
+- [x] Tests: `tests/astrix-steward-prompt.test.ts` (8: prompt grounding contract + decision parsing incl. fenced JSON + array content blocks); alias + connectivity coverage in existing suites. Full suite 105/105, both typechecks, `git diff --check` clean.
+
+### P1 blockers / honest gap (why the live LLM-driven approval was NOT demonstrated)
+- Across 6 live runs the real steward **consistently chooses a safe expansion strategy** (build farms, plant, gather) and **never self-selects a high-risk action** (`clear_terrain`/`build_bridge`). Root causes, all diagnosed from live evidence:
+  1. No land/plot constraint — farm spam never fails, so clearing is never *necessary*.
+  2. The agent never attempts Frost/Dusk gathering, so the connectivity trigger never fires.
+  3. Wood/stone scarcity is gatherable around (starting stock 30/15 covers its expansion).
+  4. **Crops never produce food** (no harvest mechanic) — the agent correctly detects at food=0 that "no immediate action is possible" and idles; the canonical winter/food-crisis pressure (architecture §18) requires the P2 season/harvest systems.
+- Per mission rules the LLM was NOT prompt-forced toward a high-risk action, so the live OBSERVE→PLAN→**APPROVAL**→EXECUTE→VERIFY→CONTINUE chain is proven by: (a) the live gate + approval + world-change curl demonstration above, and (b) loop tests B/C/D/F against the real bus — but **not** by a live steward-driven approval.
+- Smallest unblock (report, not implemented): a farm-land constraint (farms require cleared land) or P2 systems (harvest + winter pressure).
+
 ## P0 — controlled agent execution loop (implemented, committed locally)
 
 - [x] `src/astrix/orchestrator.ts` — bounded, observable steward loop: observe → decide → propose → [approval gate] → execute → verify → repeat. Hard caps: `maxTurnsPerRun` (5), `maxActionsPerTurn` (10), `decideTimeoutMs` (60s). Idle turns end the run; `stop()` cancels; `start(objective)` begins a run.

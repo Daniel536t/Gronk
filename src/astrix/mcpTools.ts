@@ -13,10 +13,32 @@ export function listAstrixTools(): AstrixToolDefinition[] {
 
 export type AstrixToolRegistry = ReturnType<typeof createAstrixToolRegistry>;
 
+// snake_case is the MCP contract; accept the common camelCase aliases a model
+// may emit so a tool call is never rejected purely for key naming.
+export const ARG_ALIASES: Record<string, string> = {
+  buildingType: "building_type",
+  islandId: "island_id",
+  resourceId: "resource_id",
+  resourceType: "resource_type",
+  farmPlotId: "farm_plot_id",
+  cropType: "crop_type",
+  islandA: "island_a",
+  islandB: "island_b",
+};
+
+function normalizeArgs(args: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...args };
+  for (const [from, to] of Object.entries(ARG_ALIASES)) {
+    if (from in args && !(to in args)) out[to] = args[from];
+  }
+  return out;
+}
+
 export function createAstrixToolRegistry(state: AstrixWorldState, bus: AstrixGameCommandBus) {
   return {
     listTools: listAstrixTools,
-    async callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
+    async callTool(name: string, rawArgs: Record<string, unknown>): Promise<unknown> {
+      const args = normalizeArgs(rawArgs);
       switch (name) {
         case "inspect_world": return state.snapshot();
         case "inspect_island": return inspectIsland(state, String(args.island_id ?? ""));

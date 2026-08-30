@@ -1,16 +1,32 @@
 import { loadConfig } from "../src/server/config";
-import { provisionTrueForgeAgents, runAstrixStewardTurn, type AgentSpecInput } from "../src/server/trueforge";
+import { ASTRIX_TOOL_GUIDE, provisionTrueForgeAgents, runAstrixStewardTurn, type AgentSpecInput } from "../src/server/trueforge";
 
 const cfg = loadConfig().trueforge;
 const model = cfg.botsModel?.name ? cfg.botsModel : cfg.gronkModel;
 const astrixMcp = { name: "gronks-hoard-mcp", url: "http://localhost:8787/mcp" };
 
+// The steward is the ACTING governor: it returns real ASTrix toolCalls that the
+// execution loop executes through the command bus. It gets NO native MCP tools
+// (no second mutation path, no protocol meta-tools), and runs on the reasoning
+// tier model (gpt-oss-20b) — it is not cadence-bound like the legacy bot wizards.
+const stewardModel = { name: "nvidia/gpt-oss-20b", provider: "nvidia" };
+const stewardInstructions = [
+  "You are the ASTrix World Steward. You OPERATE the ASTrix simulation directly — you are the acting governor of a living village on three islands: Meadow, Frost, Dusk. You are NOT a reporter.",
+  "HOW YOU WORK: You receive the authoritative world state each turn and return ONE JSON decision object with EXACTLY these fields: { \"decision\": \"<one line>\", \"recommendation\": \"<what you recommend>\", \"reasoning\": \"<why>\", \"toolCalls\": [{ \"tool\": \"<ASTrix tool>\", \"args\": { ... } }] }.",
+  "Every entry in toolCalls is EXECUTED FOR REAL by the ASTrix execution layer through the authoritative command bus. Your tool calls change the world. Do NOT call tools directly during the turn and do NOT return hypothetical JSON — return real ASTrix tool calls.",
+  "ASTRIX TOOLS (the ONLY tools that exist in ASTrix): inspect_world, inspect_island, inspect_resources, inspect_buildings, gather, build, plant, clear_terrain, build_bridge, simulate_plan.",
+  "Protocol/meta tools such as list_tools, get_tool_info, tools/list, resources/list, mcp__* do NOT exist in ASTrix and are always REJECTED. Never use them.",
+  ASTRIX_TOOL_GUIDE,
+  "SAFETY: clear_terrain and build_bridge are irreversible and AUTOMATICALLY pause for HUMAN approval — never include approval ids, the gate is automatic. The command bus enforces all costs and rules; insufficient resources or invalid positions are rejected — that is fine, re-plan.",
+  "CURRENT SITUATION: 4 villagers, 12 food (3 days of food). Food is consumed daily — the village starves without action. YOU MUST ACT, not merely observe: inspect once or twice, then choose real mutations (gather wood/stone, build a farm: 2 wood + 1 stone, plant crops; if the land is unsuitable, clear terrain for farmland — that requires human approval).",
+  "After your actions execute, the next turn shows the changed world — inspect it and verify against authoritative state.",
+].join(" ");
+
 const agents: AgentSpecInput[] = [
   {
     name: "astrix-steward",
-    model,
-    instructions: "You are the ASTrix World Steward. You manage three islands: Meadow, Frost, Dusk. Population: 4. Food is critical — only 12 units remain (3 days). Your goal: keep the village alive. You have MCP tools to inspect and modify the world. Before any irreversible action (clear_terrain, build_bridge, demolish), you MUST request human approval by setting approval_required: true. Delegate to subagents for specialized analysis. Return your decisions as structured JSON.",
-    mcpServers: [astrixMcp],
+    model: stewardModel,
+    instructions: stewardInstructions,
     skills: [],
   },
   {

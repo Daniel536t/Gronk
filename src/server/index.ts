@@ -41,7 +41,14 @@ const manager = new LobbyManager({
 // the loop only runs when POST /astrix/agent/start is called (no autopilot).
 const astrix = createAstrixService({
   authToken: process.env.ASTRIX_API_KEY?.trim() || undefined,
-  stewardProvider: new TrueForgeStewardProvider(loadConfig().trueforge),
+  stewardProvider: new TrueForgeStewardProvider(loadConfig().trueforge, {
+    deadlineMs: numEnv("ASTRIX_DECIDE_TIMEOUT_MS"),
+  }),
+  // Demo/reproducibility knobs: bounds are still enforced, the env only widens
+  // or tightens them for a given run.
+  maxTurnsPerRun: numEnv("ASTRIX_MAX_TURNS_PER_RUN"),
+  maxActionsPerTurn: numEnv("ASTRIX_MAX_ACTIONS_PER_TURN"),
+  decideTimeoutMs: numEnv("ASTRIX_DECIDE_TIMEOUT_MS"),
 });
 const stdioMcp = createMcpServer(manager, astrix);
 const mcpHttp = createMcpHttpBridge(() => createMcpServer(manager, astrix));
@@ -58,6 +65,13 @@ const httpServer = createHttpServer(manager, port, {
 setInterval(() => astrix.tick(1), 1000);
 // HOST env lets ops rebind the app to 127.0.0.1 behind the Caddy reverse
 // proxy so 8787 is not exposed on the public interface (default: all).
+function numEnv(name: string): number | undefined {
+  const raw = process.env[name]?.trim();
+  if (!raw) return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
 const host = process.env.HOST ?? "0.0.0.0";
 httpServer.listen(port, host, () => {
   console.error(`[gronks-hoard] HTTP listening on ${host}:${port} (BOTS=${botMode})`);

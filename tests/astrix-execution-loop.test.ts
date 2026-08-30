@@ -90,6 +90,21 @@ function eventTypes(events: AstrixEventLog): string[] {
   return events.all().map((e) => e.type);
 }
 
+describe("ASTrix tool registry arg aliases", () => {
+  it("accepts camelCase arg names as aliases for the snake_case contract", async () => {
+    const { state, bus, tools } = setup();
+    const result = await tools.callTool("build", {
+      buildingType: "farm",
+      position: { x: 5, y: 0, z: 5 },
+      islandId: "meadow",
+    });
+    expect((result as any).success).toBe(true);
+    expect(state.buildings.some((b) => b.type === "farm")).toBe(true);
+    expect(state.resources.wood).toBe(28); // farm cost wood 2
+    void bus;
+  });
+});
+
 describe("ASTrix steward execution loop", () => {
   it("A: executes a safe action, verifies it, and continues the turn", async () => {
     const { state, events, loop } = setup({

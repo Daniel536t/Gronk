@@ -165,6 +165,11 @@ export class AstrixGameCommandBus {
   private gather(command: AstrixCommand, irreversible: boolean): AstrixCommandResult {
     const node = this.state.resourceNodes.find((candidate: AstrixResourceNode) => candidate.id === command.resourceId || candidate.type === command.resourceType && candidate.quantity > 0);
     if (!node) return { success: false, command: command.command, irreversible, error: "resource node not found" };
+    // Connectivity (design spec chain #3): the settlement lives on Meadow; other
+    // islands' resources are unreachable until a bridge connects them.
+    if (node.islandId !== "meadow" && !this.state.bridges.some((bridge) => (bridge.islandA === "meadow" && bridge.islandB === node.islandId) || (bridge.islandA === node.islandId && bridge.islandB === "meadow"))) {
+      return { success: false, command: command.command, irreversible, error: `no bridge to ${node.islandId}: build a bridge to reach it` };
+    }
     const gathered = Math.min(1, node.quantity);
     node.quantity -= gathered;
     this.state.resources[node.type] += gathered;
@@ -181,8 +186,18 @@ export class AstrixGameCommandBus {
     const radius = command.radius ?? 1;
     const before = this.state.resourceNodes.length;
     const remaining = this.state.resourceNodes.filter((node) => !command.position || distance(node.position, command.position) > radius);
+    const removed = this.state.resourceNodes.filter((node) => command.position && distance(node.position, command.position) <= radius);
     this.state.resourceNodes.splice(0, this.state.resourceNodes.length, ...remaining);
-    return { success: true, command: command.command, irreversible, treesCleared: before - remaining.length, woodGained: 0, permanent: true };
+    // Clearing forest yields wood (design spec: clear_terrain -> wood_gained).
+    // Irreversible: nodes are gone; biome health drops on the cleared island.
+    const woodGained = before - remaining.length;
+    if (woodGained > 0) this.state.resources.wood += woodGained;
+    const clearedIsland = removed[0]?.islandId ?? command.islandId;
+    if (clearedIsland && woodGained > 0) {
+      const health = this.state.biomeHealth[clearedIsland];
+      this.state.biomeHealth[clearedIsland] = Math.max(0, health - 0.05 * radius);
+    }
+    return { success: true, command: command.command, irreversible, treesCleared: woodGained, woodGained, permanent: true };
   }
 
   private buildBridge(command: AstrixCommand, irreversible: boolean): AstrixCommandResult {
