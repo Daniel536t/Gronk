@@ -8,10 +8,13 @@ const WORLD_SIZE := Vector2(100.0, 60.0)
 
 # Biome definitions. `top` is the grass-slab center height; the walkable surface
 # is always `top + 0.3` (half-thickness 0.5 of the 1.0 GrassTop slab).
+# Reference-driven palette: the world is a pale parchment-lavender miniature
+# (video pale intro ~#c0c0a0) with warm orange/tan built accents and a violet
+# signature (water + dusk). Biomes stay distinct but share the same world ramp.
 const ISLANDS := {
-    "meadow": {"center": Vector3(22.0, 0.0, 30.0), "radius": Vector2(19.0, 17.0), "top": 3.0, "color": Color("9fce8f"), "accent": Color("ed9dcc")},
-    "frost": {"center": Vector3(50.0, 0.0, 14.0), "radius": Vector2(18.0, 12.0), "top": 4.0, "color": Color("bad4e2"), "accent": Color("9bd9ef")},
-    "dusk": {"center": Vector3(76.0, 0.0, 39.0), "radius": Vector2(19.0, 16.0), "top": 2.5, "color": Color("d0a086"), "accent": Color("a979df")},
+    "meadow": {"center": Vector3(22.0, 0.0, 30.0), "radius": Vector2(19.0, 17.0), "top": 3.0, "color": Color("c8bfa6"), "accent": Color("d8a8c8")},
+    "frost": {"center": Vector3(50.0, 0.0, 14.0), "radius": Vector2(18.0, 12.0), "top": 4.0, "color": Color("c2c8d4"), "accent": Color("b8c4e8")},
+    "dusk": {"center": Vector3(76.0, 0.0, 39.0), "radius": Vector2(19.0, 16.0), "top": 2.5, "color": Color("c9ad92"), "accent": Color("a979df")},
 }
 
 # Walkable ground surfaces (grass-top top face per biome).
@@ -53,6 +56,7 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
     _time += delta
+    _update_cycle(delta)
     if is_instance_valid(camera) and is_instance_valid(player):
         # Constant iso offset: camera glides with the player, yaw never rolls.
         var target := player.global_position + CAMERA_OFFSET
@@ -69,33 +73,80 @@ func _process(delta: float) -> void:
         plant.rotation.z = sin(_time * 0.55 + float(i) * 1.3) * 0.025
 
 # ---------------------------------------------------------------------------
-# Lighting & environment — soft warm sun, gentle ambient, pastel sky, no blowout
+# Lighting & environment — soft gradient sky + day/dusk cycle.
+# Day: warm pale sky, bright low-saturation light (reference pale intro).
+# Dusk: violet/magenta sky, warmer dim light (reference night still).
+# The cycle is presentation-only; it never touches authoritative state.
 # ---------------------------------------------------------------------------
+var _sky_mat: ProceduralSkyMaterial
+var _sun: DirectionalLight3D
+var _env_settings: Environment
+var _day_phase := 0.0
+const DAY_CYCLE_SECONDS := 90.0
+
 func _build_environment() -> void:
     var environment := WorldEnvironment.new()
     var settings := Environment.new()
-    settings.background_mode = Environment.BG_COLOR
-    settings.background_color = Color("8fc4d4")          # soft pastel sky
-    settings.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-    settings.ambient_light_color = Color("d6e6dc")
-    settings.ambient_light_energy = 0.5
+    _env_settings = settings
+    settings.background_mode = Environment.BG_SKY
+    var sky := Sky.new()
+    var sky_mat := ProceduralSkyMaterial.new()
+    _sky_mat = sky_mat
+    # Day defaults (set each frame by the cycle anyway). Colors are deliberately
+    # dim so the tonemap doesn't blow the whole frame to white.
+    # Reference target: soft pale sky, NOT a blinding white. Keep the sky's
+    # energy low so the tonemap never clips the terrain (the previous build blew
+    # the whole frame to near-white; the sun disc was 40 degrees wide).
+    sky_mat.sky_top_color = Color("8a9cc0")          # pale soft blue-violet
+    sky_mat.sky_horizon_color = Color("c8b898")      # warm pale horizon
+    sky_mat.ground_bottom_color = Color("5c6894")
+    sky_mat.ground_horizon_color = Color("a89880")
+    sky_mat.sun_angle_max = 4.0                        # small readable sun
+    sky_mat.sun_curve = 0.9
+    sky.sky_material = sky_mat
+    sky.process_mode = Sky.PROCESS_MODE_REALTIME
+    settings.sky = sky
+    settings.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+    settings.ambient_light_energy = 0.35
     settings.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-    settings.tonemap_exposure = 0.78
+    settings.tonemap_exposure = 0.5
     settings.glow_enabled = false
     environment.environment = settings
     add_child(environment)
 
     var sun := DirectionalLight3D.new()
     sun.name = "WarmSun"
-    sun.rotation_degrees = Vector3(-52.0, 40.0, 0.0)
-    sun.light_color = Color("ffe9c9")                    # warm cream sun
-    sun.light_energy = 0.5
+    _sun = sun
+    sun.rotation_degrees = Vector3(-50.0, 42.0, 0.0)
+    sun.light_color = Color("ffe9c9")                 # warm cream sun
+    sun.light_energy = 0.6
     sun.shadow_enabled = true
     sun.directional_shadow_max_distance = 120.0
-    sun.shadow_blur = 1.5
+    sun.shadow_blur = 2.0
     add_child(sun)
 
-# Readable stylized tea/cyan water with a semi-matte sheen and gentle motion.
+# Advances the day/dusk cycle and eases all lighting/sky colors between the two
+# reference moods. Pure presentation; no gameplay state.
+func _update_cycle(delta: float) -> void:
+    _day_phase = fmod(_day_phase + delta / DAY_CYCLE_SECONDS, 1.0)
+    # dusk = 0 at phase 0 (full day), 1 at phase 0.5 (full dusk), 0 again at 1.
+    var dusk := sin(_day_phase * PI)
+    if not _env_settings or not is_instance_valid(_sky_mat):
+        return
+    # Sky: warm pale (day) -> pale violet (dusk).
+    _sky_mat.sky_top_color = Color("8a9cc0").lerp(Color("4a3a76"), dusk)
+    _sky_mat.sky_horizon_color = Color("c8b898").lerp(Color("7a5aa0"), dusk)
+    _sky_mat.ground_horizon_color = Color("a89880").lerp(Color("5a4a84"), dusk)
+    _sky_mat.ground_bottom_color = Color("5c6894").lerp(Color("2e2e56"), dusk)
+    # Ambient: pale cool (day) -> violet (dusk).
+    _env_settings.ambient_light_energy = lerpf(0.35, 0.24, dusk)
+    # Sun: warm bright (day) -> warm violet, dimmer (dusk).
+    if _sun:
+        _sun.light_color = Color("ffe9c9").lerp(Color("c9a0d8"), dusk)
+        _sun.light_energy = lerpf(0.55, 0.28, dusk)
+
+# Saturated violet-lavender translucent water matching the reference's signature
+# purple world (#7060b0 family). Semi-matte sheen, gentle motion, restrained glow.
 var _water_surface := -0.2
 func _build_water() -> void:
     var water := MeshInstance3D.new()
@@ -112,9 +163,13 @@ func _build_water() -> void:
 func _water_material() -> StandardMaterial3D:
     var material := StandardMaterial3D.new()
     material.metallic = 0.0
-    material.roughness = 0.25
-    material.albedo_color = Color("53c0cd")
-    material.albedo_color.a = 0.98
+    material.roughness = 0.3
+    material.albedo_color = Color("6b5bb8")   # violet-lavender, from the reference
+    material.albedo_color.a = 0.85
+    # Subtle sheen so the water reads as a lit translucent surface, not flat color.
+    material.emission_enabled = true
+    material.emission = Color("7a6cc9")
+    material.emission_energy_multiplier = 0.12
     return material
 
 # ---------------------------------------------------------------------------
@@ -179,7 +234,7 @@ func _add_biome_features(biome_id: String, data: Dictionary) -> void:
         for i in range(6):
             _add_tree(c + Vector3(-13.0 + float(i % 3) * 11.0, 0.0, -8.0 + float(i / 3) * 13.0), s, i, data["accent"])
         for i in range(10):
-            _add_grass(c + Vector3(-15.0 + float(i % 5) * 7.0, s, -11.0 + float(i / 5) * 14.0), i, Color("89cd97"))
+            _add_grass(c + Vector3(-15.0 + float(i % 5) * 7.0, s, -11.0 + float(i / 5) * 14.0), i, Color("a8b98a"))
     elif biome_id == "frost":
         for i in range(5):
             _add_ice(c + Vector3(-10.0 + float(i % 3) * 10.0, s, -5.0 + float(i / 3) * 8.0), i)
@@ -193,12 +248,12 @@ func _add_biome_features(biome_id: String, data: Dictionary) -> void:
 
 func _build_paths() -> void:
     # Meadow clearing + a dirt path that runs from the spawn toward the southern
-    # water and bridge. All flush with the meadow surface.
-    add_child(_mesh_box("MeadowClearing", Vector3(22.0, MEADOW_SURFACE - 0.08, 30.0), Vector3(14.0, 0.16, 11.0), Color("d6ac7e")))
-    add_child(_mesh_box("MeadowPath", Vector3(22.0, MEADOW_SURFACE - 0.05, 37.0), Vector3(3.6, 0.12, 12.0), Color("cd9a68")))
-    add_child(_mesh_box("MeadowPath_South", Vector3(22.0, MEADOW_SURFACE - 0.05, 42.0), Vector3(3.0, 0.12, 4.0), Color("c08d5d")))
-    add_child(_mesh_box("FrostPath", Vector3(50.0, FROST_SURFACE - 0.05, 14.0), Vector3(3.0, 0.12, 14.0), Color("c9dde0")))
-    add_child(_mesh_box("DuskPath", Vector3(76.0, DUSK_SURFACE - 0.05, 39.0), Vector3(18.0, 0.12, 2.8), Color("c38976")))
+    # water and bridge. Warm tan paths read as the "built" accent per the refs.
+    add_child(_mesh_box("MeadowClearing", Vector3(22.0, MEADOW_SURFACE - 0.08, 30.0), Vector3(14.0, 0.16, 11.0), Color("cfa97a")))
+    add_child(_mesh_box("MeadowPath", Vector3(22.0, MEADOW_SURFACE - 0.05, 37.0), Vector3(3.6, 0.12, 12.0), Color("c29568")))
+    add_child(_mesh_box("MeadowPath_South", Vector3(22.0, MEADOW_SURFACE - 0.05, 42.0), Vector3(3.0, 0.12, 4.0), Color("b98a5d")))
+    add_child(_mesh_box("FrostPath", Vector3(50.0, FROST_SURFACE - 0.05, 14.0), Vector3(3.0, 0.12, 14.0), Color("c4c9d6")))
+    add_child(_mesh_box("DuskPath", Vector3(76.0, DUSK_SURFACE - 0.05, 39.0), Vector3(18.0, 0.12, 2.8), Color("c08976")))
 
 # ---------------------------------------------------------------------------
 # Curated starting clearing — the "front door" of the game.
@@ -232,7 +287,7 @@ func _build_starting_area() -> void:
 func _build_shoreline(s: float) -> void:
     for i in range(5):
         var x: float = 17.0 + float(i) * 2.4
-        add_child(_mesh_box("ShoreSand_%d" % i, Vector3(x, s - 0.12, 38.2), Vector3(2.2, 0.2, 3.4), Color("e9c58f")))
+        add_child(_mesh_box("ShoreSand_%d" % i, Vector3(x, s - 0.12, 38.2), Vector3(2.2, 0.2, 3.4), Color("d9b98a")))
 
 # Walkable wooden deck flush with the meadow surface, bridging the shore to the
 # magic islet. Planks carry their own StaticBody so the player crosses it.
@@ -276,9 +331,9 @@ func _build_magic_islet(s: float) -> void:
     shape.shape = box
     isle_base.add_child(shape)
     add_child(isle_base)
-    add_child(_mesh_box("MagicIslet_Stone", Vector3(22.0, s - 3.4, 43.5), Vector3(8.0, 6.4, 8.0), Color("7a838c")))
-    add_child(_mesh_box("MagicIslet_Top", Vector3(22.0, s - 0.22, 43.5), Vector3(7.0, 0.5, 7.0), Color("c9b690")))
-    add_child(_mesh_box("MagicIslet_Grass", Vector3(22.0, s - 0.02, 43.5), Vector3(6.4, 0.1, 6.4), Color("8fcd8d")))
+    add_child(_mesh_box("MagicIslet_Stone", Vector3(22.0, s - 3.4, 43.5), Vector3(8.0, 6.4, 8.0), Color("6e748c")))
+    add_child(_mesh_box("MagicIslet_Top", Vector3(22.0, s - 0.22, 43.5), Vector3(7.0, 0.5, 7.0), Color("c4b18e")))
+    add_child(_mesh_box("MagicIslet_Grass", Vector3(22.0, s - 0.02, 43.5), Vector3(6.4, 0.1, 6.4), Color("a5b886")))
 
     # The magic landmark: a soft glowing obelisk.
     var obelisk := MeshInstance3D.new()
@@ -287,14 +342,14 @@ func _build_magic_islet(s: float) -> void:
     om.size = Vector3(0.9, 4.6, 0.9)
     obelisk.mesh = om
     obelisk.position = Vector3(22.0, s + 2.3, 43.5)
-    obelisk.material_override = _material(Color("7db8de"), 0.35)
+    obelisk.material_override = _material(Color("8a6cc9"), 0.35)
     add_child(obelisk)
     var tip := MeshInstance3D.new()
     var tm := PrismMesh.new()
     tm.size = Vector3(1.3, 1.0, 1.3)
     tip.mesh = tm
     tip.position = Vector3(22.0, s + 4.9, 43.5)
-    tip.material_override = _material(Color("9fe0e6"), 0.5)
+    tip.material_override = _material(Color("a88ae6"), 0.5)
     add_child(tip)
     var base := _mesh_box("LandmarkBase", Vector3(22.0, s + 0.35, 43.5), Vector3(2.2, 0.7, 2.2), Color("5e6f78"))
     base.material_override = _material(Color("5e6f78"))

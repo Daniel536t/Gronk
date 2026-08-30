@@ -163,6 +163,21 @@ Real Android tablet testing (post-HTTPs deploy) showed the build was a *viewer*,
 - Title top area / camera look-ahead leave some sky at the top in portrait (acceptable exploration framing).
 - Action button currently triggers `AstrixInput.request_interact()` (interact action); contextual hide prompt is a follow-up.
 
+## Milestone — reference-driven visual pass (video + still art direction)
+
+Applied from the user's reference clip (pastel voxel island: pale warm vista → saturated violet world → soft purple) and two stills (bright teal+orange daylight, dark violet/magenta night), extracted with an OpenCV-based analyzer (`.cv/` venv + `cv_analyze.py`).
+
+- [x] Water: opaque light teal → saturated violet-lavender translucent (`#6b5bb8`, alpha 0.85, soft sheen + gentle motion) matching the reference's signature purple water.
+- [x] Terrain palette: bright green/teal → pale parchment-lavender biomes (`#c8bfa6` meadow, `#c2c8d4` frost, `#c9ad92` dusk) with warm accents; shoreline sand, islet, bridge and magic landmark retinted warm-tan + violet accent.
+- [x] Sky/lighting: flat bright sky → soft procedural gradient (pale warm blue-violet top, warm horizon) with a 90s day↔dusk cycle (violet/magenta at dusk, dimmer ambient + warm-violet sun).
+- [x] Fix overexposure root cause: the old build blew the whole frame to near-white (82% near-white pixels). Fixed by shrinking the procedural sun disc (40° → 8°), dimming sky colors, lowering ambient 0.45→0.35 and tonemap exposure 0.62→0.5. Verified via render: near-white dropped to ~7–10%, day avg RGB (202,175,154) warm pale, dusk avg RGB (108,69,106) violet.
+- [x] Re-exported Godot Web build to `server/static/` and re-injected the reference-upload widget (multi-file, image+video) into the exported loader page; verified live: widget present on `https://astrixx.duckdns.org/`, `.wasm` served as `application/wasm`, `.pck` as `application/octet-stream`.
+- [x] Regression: typecheck passes, 80/80 tests pass.
+
+### Visual pass notes / limitations
+- Cycle verification done with a temporary 4s cycle (movie-maker capture advances game-time by rendered frames, ~2fps on llvmpipe, so a 90s cycle needs ~45 min of capture); restored to 90s after confirming the lerp.
+- Still needs-authored assets to fully match references: detailed structures, realistic foliage, red-roofed buildings, polished props (GLB/CC0 packs).
+
 ## Guardrails
 
 - The existing TypeScript browser client remains the reference client and must not be modified for ASTrix work.
