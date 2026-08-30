@@ -88,6 +88,9 @@ export interface StewardRunContext {
   history: readonly AstrixActionRecord[];
   /** Compact summary of the previous turn's outcomes. */
   lastOutcome?: string;
+  /** Set on a retry after a parse failure: tells the provider to re-emphasize
+   *  the strict JSON contract (the previous decision was discarded unexecuted). */
+  retryHint?: string;
 }
 
 export interface StewardDecisionProvider {
@@ -320,7 +323,8 @@ export class AstrixStewardLoop {
         // FAILURE, and PROVIDER FAILURE are distinguishable in the event log.
         const decidedAt = Date.now();
         this.emit("DECISION_STARTED", { turn, provider: this.providerId, timeoutMs: this.decideTimeoutMs });
-        let decision: StewardDecision;
+        let decision: StewardDecision | null = null;
+        let decisionError: Error | null = null;
         try {
           decision = await this.decideWithTimeout({
             turn,
@@ -341,33 +345,100 @@ export class AstrixStewardLoop {
           const message = (error as Error).message;
           const durationMs = Date.now() - decidedAt;
           const failureKind = message.includes("timed out") ? "timeout" : message.includes("no parseable decision") ? "parse" : "provider";
-          this.emit("DECISION_COMPLETED", {
-            turn,
-            provider: this.providerId,
-            durationMs,
-            ok: false,
-            failureKind,
-            error: message,
-          });
+          // Bounded retry: exactly ONE extra attempt for PARSING failures only
+          // (the discarded decision was never executed, so no mutation can be
+          // duplicated). Timeouts and provider failures are NOT retried — the
+          // mission requires no blind retry of potentially non-idempotent work.
+          if (failureKind === "parse") {
+            const retryAt = Date.now();
+            // Record the failed first attempt, then the retry, then its outcome
+            // — the full decision lifecycle stays reconstructable.
+            this.emit("DECISION_COMPLETED", {
+              turn,
+              provider: this.providerId,
+              durationMs,
+              ok: false,
+              failureKind,
+              error: message,
+            });
+            this.emit("DECISION_RETRY", {
+              turn,
+              provider: this.providerId,
+              attempt: 2,
+              firstFailureKind: failureKind,
+              firstError: message,
+              firstDurationMs: durationMs,
+            });
+            try {
+              decision = await this.decideWithTimeout({
+                turn,
+                objective: this._objective,
+                snapshot,
+                history: this._actions,
+                lastOutcome: this._lastOutcome,
+                retryHint: "Your previous response was discarded because it was not a single JSON object with the required fields. Return ONLY the JSON contract object described above, nothing else, no prose, no markdown fences.",
+              });
+              this.emit("DECISION_COMPLETED", {
+                turn,
+                provider: this.providerId,
+                durationMs: Date.now() - retryAt,
+                ok: true,
+                retriedAfter: "parse",
+                toolCallCount: Array.isArray(decision.toolCalls) ? decision.toolCalls.length : 0,
+                failureKind: null,
+              });
+            } catch (retryError) {
+              const retryMessage = (retryError as Error).message;
+              const retryKind = retryMessage.includes("timed out") ? "timeout" : retryMessage.includes("no parseable decision") ? "parse" : "provider";
+              this.emit("DECISION_COMPLETED", {
+                turn,
+                provider: this.providerId,
+                durationMs: Date.now() - retryAt,
+                ok: false,
+                retriedAfter: "parse",
+                failureKind: retryKind,
+                error: retryMessage,
+              });
+              decisionError = retryError as Error;
+            }
+          } else {
+            // Non-retryable failure (timeout / provider): record it and fail.
+            decisionError = error as Error;
+            this.emit("DECISION_COMPLETED", {
+              turn,
+              provider: this.providerId,
+              durationMs,
+              ok: false,
+              failureKind,
+              error: message,
+            });
+          }
+        }
+        if (decisionError) {
+          const message = decisionError.message;
+          const failureKind = message.includes("timed out") ? "timeout" : message.includes("no parseable decision") ? "parse" : "provider";
           this._runError = `steward decision failed: ${message}`;
           this.emit("TURN_FAILED", {
             turn,
             error: this._runError,
-            decisionDurationMs: durationMs,
+            decisionDurationMs: Date.now() - decidedAt,
             decisionFailureKind: failureKind,
           });
           this._state = "FAILED";
           return;
         }
 
+        // decisionError non-null always returns above, so `decision` is assigned
+        // here (either in the primary attempt or the bounded parse retry).
+        const decided: StewardDecision = decision!;
         this.emit("PLAN_CREATED", {
           turn,
-          decision: decision.decision,
-          recommendation: decision.recommendation,
-          toolCallCount: Array.isArray(decision.toolCalls) ? decision.toolCalls.length : 0,
+          decision: decided.decision,
+          recommendation: decided.recommendation,
+          toolCallCount: Array.isArray(decided.toolCalls) ? decided.toolCalls.length : 0,
         });
 
-        const calls = Array.isArray(decision.toolCalls) ? decision.toolCalls : [];
+        const calls = Array.isArray(decided.toolCalls) ? decided.toolCalls : [];
         let acted = 0;
         for (const call of calls) {
           if (this._stopped) break;

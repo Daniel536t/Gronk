@@ -127,21 +127,43 @@ function summarizeWorld(label: string, state: any): void {
   }, null, 2));
 }
 
+/** Start the loop with retry on the settle-race 409 (the loop may still be
+ *  draining from the previous terminal state when we poll again). */
+async function startLoop(objective: string): Promise<any> {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const res = await postJson("/astrix/agent/start", { objective });
+    if (res.status === 200 || !String(res.status).startsWith("4")) return res;
+    if (res.status === 409) {
+      await sleep(2000);
+      continue;
+    }
+    return res;
+  }
+  return { status: 409, error: "still settling after retries" };
+}
+
 async function main(): Promise<void> {
   mkdirSync(recordDir, { recursive: true });
   console.log(`[demo] ASTRIX_URL=${base}  objective="${objective}"  deadline=${deadlineMs}ms  approval_mode=${approvalMode}  record_dir=${recordDir}`);
-  // Clean slate: if a previous run is still going, stop it.
+  // Clean slate: if a previous run is still going, stop it, then WAIT for the
+  // loop to actually settle (stop is async — the loop only checks it at the
+  // next decision boundary) before starting, otherwise start races a 409.
   try {
     await postJson("/astrix/agent/stop", {});
   } catch {
     /* not running — fine */
+  }
+  for (let i = 0; i < 40; i++) {
+    const st = await getJson("/astrix/agent/status").catch(() => null);
+    if (!st || !["RUNNING", "AWAITING_APPROVAL"].includes(st.state)) break;
+    await sleep(1000);
   }
 
   const before = await getJson("/astrix/state");
   summarizeWorld("BEFORE", before);
   record(join(recordDir, "before.json"), before);
 
-  const start = await postJson("/astrix/agent/start", { objective });
+  const start = await startLoop(objective);
   console.log("[demo] agent/start:", JSON.stringify(start));
   if (start.status !== 200) {
     console.error("[demo] could not start the steward loop:", JSON.stringify(start));
@@ -204,7 +226,7 @@ async function main(): Promise<void> {
       if (loopState === "FAILED") {
         console.log(`[demo] loop FAILED: ${status.error ?? "unknown error"} — restarting the steward.`);
       }
-      const restart = await postJson("/astrix/agent/start", { objective });
+      const restart = await startLoop(objective);
       if (restart.status !== 200) {
         console.error("[demo] could not restart the steward loop:", JSON.stringify(restart));
         break;

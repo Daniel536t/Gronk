@@ -229,6 +229,9 @@ export interface AstrixStewardTurnOptions {
   memory?: string;
   /** TrueForge agent name to drive (defaults to the provisioned steward). */
   agentName?: string;
+  /** Emphasized instruction re-stating the strict JSON contract (set when the
+   *  previous attempt failed parsing and is being retried once). */
+  retryHint?: string;
 }
 
 export interface AstrixStewardTurnResult {
@@ -332,6 +335,7 @@ export function buildStewardPrompt(snapshot: unknown, options: AstrixStewardTurn
   ];
   if (options.objective) parts.push(`Current objective from the Overseer: "${options.objective}"`);
   if (options.memory) parts.push(`Outcomes of your recent actions (what you attempted, what happened, whether it was approved, whether the world changed):\n${options.memory}`);
+  if (options.retryHint) parts.push(`RETRY NOTICE (your previous turn was discarded unexecuted): ${options.retryHint}`);
   parts.push(
     "The ONLY tools that exist in ASTrix are: inspect_world, inspect_island, inspect_resources, inspect_buildings, gather, build, plant, harvest, clear_terrain, build_bridge, simulate_plan.",
     "Protocol/meta tools such as list_tools, get_tool_info, tools/list, resources/list, mcp__* do NOT exist in ASTrix and are always REJECTED. Never use them.",
@@ -458,7 +462,7 @@ export class TrueForgeStewardProvider implements StewardDecisionProvider {
       this.cfg,
       context.snapshot,
       this.opts.deadlineMs ?? 60_000,
-      { objective: context.objective, memory, agentName: this.opts.agentName },
+      { objective: context.objective, memory, agentName: this.opts.agentName, retryHint: context.retryHint },
     );
     if (result.status !== "done" || !result.decision) {
       throw new TrueForgeBackendError(

@@ -180,6 +180,83 @@ describe("strategic observation fields", () => {
   });
 });
 
+describe("bounded parse-failure retry", () => {
+  it("G: a parse failure is retried exactly once and the turn completes on the retry", async () => {
+    const { state } = fresh();
+    const bus = new AstrixGameCommandBus(state);
+    const tools = createAstrixToolRegistry(state, bus);
+    const events = new AstrixEventLog();
+    let calls = 0;
+    let sawRetryHint = false;
+    const provider: StewardDecisionProvider = {
+      id: "parse-once",
+      async decide(context: StewardRunContext) {
+        calls += 1;
+        if (context.retryHint) sawRetryHint = true;
+        if (calls === 1) throw new Error("steward turn done: no parseable decision in output");
+        return { decision: "idle", toolCalls: [] };
+      },
+    };
+    const loop = new AstrixStewardLoop({
+      state,
+      bus,
+      tools,
+      events,
+      provider,
+      decideTimeoutMs: 1000,
+    });
+    loop.start();
+    await waitTerminal(loop);
+
+    expect(calls).toBe(2); // exactly one retry, no more
+    expect(sawRetryHint).toBe(true);
+    expect(loop.state).toBe("COMPLETED"); // idle turn completes the loop
+    const retry = events.all().find((e) => e.type === "DECISION_RETRY");
+    expect(retry).toBeDefined();
+    expect(retry!.data?.attempt).toBe(2);
+    expect(retry!.data?.firstFailureKind).toBe("parse");
+    const completed = events.all().filter((e) => e.type === "DECISION_COMPLETED");
+    expect(completed).toHaveLength(2);
+    expect(completed[1].data?.ok).toBe(true);
+    expect(completed[1].data?.retriedAfter).toBe("parse");
+    expect(events.all().some((e) => e.type === "TURN_FAILED")).toBe(false);
+  });
+
+  it("H: a second consecutive parse failure fails the turn (no infinite retry)", async () => {
+    const { state } = fresh();
+    const bus = new AstrixGameCommandBus(state);
+    const tools = createAstrixToolRegistry(state, bus);
+    const events = new AstrixEventLog();
+    let calls = 0;
+    const provider: StewardDecisionProvider = {
+      id: "parse-always",
+      async decide() {
+        calls += 1;
+        throw new Error("steward turn done: no parseable decision in output");
+      },
+    };
+    const loop = new AstrixStewardLoop({
+      state,
+      bus,
+      tools,
+      events,
+      provider,
+      decideTimeoutMs: 1000,
+    });
+    loop.start();
+    await waitTerminal(loop);
+
+    expect(calls).toBe(2); // original + exactly one retry, then stop
+    expect(loop.state).toBe("FAILED");
+    const retries = events.all().filter((e) => e.type === "DECISION_RETRY");
+    expect(retries).toHaveLength(1);
+    const failed = events.all().filter((e) => e.type === "TURN_FAILED");
+    expect(failed).toHaveLength(1);
+    expect(failed[0].data?.decisionFailureKind).toBe("parse");
+    expect(state.resources.wood).toBe(30); // no mutation ever
+  });
+});
+
 describe("connectivity / build consistency", () => {
   it("F: building on Frost/Dusk without a bridge is rejected; a bridge unlocks it", () => {
     const { state, bus } = fresh();

@@ -11,6 +11,9 @@ export const ASTRIX_AGENT_EVENT_TYPES = [
   // distinguishable in the log without a second logging system.
   "DECISION_STARTED",
   "DECISION_COMPLETED",
+  // Emitted when a parse-failure decision is retried exactly once (the first
+  // decision was discarded unexecuted, so no mutation can be duplicated).
+  "DECISION_RETRY",
   "PLAN_CREATED",
   "SUBAGENT_REQUESTED",
   "SUBAGENT_RESULT",
