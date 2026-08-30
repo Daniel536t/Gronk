@@ -71,6 +71,12 @@ export function createAstrixService(opts: AstrixServiceOptions = {}): AstrixServ
     events,
     authToken,
     tick(deltaSeconds: number): void {
+      // Approval is a true control boundary: while the agent is AWAITING human
+      // approval, world time is frozen. The pending action is immutable, no
+      // mutation occurs, and (via this gate) the day clock does not advance
+      // silently underneath the paused decision. Time resumes only once the
+      // human approves or rejects (loop.state leaves AWAITING_APPROVAL).
+      if (loop.state === "AWAITING_APPROVAL") return;
       if (state.tick(deltaSeconds)) {
         writeState(state.snapshot());
         emitSeasonChange();

@@ -83,6 +83,9 @@ func _on_agent_status(status: Dictionary) -> void:
         if action is Dictionary:
             tool = str(action.get("tool", ""))
         _status_text += "\n[color=#ff8fa3]⚠ HUMAN APPROVAL REQUIRED[/color] %s (%s)" % [_pending_approval_id, tool]
+        # World time is frozen while the gate is open: the human really is
+        # deciding whether this world changes, not watching it drift past.
+        _status_text += "\n[color=#ff8fa3]WORLD TIME: PAUSED[/color]"
         approve_button.visible = _pending_approval_id != ""
         reject_button.visible = _pending_approval_id != ""
     else:
@@ -112,13 +115,12 @@ func _on_world_state(world: Dictionary) -> void:
     var days_left := int(world.get("daysOfFoodRemaining", 0))
     var per_day := int(world.get("foodPerDay", 0))
     var farmland: Variant = world.get("farmland")
-    var farm_summary := ""
+    var farm_parts: Array[String] = []
     if farmland is Array:
-        farm_summary = "  farms: " + ", ".join(
-            "%s %d/%d" % [str(f.get("islandId", "?")), int(f.get("used", 0)), int(f.get("capacity", 0))]
-            for f in farmland
-            if f is Dictionary
-        )
+        for f in farmland:
+            if f is Dictionary:
+                farm_parts.append("%s %d/%d" % [str(f.get("islandId", "?")), int(f.get("used", 0)), int(f.get("capacity", 0))])
+    var farm_summary := "" if farm_parts.is_empty() else "  farms: " + ", ".join(farm_parts)
     var color := "#ff8fa3" if pressure == "critical" else "#ffd166" if pressure == "high" else "#8fd3c7"
     _world_text = "day %d / 30   %s   population %d   food %d   [color=%s]pressure: %s[/color]  (%d days left @ %d/day)" % [
         day, season, population, food, color, pressure.to_upper(), days_left, per_day,

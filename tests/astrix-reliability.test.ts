@@ -10,6 +10,7 @@ import { AstrixWorldState, DAY_SECONDS } from "../src/astrix/state";
 import { AstrixGameCommandBus } from "../src/astrix/commandBus";
 import { createAstrixToolRegistry } from "../src/astrix/mcpTools";
 import { AstrixEventLog } from "../src/astrix/events";
+import { createAstrixService } from "../src/astrix/server";
 import { AstrixStewardLoop, type StewardDecision, type StewardDecisionProvider, type StewardRunContext } from "../src/astrix/orchestrator";
 import { buildStewardPrompt } from "../src/server/trueforge";
 
@@ -171,12 +172,16 @@ describe("strategic observation fields", () => {
     expect(data.foodPressureLevel).toBe("ok");
   });
 
-  it("E: the steward prompt carries the economics and derived-fact guidance", () => {
+  it("E: the steward prompt carries the economics, meta-tool rejection, and time-to-production guidance", () => {
     const prompt = buildStewardPrompt({ foodPerDay: 4 });
     expect(prompt).toMatch(/foodPerDay/);
     expect(prompt).toMatch(/projectedFoodAtWinter/);
     expect(prompt).toMatch(/daysOfFoodRemaining/);
     expect(prompt).toMatch(/empty farm plots are wasted production/i);
+    expect(prompt).toMatch(/TIME-TO-PRODUCTION/);
+    expect(prompt).toMatch(/the day you PLANT is not the day you EAT/i);
+    expect(prompt).toMatch(/create_sub_agent/);
+    expect(prompt).toMatch(/never invent IDs|NEVER invent IDs/i);
   });
 });
 
@@ -254,6 +259,98 @@ describe("bounded parse-failure retry", () => {
     expect(failed).toHaveLength(1);
     expect(failed[0].data?.decisionFailureKind).toBe("parse");
     expect(state.resources.wood).toBe(30); // no mutation ever
+  });
+});
+
+describe("approval pauses world time", () => {
+  it("P1: day does not advance while AWAITING_APPROVAL; time resumes and mutation executes after approval", async () => {
+    let calls = 0;
+    const provider: StewardDecisionProvider = {
+      id: "propose-clear",
+      async decide() {
+        calls += 1;
+        if (calls === 1) {
+          return {
+            decision: "clear meadow",
+            toolCalls: [{ tool: "clear_terrain", args: { position: { x: 12, y: 3.5, z: 24 }, radius: 1 } }],
+          };
+        }
+        return { decision: "idle", toolCalls: [] };
+      },
+    };
+    const service = createAstrixService({ stewardProvider: provider, maxTurnsPerRun: 2, maxActionsPerTurn: 2 });
+    const { state, loop, bus } = service;
+    const dayAtStart = state.day;
+    loop.start("Keep the village alive for 30 days");
+
+    // Advance world time and wait for the loop to reach the approval gate.
+    service.tick(DAY_SECONDS * 10); // would push past many days if not paused
+    const deadline = Date.now() + 3000;
+    while (loop.state !== "AWAITING_APPROVAL" && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      service.tick(DAY_SECONDS / 2); // keep feeding the world clock
+    }
+    expect(loop.state).toBe("AWAITING_APPROVAL");
+    expect(loop.pendingApproval).toBeTruthy();
+
+    // Being at the gate now MUST freeze time: many ticks must not advance the day.
+    // (Time advanced while the loop was RUNNING/deciding — that is correct; the
+    // pause begins the moment the gate is reached.)
+    const dayAtGate = state.day;
+    for (let i = 0; i < 6; i++) service.tick(DAY_SECONDS * 5);
+    expect(state.day).toBe(dayAtGate);
+
+    // Approve -> mutation executes -> time resumes.
+    const approvalId = loop.pendingApproval!.approvalId;
+    const before = state.resourceNodes.length;
+    const res = loop.resolveApproval(approvalId, "approve");
+    expect(res.success).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    // Time resumes after approval.
+    const dayAfter = state.day;
+    service.tick(DAY_SECONDS * 5);
+    expect(state.day).toBeGreaterThan(dayAfter);
+  });
+
+  it("P2: rejection keeps time paused until the decision, then resumes without mutation", async () => {
+    let calls = 0;
+    const provider: StewardDecisionProvider = {
+      id: "propose-clear-reject",
+      async decide() {
+        calls += 1;
+        if (calls === 1) {
+          return {
+            decision: "clear meadow",
+            toolCalls: [{ tool: "clear_terrain", args: { position: { x: 12, y: 3.5, z: 24 }, radius: 1 } }],
+          };
+        }
+        return { decision: "idle", toolCalls: [] };
+      },
+    };
+    const service = createAstrixService({ stewardProvider: provider, maxTurnsPerRun: 2, maxActionsPerTurn: 2 });
+    const { state, loop } = service;
+    loop.start("Keep the village alive for 30 days");
+    service.tick(DAY_SECONDS * 10);
+    const deadline = Date.now() + 3000;
+    while (loop.state !== "AWAITING_APPROVAL" && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      service.tick(DAY_SECONDS / 2);
+    }
+    expect(loop.state).toBe("AWAITING_APPROVAL");
+    const dayAtGate = state.day;
+    const nodesBefore = state.resourceNodes.length;
+    for (let i = 0; i < 6; i++) service.tick(DAY_SECONDS * 5);
+    expect(state.day).toBe(dayAtGate);
+
+    const res = loop.resolveApproval(loop.pendingApproval!.approvalId, "reject");
+    expect(res.success).toBe(false); // rejection carries the rejected outcome
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    // No mutation was applied (no tree removed).
+    expect(state.resourceNodes.length).toBe(nodesBefore);
+    // Time resumes after the decision.
+    const dayAfter = state.day;
+    service.tick(DAY_SECONDS * 5);
+    expect(state.day).toBeGreaterThan(dayAfter);
   });
 });
 
