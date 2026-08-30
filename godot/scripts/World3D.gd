@@ -52,6 +52,7 @@ func _ready() -> void:
     _build_paths()
     _build_starting_area()
     _build_decor()
+    _build_resource_nodes()
     _build_player()
     _build_camera()
     _build_systems()
@@ -767,6 +768,47 @@ func _add_grass(position: Vector3, index: int, color: Color) -> void:
         var blade := _mesh_box("Blade", Vector3((i - 2) * 0.18, 0.35, sin(float(i)) * 0.15), Vector3(0.12, 0.7 + float(i % 2) * 0.15, 0.12), color)
         blade.rotation.z = float(i - 2) * 0.12
         tuft.add_child(blade)
+
+# Materialize gatherable resource nodes so the action button / gather_nearest()
+# actually has targets. Each node carries its authoritative server id, wires into
+# the "resource_nodes" group that Player3D scans, and shows a small floating glow
+# marker so the player can see what is collectable. Positions sit on the walkable
+# surface; server-node ids match src/astrix/state.ts seeds so gathering mutates
+# authoritative state and follows the conflict-free GATHER flow.
+func _build_resource_nodes() -> void:
+    var specs := [
+        {"id": "tree-meadow-002", "type": "wood", "pos": Vector3(22.8, MEADOW_SURFACE, 29.2), "color": Color("b9876a")},   # right beside spawn
+        {"id": "tree-meadow-001", "type": "wood", "pos": Vector3(28.2, MEADOW_SURFACE, 31.8), "color": Color("c08a6a")},
+        {"id": "rock-frost-001", "type": "stone", "pos": Vector3(31.6, MEADOW_SURFACE, 31.0), "color": Color("aab6c2")},  # by the path rock
+        {"id": "crystal-dusk-001", "type": "crystal", "pos": Vector3(75.5, DUSK_SURFACE, 36.5), "color": Color("cf9ef0")},
+        {"id": "water-source-001", "type": "water", "pos": Vector3(22.0, MEADOW_SURFACE, 38.0), "color": Color("7fb8e8")},  # shoreline
+    ]
+    for spec in specs:
+        var node := ResourceNode3D.new()
+        node.name = "ResourceNode_" + str(spec["id"])
+        node.resource_id = spec["type"]
+        node.server_node_id = spec["id"]
+        node.amount = 1
+        node.position = spec["pos"] + Vector3(0.0, 0.05, 0.0)
+        node.add_to_group("resource_nodes")
+        add_child(node)
+        # Floating soft-glow pickup marker (visible, presentation-only).
+        var marker := MeshInstance3D.new()
+        var mm := PrismMesh.new()
+        mm.size = Vector3(0.42, 0.7, 0.42)
+        marker.mesh = mm
+        marker.position = Vector3(0.0, 1.15, 0.0)
+        marker.rotation.y = 0.6
+        marker.material_override = _material(spec["color"], 0.45)
+        node.add_child(marker)
+        var halo := MeshInstance3D.new()
+        var hm := SphereMesh.new()
+        hm.radius = 0.34
+        hm.height = 0.5
+        halo.mesh = hm
+        halo.position = Vector3(0.0, 1.15, 0.0)
+        halo.material_override = _material((spec["color"] as Color).lightened(0.3), 0.3)
+        node.add_child(halo)
 
 func _build_decor() -> void:
     # Three decorative trees around the far meadow so the space doesn't feel bare.
