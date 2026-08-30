@@ -10,6 +10,7 @@ signal astrix_event_received(event: Dictionary)
 signal astrix_command_succeeded(result: Dictionary)
 signal astrix_command_failed(error: String)
 signal astrix_approval_requested(request: Dictionary)
+signal astrix_agent_status_received(status: Dictionary)
 
 @export var api_origin: String = ""  # empty -> auto (web: same origin as the page; native: localhost)
 @export var poll_interval_seconds: float = 0.5
@@ -18,10 +19,12 @@ signal astrix_approval_requested(request: Dictionary)
 var session: Dictionary = {}
 var latest_state: Dictionary = {}
 var astrix_state: Dictionary = {}
+var astrix_agent_status: Dictionary = {}
 var _poll_timer: Timer
 var _requests: Array[HTTPRequest] = []
 var _last_event_fingerprint := ""
 var _astrix_poll_in_flight := false
+var _astrix_status_in_flight := false
 
 func _ready() -> void:
     if api_origin.is_empty():
@@ -82,6 +85,20 @@ func get_astrix_state_once() -> void:
         _astrix_poll_in_flight = false
     )
 
+## Poll the steward loop's structured status (state, turn, pending approval,
+## recent events) so the client can observe the agent without SSE parsing.
+func get_astrix_status_once() -> void:
+    if _astrix_status_in_flight:
+        return
+    _astrix_status_in_flight = true
+    _get_json("/astrix/agent/status", func(data: Dictionary) -> void:
+        _astrix_status_in_flight = false
+        astrix_agent_status = data
+        astrix_agent_status_received.emit(astrix_agent_status)
+    , func() -> void:
+        _astrix_status_in_flight = false
+    )
+
 func _start_astrix_polling() -> void:
     if _poll_timer.is_stopped():
         _poll_timer.start()
@@ -114,6 +131,7 @@ func _start_polling() -> void:
 
 func _poll_state() -> void:
     get_astrix_state_once()
+    get_astrix_status_once()
 
 func _apply_astrix_state(data: Dictionary) -> void:
     astrix_state = data

@@ -1,26 +1,56 @@
 import http from "node:http";
 import { randomUUID } from "node:crypto";
 import { AstrixGameCommandBus, type AstrixCommand } from "./commandBus";
+import { AstrixEventLog } from "./events";
 import { createAstrixToolRegistry } from "./mcpTools";
+import { AstrixStewardLoop, type StewardDecisionProvider } from "./orchestrator";
 import { AstrixWorldState } from "./state";
 
 export interface AstrixService {
   state: AstrixWorldState;
   bus: AstrixGameCommandBus;
   tools: ReturnType<typeof createAstrixToolRegistry>;
+  loop: AstrixStewardLoop;
+  events: AstrixEventLog;
   authToken?: string;
   tick(deltaSeconds: number): void;
   handle(req: http.IncomingMessage, res: http.ServerResponse, pathname: string, body?: Record<string, unknown>): Promise<boolean>;
 }
 
-export function createAstrixService(opts: { authToken?: string } = {}): AstrixService {
+export interface AstrixServiceOptions {
+  authToken?: string;
+  /** TrueForge-backed reasoning layer; the loop executes its decisions. */
+  stewardProvider?: StewardDecisionProvider;
+  maxTurnsPerRun?: number;
+  maxActionsPerTurn?: number;
+  decideTimeoutMs?: number;
+}
+
+export function createAstrixService(opts: AstrixServiceOptions = {}): AstrixService {
   const authToken = opts.authToken;
   const state = new AstrixWorldState();
   const bus = new AstrixGameCommandBus(state);
   const tools = createAstrixToolRegistry(state, bus);
+  const events = new AstrixEventLog();
+  const loop = new AstrixStewardLoop({
+    state,
+    bus,
+    tools,
+    events,
+    provider: opts.stewardProvider,
+    maxTurnsPerRun: opts.maxTurnsPerRun,
+    maxActionsPerTurn: opts.maxActionsPerTurn,
+    decideTimeoutMs: opts.decideTimeoutMs,
+  });
   const eventClients = new Set<http.ServerResponse>();
-  bus.onStateChanged((snapshot) => {
+  const writeState = (snapshot: ReturnType<AstrixWorldState["snapshot"]>): void => {
     const payload = `event: state\ndata: ${JSON.stringify(snapshot)}\n\n`;
+    for (const client of eventClients) client.write(payload);
+  };
+  bus.onStateChanged((snapshot) => writeState(snapshot));
+  // Structured agent events ride the same SSE stream (event: agent).
+  events.onEvent((event) => {
+    const payload = `event: agent\ndata: ${JSON.stringify(event)}\n\n`;
     for (const client of eventClients) client.write(payload);
   });
 
@@ -28,13 +58,11 @@ export function createAstrixService(opts: { authToken?: string } = {}): AstrixSe
     state,
     bus,
     tools,
+    loop,
+    events,
     authToken,
     tick(deltaSeconds: number): void {
-      if (state.tick(deltaSeconds)) {
-        const snapshot = state.snapshot();
-        const payload = `event: state\ndata: ${JSON.stringify(snapshot)}\n\n`;
-        for (const client of eventClients) client.write(payload);
-      }
+      if (state.tick(deltaSeconds)) writeState(state.snapshot());
     },
     async handle(req, res, pathname, body = {}): Promise<boolean> {
       if (pathname === "/astrix/state" && req.method === "GET") {
@@ -74,8 +102,37 @@ export function createAstrixService(opts: { authToken?: string } = {}): AstrixSe
           sendJson(res, 400, { success: false, error: "approval_id and decision are required" });
           return true;
         }
-        const result = bus.resolveApproval(approvalId, decision);
+        // Route through the loop so approval outcomes are recorded and a
+        // paused run resumes; the loop delegates to the command bus.
+        const result = loop.resolveApproval(approvalId, decision);
         sendJson(res, result.success || result.error === "approval rejected" ? 200 : 404, result);
+        return true;
+      }
+      if (pathname === "/astrix/agent/start" && req.method === "POST") {
+        if (!authorized(req, authToken)) {
+          sendJson(res, 401, { success: false, error: "unauthorized" });
+          return true;
+        }
+        const objective = typeof body.objective === "string" && body.objective.trim() ? body.objective.trim() : undefined;
+        const result = loop.start(objective);
+        sendJson(res, result.ok ? 200 : result.error?.includes("already running") ? 409 : 400, result);
+        return true;
+      }
+      if (pathname === "/astrix/agent/stop" && req.method === "POST") {
+        if (!authorized(req, authToken)) {
+          sendJson(res, 401, { success: false, error: "unauthorized" });
+          return true;
+        }
+        const result = loop.stop();
+        sendJson(res, result.ok ? 200 : 409, result);
+        return true;
+      }
+      if (pathname === "/astrix/agent/status" && req.method === "GET") {
+        sendJson(res, 200, loop.status());
+        return true;
+      }
+      if (pathname === "/astrix/log" && req.method === "GET") {
+        sendJson(res, 200, { events: events.all() });
         return true;
       }
       if (pathname === "/astrix/mcp" && (req.method === "GET" || req.method === "POST")) {

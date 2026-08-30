@@ -7,6 +7,7 @@
 // failure, 4xx/5xx, timeout, or unparseable output throws a TrueForgeBackendError,
 // which the orchestrator turns into a scripted-FSM fallback decision.
 import type { AgentBackend, AgentDecision, AgentView } from "./agent";
+import type { StewardDecision, StewardDecisionProvider, StewardRunContext } from "../astrix/orchestrator";
 
 export interface ModelConfig {
   name?: string;
@@ -221,24 +222,36 @@ export interface AgentSpecInput {
  * Create named agents in TrueForge via the HTTP API (idempotent-ish: existing
  * agents are reused). Run once before BOTS=trueforge. Returns the created names.
  */
+export interface AstrixStewardTurnOptions {
+  /** The Overseer's current objective, included in the steward prompt. */
+  objective?: string;
+  /** Compact execution history (memory) included in the steward prompt. */
+  memory?: string;
+  /** TrueForge agent name to drive (defaults to the provisioned steward). */
+  agentName?: string;
+}
+
 export interface AstrixStewardTurnResult {
   sessionId: string | null;
   turnId: string | null;
   status: "done" | "error" | "cancelled" | "timeout";
   latencyMs: number;
   response: unknown;
+  /** Parsed structured decision, when the turn completed and was parseable. */
+  decision: StewardDecision | null;
 }
 
 /**
  * Drive one ASTrix steward session/turn with a server-authoritative snapshot.
  * Polls to a terminal 'done' state; throws on non-2xx responses, terminal
  * error/cancelled states, missing identifiers, or polling deadline exhaustion.
- * Returns the raw TrueForge {"data":...} turn body on success.
+ * Returns the raw TrueForge {"data":...} turn body plus a parsed decision.
  */
 export async function runAstrixStewardTurn(
   cfg: TrueForgeConfig,
   snapshot: unknown,
   deadlineMs = 60_000,
+  options: AstrixStewardTurnOptions = {},
 ): Promise<AstrixStewardTurnResult> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (cfg.apiKey) headers.Authorization = `Bearer ${cfg.apiKey}`;
@@ -246,14 +259,14 @@ export async function runAstrixStewardTurn(
   const started = Date.now();
 
   const sessionRes = await fetch(`${base}/api/v1/sessions`, {
-    method: "POST", headers, body: JSON.stringify({ agent: { name: "astrix-steward" } }),
+    method: "POST", headers, body: JSON.stringify({ agent: { name: options.agentName ?? "astrix-steward" } }),
   });
   const sessionBody = await sessionRes.json().catch(() => ({}));
   if (!sessionRes.ok) throw new TrueForgeBackendError(`create session failed (${sessionRes.status}): ${JSON.stringify(sessionBody)}`);
   const sessionId: string | null = (sessionBody as any)?.data?.id ?? null;
   if (!sessionId) throw new TrueForgeBackendError("create session returned no session id");
 
-  const prompt = `You are the ASTrix World Steward. Inspect this current authoritative ASTrix world state and return ONE structured JSON decision object (fields: decision, recommendation, toolCalls: [{tool, args}], approvalRequired: bool, reasoning). Do not mutate anything. State: ${JSON.stringify(snapshot)}`;
+  const prompt = buildStewardPrompt(snapshot, options);
   const turnRes = await fetch(`${base}/api/v1/sessions/${sessionId}/turns`, {
     method: "POST", headers,
     body: JSON.stringify({ input: [{ type: "user.message", content: prompt }], previous_turn_id: "auto", stream: false }),
@@ -263,7 +276,7 @@ export async function runAstrixStewardTurn(
   const turnId: string | null = (turnBody as any)?.data?.id ?? null;
   if (!turnId) throw new TrueForgeBackendError("create turn returned no turn id");
 
-  let result: AstrixStewardTurnResult = { sessionId, turnId, status: "timeout", latencyMs: 0, response: null };
+  let result: AstrixStewardTurnResult = { sessionId, turnId, status: "timeout", latencyMs: 0, response: null, decision: null };
   const deadline = Date.now() + deadlineMs;
   while (Date.now() < deadline) {
     const poll = await fetch(`${base}/api/v1/sessions/${sessionId}/turns/${turnId}`, { headers });
@@ -271,17 +284,168 @@ export async function runAstrixStewardTurn(
     if (!poll.ok) throw new TrueForgeBackendError(`get turn failed (${poll.status}): ${JSON.stringify(body)}`);
     const state = (body as any)?.data?.state;
     if (state?.status === "error" || state?.status === "cancelled") {
-      result = { sessionId, turnId, status: state.status, latencyMs: 0, response: body };
+      result = { sessionId, turnId, status: state.status, latencyMs: 0, response: body, decision: null };
       break;
     }
     if (state?.status === "done") {
-      result = { sessionId, turnId, status: "done", latencyMs: 0, response: body };
+      result = {
+        sessionId,
+        turnId,
+        status: "done",
+        latencyMs: 0,
+        response: body,
+        decision: parseAstrixStewardDecision((body as any)?.data?.state?.output),
+      };
       break;
     }
     await new Promise((r) => setTimeout(r, 1000));
   }
   result.latencyMs = Date.now() - started;
   return result;
+}
+
+/** Build the steward turn prompt: objective + memory + strict JSON contract. */
+export function buildStewardPrompt(snapshot: unknown, options: AstrixStewardTurnOptions = {}): string {
+  const parts: string[] = [
+    "You are the ASTrix World Steward operating a living village on three islands: Meadow, Frost, Dusk.",
+    "Your job is to advance the Overseer's objective by choosing REAL tool calls that will be executed safely by the ASTrix execution layer.",
+  ];
+  if (options.objective) parts.push(`Current objective from the Overseer: "${options.objective}"`);
+  if (options.memory) parts.push(`Outcomes of your recent actions (what you attempted, what happened, whether it was approved, whether the world changed):\n${options.memory}`);
+  parts.push(
+    "Every mutation flows through the authoritative command bus. Irreversible actions (clear_terrain, build_bridge) AUTOMATICALLY require human approval before execution — never include an approval id, the gate is automatic.",
+    "Return ONE JSON object and nothing else (no markdown fences) with EXACTLY these fields:",
+    '{ "decision": "<one-line decision>", "recommendation": "<what you recommend>", "reasoning": "<why>", "toolCalls": [{ "tool": "<tool name>", "args": { ... } }] }',
+    "Available tools: inspect_world, inspect_island, inspect_resources, inspect_buildings, gather, build, plant, clear_terrain, build_bridge, simulate_plan.",
+    "If nothing needs doing, return toolCalls: [] — that is a valid idle decision.",
+    `Authoritative world state:\n${JSON.stringify(snapshot)}`,
+  );
+  return parts.join("\n");
+}
+
+/**
+ * Extract a structured StewardDecision from a TrueForge turn output. Accepts
+ * an explicit decision tool call or a JSON object embedded in the text
+ * (markdown fences stripped). Returns null when nothing usable is found so the
+ * caller can fail observably instead of guessing.
+ */
+export function parseAstrixStewardDecision(output: unknown): StewardDecision | null {
+  const o = output as { content?: unknown; tool_calls?: { function?: { name?: string; arguments?: string } }[] } | null | undefined;
+  for (const tc of o?.tool_calls ?? []) {
+    const name = tc?.function?.name;
+    if (name === "astrix_decision" || name === "decision" || name === "submit_decision") {
+      const parsed = tryParseArguments(tc.function?.arguments);
+      if (parsed) {
+        const decision = normalizeStewardDecision(parsed);
+        if (decision) return decision;
+      }
+    }
+  }
+  const text = typeof o?.content === "string" ? o.content : o?.content ? JSON.stringify(o.content) : "";
+  const extracted = extractJsonObject(text);
+  if (extracted) {
+    const decision = normalizeStewardDecision(extracted);
+    if (decision) return decision;
+  }
+  return null;
+}
+
+function tryParseArguments(raw: string | undefined): Record<string, unknown> | null {
+  if (typeof raw !== "string") return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Find the first JSON object in a text blob (tolerates prose + fences). */
+export function extractJsonObject(text: string): Record<string, unknown> | null {
+  if (!text) return null;
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end <= start) return null;
+  try {
+    const parsed = JSON.parse(text.slice(start, end + 1));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeStewardDecision(raw: Record<string, unknown>): StewardDecision | null {
+  const rawCalls = Array.isArray(raw.toolCalls) ? raw.toolCalls : [];
+  const toolCalls: StewardDecision["toolCalls"] = [];
+  for (const entry of rawCalls) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const call = entry as Record<string, unknown>;
+    const tool = typeof call.tool === "string" ? call.tool : "";
+    const args =
+      call.args && typeof call.args === "object" && !Array.isArray(call.args)
+        ? (call.args as Record<string, unknown>)
+        : {};
+    toolCalls.push({ tool, args });
+  }
+  if (typeof raw.decision !== "string" && toolCalls.length === 0) return null;
+  return {
+    decision: typeof raw.decision === "string" ? raw.decision : "",
+    recommendation: typeof raw.recommendation === "string" ? raw.recommendation : undefined,
+    reasoning: typeof raw.reasoning === "string" ? raw.reasoning : undefined,
+    approvalRequired: raw.approvalRequired === true,
+    toolCalls,
+  };
+}
+
+/**
+ * TrueForge-backed StewardDecisionProvider for the ASTrix execution loop.
+ * TrueForge decides/reasons; the loop safely executes. Each decide() drives
+ * one steward turn via the audited session/turn API and parses the decision.
+ */
+export class TrueForgeStewardProvider implements StewardDecisionProvider {
+  readonly id = "trueforge-astrix-steward";
+
+  constructor(
+    private readonly cfg: TrueForgeConfig,
+    private readonly opts: { deadlineMs?: number; agentName?: string } = {},
+  ) {}
+
+  async decide(context: StewardRunContext): Promise<StewardDecision> {
+    const memory = summarizeContextMemory(context);
+    const result = await runAstrixStewardTurn(
+      this.cfg,
+      context.snapshot,
+      this.opts.deadlineMs ?? 60_000,
+      { objective: context.objective, memory, agentName: this.opts.agentName },
+    );
+    if (result.status !== "done" || !result.decision) {
+      throw new TrueForgeBackendError(
+        `steward turn ${result.status ?? "incomplete"}: ${result.decision ? "" : "no parseable decision in output"}`,
+      );
+    }
+    return result.decision;
+  }
+}
+
+/** Build the compact memory block for the next steward turn. */
+function summarizeContextMemory(context: StewardRunContext): string {
+  const lines: string[] = [];
+  if (context.lastOutcome) lines.push(context.lastOutcome);
+  const recent = context.history.slice(-5);
+  for (const action of recent) {
+    const approved =
+      action.approvalState === "granted" ? " approved"
+      : action.approvalState === "rejected" ? " rejected"
+      : "";
+    const verified =
+      action.verificationState === "VERIFIED" ? " verified"
+      : action.verificationState === "VERIFICATION_FAILED" ? " verification_failed"
+      : "";
+    lines.push(
+      `- attempted ${action.tool} -> ${action.executionState}${approved}${verified}${action.error ? ` (${action.error})` : ""}`,
+    );
+  }
+  return lines.length > 0 ? lines.join("\n") : "(no prior actions in this run)";
 }
 
 export async function provisionTrueForgeAgents(

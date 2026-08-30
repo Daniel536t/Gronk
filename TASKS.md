@@ -1,5 +1,32 @@
 # ASTrix Tasks
 
+## P0 — controlled agent execution loop (implemented, committed locally)
+
+- [x] `src/astrix/orchestrator.ts` — bounded, observable steward loop: observe → decide → propose → [approval gate] → execute → verify → repeat. Hard caps: `maxTurnsPerRun` (5), `maxActionsPerTurn` (10), `decideTimeoutMs` (60s). Idle turns end the run; `stop()` cancels; `start(objective)` begins a run.
+- [x] Every mutation flows through the existing `AstrixGameCommandBus` via the existing tool registry — no second mutation system. Agent-supplied `approval_id`/`approvalId` args are stripped so the structural gate always fires for HIGH-risk tools (`clear_terrain`, `build_bridge`). `DEMOLISH` is listed as high-risk in the architecture but does not exist in the bus yet — noted, not invented.
+- [x] Approval gate preserved and enforced: HIGH-risk actions pause the loop (`AWAITING_APPROVAL`), persist a pending action, and resume ONLY on explicit `resolveApproval` (approve executes via the bus + verifies; reject marks the action REJECTED with no mutation). Timeout is never approval.
+- [x] Verification: post-mutation re-inspection with evidence checks per tool (building/bridge/crop id exists, node quantity delta, cleared radius empty). Distinguishes PROPOSED → EXECUTED → VERIFIED from execution-failed and verification-failed.
+- [x] Failure handling: unknown tools (recorded SKIPPED + ACTION_FAILED, never executed), invalid args / insufficient resources (FAILED, no false success), provider timeout/throw (TURN_FAILED → loop FAILED), no blind retries (each proposal executed exactly once).
+- [x] Observability: `src/astrix/events.ts` ring-buffer log (500) with the 17 typed events (TURN_STARTED … TURN_FAILED); forwarded to the existing SSE stream as `event: agent`; `GET /astrix/log` replay; `GET /astrix/agent/status` (state, turn, objective, pending approval, current action, last events).
+- [x] Agent memory: every action record + per-turn outcome summary is passed to the next `decide()` context; the TrueForge provider serializes objective + memory into each steward prompt.
+- [x] TrueForge remains the reasoning layer: `TrueForgeStewardProvider` (in `src/server/trueforge.ts`) drives the real astrix-steward session/turn API; `runAstrixStewardTurn` now returns a parsed structured decision and accepts objective/memory options. No local fake planner.
+- [x] New narrow endpoints (all under `/astrix/*`, auth-gated for start/stop): `POST /astrix/agent/start`, `POST /astrix/agent/stop`, `GET /astrix/agent/status`, `GET /astrix/log`. `/astrix/approval/respond` now routes through the loop (still delegates to the bus; status codes unchanged).
+- [x] Godot minimal integration: `GameClient.gd` polls `/astrix/agent/status` alongside `/astrix/state` and emits `astrix_agent_status_received`; `AgentConsole.gd` renders state/turn/objective/pending approval + last 8 events from the server feed (no SSE parsing, no presentation redesign). Headless boot verified clean.
+- [x] Tests: `tests/astrix-execution-loop.test.ts` (11) covering A–I lifecycle cases + stop-while-paused; `tests/astrix-http.test.ts` (+5) covering agent start/status/log, HTTP approval flow, auth gate. Full suite 96/96 pass, both typechecks pass, `git diff --check` clean.
+- [x] LIVE validation on the real system: restarted pm2 `gronks-hoard` with P0; `POST /astrix/agent/start` ran the real TrueForge steward (5 turns, 39 events). The live agent proposed only read-only `inspect_*` calls and two non-ASTrix tools (`list_tools`, `get_tool_info`), which the loop safely rejected with recorded ACTION_FAILED — no mutations, world unchanged, run bounded at 5 turns.
+
+### P0 blockers / honest gaps
+- The provisioned `astrix-steward` agent's system instructions (from `scripts/provision-astrix-agents.ts`) still say "return decisions as JSON / set approval_required: true" — they predate the execution loop and the agent's conservative behavior (observation-only, and it also has TrueForge-side `require_approval_for_tools: ["@write","@destructive"]`) kept the live run from attempting a mutation, so the LIVE approval-gate trigger was not exercised by the LLM. The mutation + approval + verification path is fully covered by tests B/C/D/E/F against the real command bus.
+- Re-provisioning the steward with execution-loop-aware instructions ("your toolCalls WILL be executed") is the immediate next step before the live 30-day demo.
+
+## Architecture / design phase (completed)
+
+- [x] Produce the definitive game-design + agent-systems specification: `ASTRIX_GAME_AND_AGENT_ARCHITECTURE.md` (29 sections: vision, pillars, world/resource/population/environment/time systems, agent + tool + subagent architecture, TrueForge integration, approval + safety model, observability, failure/recovery, canonical 30-day scenario, gameplay loop, MVP scope, existing-architecture mapping, hackathon criteria, demo script, risks, open questions, implementation order).
+- [x] Ground the spec in the actual codebase (audited `src/astrix/*`, `src/server/trueforge.ts|agent.ts|mcp.ts|http.ts`, `godot/scripts/*`, `scripts/provision-astrix-agents.ts` at `b8f72fa`).
+- [x] Consistency review: no orphan tools, every mutation backed by the command bus, approval rules unambiguous, MVP free of thesis-diluting systems, TrueForge load-bearing (not decorative).
+- [x] Key honest gap recorded: the steward turn is one-shot (returns `toolCalls` but nothing executes them); the autonomous loop is P0 in the recommended implementation order.
+- [ ] (design-only phase — no code changed; next milestone begins with P0: steward tool-execution loop + typed agent-event log)
+
 ## Current milestone — 3D world foundation
 
 - [x] Create a Godot 4 project under `godot/`.

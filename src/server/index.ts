@@ -11,6 +11,7 @@ import { createMcpServer, connectStdio } from "./mcp";
 import { createMcpHttpBridge } from "./mcpHttp";
 import { createHttpServer } from "./http";
 import { trueforgeBackendFactory } from "./trueforgeFactory";
+import { TrueForgeStewardProvider } from "./trueforge";
 import { loadConfig } from "./config";
 import { createAstrixService } from "../astrix/server";
 
@@ -36,7 +37,12 @@ const manager = new LobbyManager({
 
 // stdio gets its own McpServer; each HTTP session gets one too (the SDK
 // connects one server to one transport). All share the single LobbyManager.
-const astrix = createAstrixService({ authToken: process.env.ASTRIX_API_KEY?.trim() || undefined });
+// The steward loop's reasoning layer is the TrueForge astrix-steward agent;
+// the loop only runs when POST /astrix/agent/start is called (no autopilot).
+const astrix = createAstrixService({
+  authToken: process.env.ASTRIX_API_KEY?.trim() || undefined,
+  stewardProvider: new TrueForgeStewardProvider(loadConfig().trueforge),
+});
 const stdioMcp = createMcpServer(manager, astrix);
 const mcpHttp = createMcpHttpBridge(() => createMcpServer(manager, astrix));
 

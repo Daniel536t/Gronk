@@ -11,6 +11,8 @@ export function listAstrixTools(): AstrixToolDefinition[] {
   return ASTRIX_TOOL_NAMES.map((name) => ({ name, description: `ASTrix ${name.replaceAll("_", " ")} tool`, inputSchema: {} }));
 }
 
+export type AstrixToolRegistry = ReturnType<typeof createAstrixToolRegistry>;
+
 export function createAstrixToolRegistry(state: AstrixWorldState, bus: AstrixGameCommandBus) {
   return {
     listTools: listAstrixTools,
