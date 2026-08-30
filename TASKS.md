@@ -1,5 +1,20 @@
 # ASTrix Tasks
 
+## P2 — simulation layer: seasons, crops, farmland & survival pressure (implemented)
+
+- [x] **Seasons**: 30-day year (Spring 1–8, Summer 9–16, Autumn 17–24, Winter 25–30, wraps). `season` + `daysUntilWinter` in the snapshot; `SEASON_CHANGED` emitted on the agent event stream when the season flips (`src/astrix/state.ts`, `events.ts`, `server.ts`).
+- [x] **Crop lifecycle**: wheat matures in 8 days (`growthStage` is now progress 0→1, `plantedAtDay` added), growth stops in Winter, yields 6 food on harvest. New `HARVEST_CROP` command + `harvest` MCP tool (bus-gated: crop must exist and be mature; farm holds max 3 crops). Verification: crop removed + food delta in the orchestrator.
+- [x] **Farmland constraint**: farms consume one plot per island (meadow 2, frost 2, dusk 1). `PLACE_BUILDING farm` beyond capacity fails (`no available farmland on <island>`). `clear_terrain` (approval-gated, irreversible) now yields wood + **+1 farmland plot per cleared tree** + lowers biome health + permanently removes nodes — the economic reason clearing exists.
+- [x] **Population survival**: population is mutable; each villager eats 1 food/day (1.5× in Winter); shortfall starves villagers and can collapse the village to 0. Starting food raised 12→40 (3 days was provably unsolvable — the P1 blocker). Multi-day tick jumps apply every day boundary.
+- [x] **Agent observability**: snapshot + `WORLD_OBSERVED` now carry season, days-until-winter, population, farmland (capacity/used/available per island), and crop states (growth %, harvestable). `ASTRIX_TOOL_GUIDE`, steward prompt, and provisioned instructions document `harvest` + season/farmland rules.
+- [x] **Canonical 30-day scenario is mathematically coherent** (deterministic test, real loop + real bus + real approval gate, scripted governor): limited to Meadow's starting farmland the village **starves** (population < 4 by day 30); expanding farmland via one `clear_terrain` approval **survives 30 days with population 4**. The high-risk decision is now logically necessary, not prompt-forced.
+- [x] Tests: `tests/astrix-simulation.test.ts` (17: seasons, crop growth/winter freeze, harvest, farmland, farm capacity, winter consumption, starvation, multi-day ticks, SEASON_CHANGED) + `tests/astrix-canonical-scenario.test.ts` (2). Full suite **124/124**, both typechecks, `git diff --check` clean.
+- [x] `scripts/astrix-demo.ts` now drives a **continuous 30-day run**: restarts the steward loop on COMPLETED while the village is alive and day < 30, auto-approves any real approval, and reports season/farmland/crops/population + collapse-vs-survive outcome.
+
+### P2 notes
+- `build_bridge` remains the alternative high-risk expansion path (Frost/Dusk farmland + resources are connectivity-gated). The canonical governor uses `clear_terrain`; a live LLM may choose either.
+- The live TrueForge steward has been re-provisioned with the P2 instructions (harvest tool, season/farmland rules, 40-food starting situation) and the server restarted to the fresh canonical world — `npm run astrix:demo` will run the real 30-day demo against the new simulation.
+
 ## P1 — live steward action + approval flow (partially complete — see blockers)
 
 - [x] **Steward tool grounding fixed.** Root cause of the P0 live failure: the provisioned steward instructions were planner-oriented ("return JSON", "set approval_required: true"), never enumerated the ASTrix tools, ran on the fast nano model, and had native MCP access (second mutation path + meta-tool confusion). Fixed: steward now runs on `nvidia/gpt-oss-20b`, has NO native MCP tools (single execution path through the loop), and instructions + turn prompt share `ASTRIX_TOOL_GUIDE` (exact snake_case arg schemas, meta-tool rejection, "ACT, do not merely observe").

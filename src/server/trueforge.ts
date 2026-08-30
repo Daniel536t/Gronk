@@ -318,7 +318,8 @@ export const ASTRIX_TOOL_GUIDE = [
   '  gather: { "resource_id": "<node id>" }  OR  { "resource_type": "wood" | "stone" | "food" | "water" | "crystal" }',
   '  build: { "building_type": "house" | "farm" | "storage", "position": { "x": 0-100, "y": <ground level>, "z": 0-60 }, "island_id": "meadow" | "frost" | "dusk" }',
   '  plant: { "farm_plot_id": "<existing farm building id>", "crop_type": "wheat" }',
-  '  clear_terrain: { "position": { "x", "y", "z" }, "radius": 1-20 }   (IRREVERSIBLE — auto human approval; yields 1 wood per tree cleared but lowers biome health)',
+  '  harvest: { "crop_id": "<crop id>" }   (harvest a MATURE crop — growth 100% — for food; wheat yields 6 food)',
+  '  clear_terrain: { "position": { "x", "y", "z" }, "radius": 1-20 }   (IRREVERSIBLE — auto human approval; yields 1 wood + 1 farmland plot per tree cleared but lowers biome health)',
   '  build_bridge: { "island_a": "meadow" | "frost" | "dusk", "island_b": "<different island>" }   (IRREVERSIBLE — auto human approval; Frost/Dusk resources are UNREACHABLE from Meadow until a bridge exists)',
   '  simulate_plan: { "plan": "<JSON string>" }',
 ].join("\n");
@@ -332,13 +333,14 @@ export function buildStewardPrompt(snapshot: unknown, options: AstrixStewardTurn
   if (options.objective) parts.push(`Current objective from the Overseer: "${options.objective}"`);
   if (options.memory) parts.push(`Outcomes of your recent actions (what you attempted, what happened, whether it was approved, whether the world changed):\n${options.memory}`);
   parts.push(
-    "The ONLY tools that exist in ASTrix are: inspect_world, inspect_island, inspect_resources, inspect_buildings, gather, build, plant, clear_terrain, build_bridge, simulate_plan.",
+    "The ONLY tools that exist in ASTrix are: inspect_world, inspect_island, inspect_resources, inspect_buildings, gather, build, plant, harvest, clear_terrain, build_bridge, simulate_plan.",
     "Protocol/meta tools such as list_tools, get_tool_info, tools/list, resources/list, mcp__* do NOT exist in ASTrix and are always REJECTED. Never use them.",
     ASTRIX_TOOL_GUIDE,
     "Every mutation flows through the authoritative command bus. Irreversible actions (clear_terrain, build_bridge) AUTOMATICALLY pause for HUMAN approval before execution — never include an approval id, the gate is automatic.",
     "Return ONE JSON object and nothing else (no markdown fences) with EXACTLY these fields:",
     '{ "decision": "<one-line decision>", "recommendation": "<what you recommend>", "reasoning": "<why>", "toolCalls": [{ "tool": "<ASTrix tool>", "args": { ... } }] }',
-    "ACT, do not merely observe: observation-only turns accomplish nothing and the village is starving. Inspect once or twice, then choose real mutations (gather, build a farm, plant; clear terrain only if genuinely needed — it pauses for human approval).",
+    "ACT, do not merely observe: observation-only turns accomplish nothing and the village is starving. Inspect once or twice, then choose real mutations (gather, build a farm, plant, harvest mature crops; clear terrain only if genuinely needed — it pauses for human approval).",
+    "WORLD RULES: a year is 30 days (Spring 1-8, Summer 9-16, Autumn 17-24, Winter 25-30 — see `season` in the state). Wheat matures in 8 days and STOPS growing in Winter, so plant early and HARVEST mature crops (growth 100%) before winter. Each villager eats 1 food/day (1.5 in Winter). Farmland is limited per island (see `farmland`: a farm consumes one plot, each farm holds up to 3 crops). When no farmland remains, clear_terrain creates new plots on that island (IRREVERSIBLE — pauses for human approval), or build a bridge to farm another island.",
     "If nothing needs doing, return toolCalls: [] — that is a valid idle decision.",
     `Authoritative world state:\n${JSON.stringify(snapshot)}`,
   );

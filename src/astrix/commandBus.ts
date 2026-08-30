@@ -1,9 +1,11 @@
+import { CROP_TYPES, FARM_CROP_CAPACITY } from "./state";
 import type { AstrixApproval, AstrixPosition, AstrixResourceNode, AstrixWorldState, BiomeId, ResourceType } from "./state";
 
 export type AstrixCommandName =
   | "PLACE_BUILDING"
   | "GATHER_RESOURCE"
   | "PLANT_CROP"
+  | "HARVEST_CROP"
   | "CLEAR_TERRAIN"
   | "BUILD_BRIDGE";
 
@@ -16,6 +18,7 @@ export interface AstrixCommand {
   islandId?: BiomeId;
   farmPlotId?: string;
   cropType?: string;
+  cropId?: string;
   radius?: number;
   islandA?: BiomeId;
   islandB?: BiomeId;
@@ -115,6 +118,7 @@ export class AstrixGameCommandBus {
       case "PLACE_BUILDING": result = this.placeBuilding(command, irreversible); break;
       case "GATHER_RESOURCE": result = this.gather(command, irreversible); break;
       case "PLANT_CROP": result = this.plant(command, irreversible); break;
+      case "HARVEST_CROP": result = this.harvest(command, irreversible); break;
       case "CLEAR_TERRAIN": result = this.clearTerrain(command, irreversible); break;
       case "BUILD_BRIDGE": result = this.buildBridge(command, irreversible); break;
       default: return { success: false, command: command.command, irreversible, error: "unknown command" };
@@ -130,7 +134,7 @@ export class AstrixGameCommandBus {
   }
 
   simulate(command: AstrixCommand): AstrixCommandResult {
-    const known: AstrixCommandName[] = ["PLACE_BUILDING", "GATHER_RESOURCE", "PLANT_CROP", "CLEAR_TERRAIN", "BUILD_BRIDGE"];
+    const known: AstrixCommandName[] = ["PLACE_BUILDING", "GATHER_RESOURCE", "PLANT_CROP", "HARVEST_CROP", "CLEAR_TERRAIN", "BUILD_BRIDGE"];
     if (!known.includes(command.command)) return { success: false, command: command.command, irreversible: false, error: "unsupported command for simulation" };
     const validation = this.validate(command);
     return { ...validation, irreversible: command.command === "CLEAR_TERRAIN" || command.command === "BUILD_BRIDGE" };
@@ -144,10 +148,21 @@ export class AstrixGameCommandBus {
       if (!command.islandId) return { success: false, command: command.command, irreversible, error: "islandId is required" };
       const cost = COSTS[command.buildingType];
       for (const [resource, amount] of Object.entries(cost)) if (this.state.resources[resource as ResourceType] < amount) return { success: false, command: command.command, irreversible, error: `insufficient ${resource}` };
+      if (command.buildingType === "farm") {
+        const capacity = this.state.farmlandCapacity[command.islandId] ?? 0;
+        const used = this.state.buildings.filter((building) => building.type === "farm" && building.islandId === command.islandId).length;
+        if (used >= capacity) return { success: false, command: command.command, irreversible, error: `no available farmland on ${command.islandId} (${used}/${capacity}): clear terrain to expand farmland` };
+      }
     }
     if (command.command === "GATHER_RESOURCE" && !command.resourceId && !command.resourceType) return { success: false, command: command.command, irreversible, error: "resourceId or resourceType is required" };
     if (command.command === "PLANT_CROP" && (!command.farmPlotId || !command.cropType)) return { success: false, command: command.command, irreversible, error: "farmPlotId and cropType are required" };
     if (command.command === "PLANT_CROP" && !this.state.buildings.some((building) => building.type === "farm" && building.id === command.farmPlotId)) return { success: false, command: command.command, irreversible, error: "farm plot not found" };
+    if (command.command === "PLANT_CROP") {
+      const plotCrops = this.state.crops.filter((crop) => crop.farmPlotId === command.farmPlotId).length;
+      if (plotCrops >= FARM_CROP_CAPACITY) return { success: false, command: command.command, irreversible, error: `farm plot is full (${plotCrops}/${FARM_CROP_CAPACITY})` };
+    }
+    if (command.command === "HARVEST_CROP" && !command.cropId) return { success: false, command: command.command, irreversible, error: "cropId is required" };
+    if (command.command === "HARVEST_CROP" && !this.state.crops.some((crop) => crop.id === command.cropId)) return { success: false, command: command.command, irreversible, error: "crop not found" };
     if (command.command === "CLEAR_TERRAIN" && (!command.position || !Number.isFinite(command.radius) || command.radius! <= 0 || command.radius! > 20)) return { success: false, command: command.command, irreversible, error: "position and radius between 0 and 20 are required" };
     if (command.command === "BUILD_BRIDGE" && (!command.islandA || !command.islandB || command.islandA === command.islandB)) return { success: false, command: command.command, irreversible, error: "two distinct islands are required" };
     return { success: true, command: command.command, irreversible };
@@ -177,9 +192,21 @@ export class AstrixGameCommandBus {
   }
 
   private plant(command: AstrixCommand, irreversible: boolean): AstrixCommandResult {
-    const crop = { id: this.state.nextEntityId("crop"), farmPlotId: command.farmPlotId!, cropType: command.cropType!, growthStage: 0 };
+    const crop = { id: this.state.nextEntityId("crop"), farmPlotId: command.farmPlotId!, cropType: command.cropType!, growthStage: 0, plantedAtDay: this.state.day };
     this.state.crops.push(crop);
-    return { success: true, command: command.command, irreversible, farmPlotId: crop.farmPlotId, cropType: crop.cropType, growthStage: crop.growthStage, cropId: crop.id };
+    return { success: true, command: command.command, irreversible, farmPlotId: crop.farmPlotId, cropType: crop.cropType, growthStage: crop.growthStage, cropId: crop.id, plantedAtDay: crop.plantedAtDay };
+  }
+
+  private harvest(command: AstrixCommand, irreversible: boolean): AstrixCommandResult {
+    const crop = this.state.crops.find((candidate) => candidate.id === command.cropId);
+    if (!crop) return { success: false, command: command.command, irreversible, error: "crop not found" };
+    if (crop.growthStage < 1) return { success: false, command: command.command, irreversible, error: `crop not harvestable yet (growth ${Math.round(crop.growthStage * 100)}%)` };
+    const config = (CROP_TYPES as Record<string, { daysToMature: number; yield: number }>)[crop.cropType];
+    const foodGained = config?.yield ?? 1;
+    this.state.crops.splice(this.state.crops.indexOf(crop), 1);
+    this.state.food += foodGained;
+    this.state.resources.food = this.state.food;
+    return { success: true, command: command.command, irreversible, cropId: crop.id, cropType: crop.cropType, foodGained, foodAfter: this.state.food };
   }
 
   private clearTerrain(command: AstrixCommand, irreversible: boolean): AstrixCommandResult {
@@ -196,8 +223,11 @@ export class AstrixGameCommandBus {
     if (clearedIsland && woodGained > 0) {
       const health = this.state.biomeHealth[clearedIsland];
       this.state.biomeHealth[clearedIsland] = Math.max(0, health - 0.05 * radius);
+      // Each cleared tree frees one farmland plot on that island — this is the
+      // economic reason clearing exists (expansion is approval-gated above).
+      this.state.farmlandCapacity[clearedIsland] += woodGained;
     }
-    return { success: true, command: command.command, irreversible, treesCleared: woodGained, woodGained, permanent: true };
+    return { success: true, command: command.command, irreversible, treesCleared: woodGained, woodGained, permanent: true, farmlandAfter: { ...this.state.farmlandCapacity } };
   }
 
   private buildBridge(command: AstrixCommand, irreversible: boolean): AstrixCommandResult {

@@ -43,11 +43,20 @@ export function createAstrixService(opts: AstrixServiceOptions = {}): AstrixServ
     decideTimeoutMs: opts.decideTimeoutMs,
   });
   const eventClients = new Set<http.ServerResponse>();
+  let lastSeason = state.season;
   const writeState = (snapshot: ReturnType<AstrixWorldState["snapshot"]>): void => {
     const payload = `event: state\ndata: ${JSON.stringify(snapshot)}\n\n`;
     for (const client of eventClients) client.write(payload);
   };
   bus.onStateChanged((snapshot) => writeState(snapshot));
+  // World-level observability: season transitions ride the agent event stream
+  // (turn 0 — these are not steward-turn events).
+  const emitSeasonChange = (): void => {
+    const season = state.season;
+    if (season === lastSeason) return;
+    lastSeason = season;
+    events.record({ type: "SEASON_CHANGED", turn: 0, data: { season, day: state.day } });
+  };
   // Structured agent events ride the same SSE stream (event: agent).
   events.onEvent((event) => {
     const payload = `event: agent\ndata: ${JSON.stringify(event)}\n\n`;
@@ -62,7 +71,10 @@ export function createAstrixService(opts: AstrixServiceOptions = {}): AstrixServ
     events,
     authToken,
     tick(deltaSeconds: number): void {
-      if (state.tick(deltaSeconds)) writeState(state.snapshot());
+      if (state.tick(deltaSeconds)) {
+        writeState(state.snapshot());
+        emitSeasonChange();
+      }
     },
     async handle(req, res, pathname, body = {}): Promise<boolean> {
       if (pathname === "/astrix/state" && req.method === "GET") {

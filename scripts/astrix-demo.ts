@@ -49,9 +49,14 @@ function summarizeWorld(label: string, state: any): void {
   console.log(`[demo] ${label}:`, JSON.stringify({
     day: state.day,
     time: state.time,
+    season: state.season,
+    daysUntilWinter: state.daysUntilWinter,
+    population: state.population,
     food: state.food,
     foodSecurity: state.foodSecurity,
     resources: state.resources,
+    farmland: state.farmland,
+    crops: state.crops?.map((c: any) => ({ id: c.id, farmPlotId: c.farmPlotId, growth: Math.round(c.growthStage * 100), harvestable: c.harvestable })),
     buildings: state.buildings?.map((b: any) => ({ id: b.id, type: b.type, islandId: b.islandId })),
     buildingCount: state.buildings?.length,
     resourceNodes: state.resourceNodes?.map((n: any) => ({ id: n.id, type: n.type, quantity: n.quantity })),
@@ -82,39 +87,57 @@ async function main(): Promise<void> {
   }
 
   const startedAt = Date.now();
-  let approved = false;
-  let finalState: string | null = null;
+  const approvedIds = new Set<string>();
   let approvalPayload: any = null;
+  let collapsed = false;
+  let finished30Days = false;
 
+  // Keep the governor alive across loop runs until the objective is met:
+  // restart on COMPLETED while the village is alive and the day < 30.
   while (Date.now() - startedAt < deadlineMs) {
     const status = await getJson("/astrix/agent/status");
-    const state = status.state as string;
+    const loopState = status.state as string;
+    const world = await getJson("/astrix/state");
 
-    if (state === "AWAITING_APPROVAL" && !approved) {
-      approvalPayload = status.pendingApproval;
-      console.log("[demo] APPROVAL REQUIRED — payload:");
-      console.log(JSON.stringify(approvalPayload, null, 2));
-      const respond = await postJson("/astrix/approval/respond", {
-        approval_id: approvalPayload.approvalId,
-        decision: "approve",
-      });
-      console.log("[demo] approval response:", JSON.stringify(respond));
-      approved = true;
+    if (loopState === "AWAITING_APPROVAL" && status.pendingApproval) {
+      const approvalId = status.pendingApproval.approvalId as string;
+      if (!approvedIds.has(approvalId)) {
+        approvalPayload = status.pendingApproval;
+        console.log("[demo] APPROVAL REQUIRED — payload:");
+        console.log(JSON.stringify(approvalPayload, null, 2));
+        const respond = await postJson("/astrix/approval/respond", {
+          approval_id: approvalId,
+          decision: "approve",
+        });
+        console.log("[demo] approval response:", JSON.stringify(respond));
+        approvedIds.add(approvalId);
+      }
     }
 
-    if (["COMPLETED", "FAILED", "STOPPED"].includes(state)) {
-      finalState = state;
+    if (world.population <= 0) {
+      collapsed = true;
+      console.log("[demo] VILLAGE COLLAPSED — population reached 0.");
       break;
+    }
+    if (world.day >= 30) {
+      finished30Days = true;
+      console.log("[demo] 30 days reached — objective window complete.");
+      break;
+    }
+    if (["COMPLETED", "FAILED", "STOPPED"].includes(loopState)) {
+      if (loopState === "FAILED") {
+        console.log(`[demo] loop FAILED: ${status.error ?? "unknown error"} — restarting the steward.`);
+      }
+      const restart = await postJson("/astrix/agent/start", { objective });
+      if (restart.status !== 200) {
+        console.error("[demo] could not restart the steward loop:", JSON.stringify(restart));
+        break;
+      }
     }
     await sleep(pollMs);
   }
 
-  if (!finalState) {
-    const status = await getJson("/astrix/agent/status");
-    console.log(`[demo] TIMEOUT after ${deadlineMs}ms — loop still: ${status.state}`);
-    finalState = status.state;
-  }
-  console.log(`[demo] final loop state: ${finalState}  (approval ${approved ? "APPROVED" : "never requested"})`);
+  console.log(`[demo] approvals granted: ${approvedIds.size}  (${collapsed ? "village collapsed" : finished30Days ? "survived 30 days" : "deadline reached"})`);
 
   const log = await getJson("/astrix/log");
   console.log(`[demo] event log (${log.events.length} events):`);
@@ -129,13 +152,17 @@ async function main(): Promise<void> {
   const beforeNodes = before.resourceNodes ?? [];
   const afterNodes = after.resourceNodes ?? [];
   console.log("[demo] SUMMARY");
+  console.log(`  day:         ${before.day} -> ${after.day} (${after.season})`);
+  console.log(`  population:  ${before.population} -> ${after.population}`);
   console.log(`  food:        ${before.food} -> ${after.food}`);
   console.log(`  wood:        ${before.resources?.wood} -> ${after.resources?.wood}`);
   console.log(`  stone:       ${before.resources?.stone} -> ${after.resources?.stone}`);
   console.log(`  buildings:   ${before.buildings?.length ?? 0} -> ${after.buildings?.length ?? 0}`);
+  console.log(`  farms:       ${(before.buildings ?? []).filter((b: any) => b.type === "farm").length} -> ${(after.buildings ?? []).filter((b: any) => b.type === "farm").length}`);
+  console.log(`  crops:       ${(before.crops ?? []).length} -> ${(after.crops ?? []).length}`);
+  console.log(`  farmland:    ${JSON.stringify(after.farmland)}`);
   console.log(`  resourceNodes: ${beforeNodes.length} -> ${afterNodes.length}`);
-  console.log(`  approval reached: ${approved ? "yes" : "no"}`);
-  console.log(`  approval id: ${approvalPayload ? approvalPayload.approvalId : "n/a"}`);
+  console.log(`  approvals:   ${approvedIds.size} granted${approvalPayload ? ` (last: ${approvalPayload.approvalId})` : ""}`);
 }
 
 main().catch((error) => {

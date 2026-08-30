@@ -21,6 +21,8 @@ export const ASTRIX_AGENT_EVENT_TYPES = [
   "VERIFICATION_FAILED",
   "TURN_COMPLETED",
   "TURN_FAILED",
+  // World-level events (not tied to a steward turn; turn is 0 for these).
+  "SEASON_CHANGED",
 ] as const;
 
 export type AstrixAgentEventType = (typeof ASTRIX_AGENT_EVENT_TYPES)[number];

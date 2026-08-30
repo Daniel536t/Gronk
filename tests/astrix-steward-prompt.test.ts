@@ -12,6 +12,7 @@ const ASTRIX_TOOLS = [
   "gather",
   "build",
   "plant",
+  "harvest",
   "clear_terrain",
   "build_bridge",
   "simulate_plan",

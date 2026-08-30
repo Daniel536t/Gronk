@@ -292,10 +292,21 @@ export class AstrixStewardLoop {
         this.emit("WORLD_OBSERVED", {
           turn,
           day: snapshot.day,
+          season: snapshot.season,
+          daysUntilWinter: snapshot.daysUntilWinter,
           time: snapshot.time,
+          population: snapshot.population,
           food: snapshot.food,
           foodSecurity: snapshot.foodSecurity,
           resources: snapshot.resources,
+          farmland: snapshot.farmland,
+          crops: snapshot.crops.map((c) => ({
+            id: c.id,
+            farmPlotId: c.farmPlotId,
+            cropType: c.cropType,
+            growth: Math.round(c.growthStage * 100),
+            harvestable: c.harvestable,
+          })),
         });
 
         let decision: StewardDecision;
@@ -564,6 +575,15 @@ export class AstrixStewardLoop {
       case "plant": {
         const id = typeof result.cropId === "string" ? result.cropId : undefined;
         return typeof id === "string" && snap.crops.some((c) => c.id === id);
+      }
+      case "harvest": {
+        const cropId = typeof result.cropId === "string" ? result.cropId : undefined;
+        const gained = typeof result.foodGained === "number" ? result.foodGained : 0;
+        if (!cropId || gained <= 0) return false;
+        const existed = before.crops.some((c) => c.id === cropId);
+        const removed = !snap.crops.some((c) => c.id === cropId);
+        const foodDelta = (snap.resources.food ?? 0) - (before.resources.food ?? 0);
+        return existed && removed && foodDelta === gained;
       }
       case "gather": {
         const nodeId = typeof result.resourceId === "string" ? result.resourceId : undefined;
