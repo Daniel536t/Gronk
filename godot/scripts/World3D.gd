@@ -114,7 +114,10 @@ func _build_environment() -> void:
     sky.process_mode = Sky.PROCESS_MODE_REALTIME
     settings.sky = sky
     settings.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-    settings.ambient_light_energy = 0.35
+    # Deliberately LOW ambient: the key light must carry the form. Sky-based
+    # ambient was 0.35 (washed). 0.22 keeps shadow faces blue-violet-tinted but
+    # clearly darker than lit faces, which is what gives low-poly geometry form.
+    settings.ambient_light_energy = 0.22
     settings.tonemap_mode = Environment.TONE_MAPPER_FILMIC
     settings.tonemap_exposure = 0.5
     settings.glow_enabled = false
@@ -122,26 +125,27 @@ func _build_environment() -> void:
     add_child(environment)
 
     # Warm key light from the upper-left: soft pastel diorama illumination with
-    # readable warm highlights and a gentle fill from the right.
+    # readable warm highlights and a gentle fill from the right. This is the
+    # sun that decides lit-vs-shadowed faces, so it is the strongest light.
     var sun := DirectionalLight3D.new()
     sun.name = "WarmSun"
     _sun = sun
     sun.rotation_degrees = Vector3(-46.0, -38.0, 0.0)   # upper-left key
     sun.light_color = Color("ffe6bd")                   # warm cream sunlight
-    sun.light_energy = 0.72
+    sun.light_energy = 1.0
     sun.shadow_enabled = true
     sun.directional_shadow_max_distance = 110.0
-    sun.shadow_blur = 3.5
+    sun.shadow_blur = 1.6                             # tighter, readable shadows
     sun.directional_shadow_fade_start = 0.6
     add_child(sun)
 
-    # Soft warm cool-toned fill from the lower-right so shadow faces are never
-    # flat-black; keeps matte pastel surfaces readable.
+    # Soft cool fill from the lower-right so shadow faces are never flat-black:
+    # keeps pastel surfaces charming while preserving the lit/shadow separation.
     var fill := DirectionalLight3D.new()
     fill.name = "WarmFill"
     fill.rotation_degrees = Vector3(36.0, 42.0, 0.0)
     fill.light_color = Color("c8dbe8")                 # pale blue fill
-    fill.light_energy = 0.22
+    fill.light_energy = 0.18
     fill.shadow_enabled = false
     add_child(fill)
 
@@ -158,12 +162,13 @@ func _update_cycle(delta: float) -> void:
     _sky_mat.sky_horizon_color = Color("c8b898").lerp(Color("7a5aa0"), dusk)
     _sky_mat.ground_horizon_color = Color("a89880").lerp(Color("5a4a84"), dusk)
     _sky_mat.ground_bottom_color = Color("5c6894").lerp(Color("2e2e56"), dusk)
-    # Ambient: pale cool (day) -> violet (dusk).
-    _env_settings.ambient_light_energy = lerpf(0.35, 0.24, dusk)
+    # Ambient: pale cool (day) -> violet (dusk). Matches the new low baseline
+    # so the key light keeps carrying form even at dusk.
+    _env_settings.ambient_light_energy = lerpf(0.22, 0.16, dusk)
     # Sun: warm bright (day) -> warm violet, dimmer (dusk).
     if _sun:
         _sun.light_color = Color("ffe9c9").lerp(Color("c9a0d8"), dusk)
-        _sun.light_energy = lerpf(0.55, 0.28, dusk)
+        _sun.light_energy = lerpf(1.0, 0.45, dusk)
 
 # Stylized violet-lavender translucent water. A large calm base surface carries
 # a slightly brighter rippling "top" plane so it reads as water with depth under
@@ -206,11 +211,13 @@ func _water_material(ripple: bool) -> StandardMaterial3D:
         material.emission = Color("9a8be0")
         material.emission_energy_multiplier = 0.2
     else:
-        material.albedo_color = Color("6b5bb8")   # violet-lavender, from the reference
-        material.albedo_color.a = 0.85
+        # Slightly deeper violet than before so the water reads darker than the
+        # sand/grass above it — the base of the value hierarchy, not a pale wash.
+        material.albedo_color = Color("5a4a9e")
+        material.albedo_color.a = 0.88
         material.emission_enabled = true
-        material.emission = Color("5150a8")
-        material.emission_energy_multiplier = 0.12
+        material.emission = Color("4a3c88")
+        material.emission_energy_multiplier = 0.1
     return material
 
 # ---------------------------------------------------------------------------
@@ -231,13 +238,16 @@ func _add_island_slabs(biome_id: String, data: Dictionary) -> void:
     var center: Vector3 = data["center"]
     var radius: Vector2 = data["radius"]
     var top: float = data["top"]
-    var base := _mesh_box("%s_StoneBase" % biome_id, center + Vector3(0.0, 0.0, 0.0), Vector3(radius.x * 2.0, 1.0, radius.y * 2.0), Color("7a838c"))
+    # Face-to-face value separation: stone base and soil step are visibly DARKER
+    # than the grass top, so the terrain reads as layered ground (bright sunlit
+    # grass above, shadowed earth/rock below) instead of one flat pastel mass.
+    var base := _mesh_box("%s_StoneBase" % biome_id, center + Vector3(0.0, 0.0, 0.0), Vector3(radius.x * 2.0, 1.0, radius.y * 2.0), Color("5f6a74"))
     base.rotation.y = 0.12
     add_child(base)
-    var middle := _mesh_box("%s_SoilStep" % biome_id, center + Vector3(0.0, 0.8, 0.0), Vector3(radius.x * 1.86, 1.6, radius.y * 1.86), data["color"].darkened(0.12))
+    var middle := _mesh_box("%s_SoilStep" % biome_id, center + Vector3(0.0, 0.8, 0.0), Vector3(radius.x * 1.86, 1.6, radius.y * 1.86), (data["color"] as Color).darkened(0.28))
     middle.rotation.y = -0.08
     add_child(middle)
-    var top_mesh := _mesh_box("%s_GrassTop" % biome_id, center + Vector3(0.0, top - 0.2, 0.0), Vector3(radius.x * 1.68, 1.0, radius.y * 1.68), data["color"])
+    var top_mesh := _mesh_box("%s_GrassTop" % biome_id, center + Vector3(0.0, top - 0.2, 0.0), Vector3(radius.x * 1.68, 1.0, radius.y * 1.68), (data["color"] as Color).lightened(0.06))
     top_mesh.rotation.y = 0.05
     add_child(top_mesh)
     if biome_id == "frost":
@@ -408,6 +418,9 @@ func _build_shoreline(s: float) -> void:
 # Walkable wooden deck flush with the meadow surface, bridging the shore to the
 # magic islet. Planks carry their own StaticBody so the player crosses it.
 func _build_bridge(s: float) -> void:
+    # Wide soft grounding shadow under the deck so the bridge reads as a solid
+    # object sitting on the water, not a floating plank.
+    _add_ground_shadow(Vector3(22.0, s + 0.02, 41.0), 3.2, 3.4, 0.3)
     var deck := StaticBody3D.new()
     deck.name = "Bridge_Deck"
     deck.position = Vector3(22.0, s, 41.0)
@@ -473,6 +486,7 @@ func _build_magic_islet(s: float) -> void:
 
 func _build_hut(center: Vector3) -> void:
     var s := center.y
+    _add_ground_shadow(center + Vector3(0.0, 0.0, 0.0), 2.9, 2.5, 0.4)
     var body := MeshInstance3D.new()
     body.name = "Hut"
     var bm := BoxMesh.new()
@@ -515,6 +529,7 @@ func _build_hut(center: Vector3) -> void:
     add_child(body_collider)
 
 func _add_signpost(pos: Vector3) -> void:
+    _add_ground_shadow(pos, 0.5, 0.5, 0.4)
     var group := Node3D.new()
     group.name = "Signpost"
     group.position = pos
@@ -526,6 +541,7 @@ func _add_signpost(pos: Vector3) -> void:
     _obstacle(pos + Vector3(0.0, 0.9, 0.0), Vector3(0.5, 1.8, 0.5))
 
 func _add_lantern(pos: Vector3) -> void:
+    _add_ground_shadow(pos, 0.42, 0.42, 0.4)
     var group := Node3D.new()
     group.name = "Lantern"
     group.position = pos
@@ -538,6 +554,7 @@ func _add_lantern(pos: Vector3) -> void:
     _obstacle(pos + Vector3(0.0, 1.2, 0.0), Vector3(0.4, 2.4, 0.4))
 
 func _add_bench(pos: Vector3) -> void:
+    _add_ground_shadow(pos, 1.15, 0.6, 0.42)
     var group := Node3D.new()
     group.name = "Bench"
     group.position = pos
@@ -548,12 +565,14 @@ func _add_bench(pos: Vector3) -> void:
     _obstacle(pos + Vector3(0.0, 0.5, 0.0), Vector3(2.0, 0.6, 1.0))
 
 func _add_crate(pos: Vector3) -> void:
+    _add_ground_shadow(pos, 0.72, 0.72, 0.45)
     var box := _mesh_box("Crate", pos + Vector3(0.0, 0.55, 0.0), Vector3(1.1, 1.1, 1.1), Color("c2925f"))
     box.material_override = _material(Color("c2925f"))
     add_child(box)
     _obstacle(pos + Vector3(0.0, 0.55, 0.0), Vector3(1.1, 1.1, 1.1))
 
 func _add_barrel(pos: Vector3) -> void:
+    _add_ground_shadow(pos, 0.7, 0.7, 0.45)
     var barrel := MeshInstance3D.new()
     barrel.name = "Barrel"
     var bm := CylinderMesh.new()
@@ -570,6 +589,7 @@ func _add_barrel(pos: Vector3) -> void:
     _obstacle(pos + Vector3(0.0, 0.55, 0.0), Vector3(1.2, 1.15, 1.2))
 
 func _add_flower(pos: Vector3, index: int, color: Color) -> void:
+    _add_ground_shadow(pos, 0.18, 0.18, 0.3)
     var flower := MeshInstance3D.new()
     flower.name = "Flower_%02d" % index
     var stem := CylinderMesh.new()
@@ -590,6 +610,7 @@ func _add_flower(pos: Vector3, index: int, color: Color) -> void:
     add_child(head)
 
 func _add_pebble(pos: Vector3, index: int) -> void:
+    _add_ground_shadow(pos, 0.24, 0.24, 0.32)
     var pebble := MeshInstance3D.new()
     pebble.name = "Pebble_%02d" % index
     var pm := SphereMesh.new()
@@ -603,6 +624,7 @@ func _add_pebble(pos: Vector3, index: int) -> void:
     add_child(pebble)
 
 func _add_mushroom(pos: Vector3, index: int) -> void:
+    _add_ground_shadow(pos, 0.24, 0.24, 0.35)
     var mushroom := Node3D.new()
     mushroom.name = "Mushroom_%02d" % index
     mushroom.position = pos
@@ -627,6 +649,7 @@ func _add_mushroom(pos: Vector3, index: int) -> void:
     mushroom.add_child(cap)
 
 func _add_well(pos: Vector3) -> void:
+    _add_ground_shadow(pos, 1.35, 1.35, 0.4)
     var group := Node3D.new()
     group.name = "Well"
     group.position = pos + Vector3(0.0, 0.0, 0.0)
@@ -658,6 +681,7 @@ func _add_well(pos: Vector3) -> void:
     _obstacle(pos + Vector3(0.0, 0.9, 0.0), Vector3(2.2, 1.6, 2.2))
 
 func _add_fence_post(pos: Vector3, rot_deg: float) -> void:
+    _add_ground_shadow(pos, 0.3, 0.4, 0.4)
     var post := _mesh_box("FencePost", pos + Vector3(0.0, 0.5, 0.0), Vector3(0.16, 1.0, 0.5), Color("9a6a45"))
     post.rotation.y = deg_to_rad(rot_deg)
     post.material_override = _material(Color("9a6a45"))
@@ -680,13 +704,19 @@ func _obstacle(center: Vector3, size: Vector3) -> void:
     add_child(body)
 
 func _add_tree(position: Vector3, surface: float, index: int, crown_color: Color) -> void:
+    _add_ground_shadow(Vector3(position.x, surface, position.z), 1.9, 1.7, 0.42)
     var tree := Node3D.new()
     tree.name = "Tree_%02d" % index
     tree.position = Vector3(position.x, surface, position.z)
     add_child(tree)
     _animated_plants.append(tree)
-    var trunk := _mesh_box("Trunk", Vector3(0.0, 1.0, 0.0), Vector3(0.6, 2.0, 0.6), Color("966a4e"))
+    var trunk := _mesh_box("Trunk", Vector3(0.0, 1.0, 0.0), Vector3(0.6, 2.0, 0.6), Color("8a5a3f"))
     tree.add_child(trunk)
+    # Lit side of the trunk brighter, shadow side darker: the key light defines
+    # the cylinder's form instead of leaving it a flat brown stick.
+    var trunk_light := _mesh_box("TrunkLight", Vector3(-0.2, 1.0, 0.0), Vector3(0.28, 2.0, 0.6), Color("a9795c"))
+    trunk_light.material_override = _material(Color("a9795c"))
+    tree.add_child(trunk_light)
     for tier in range(3):
         var crown := MeshInstance3D.new()
         var mesh := PrismMesh.new()
@@ -694,7 +724,10 @@ func _add_tree(position: Vector3, surface: float, index: int, crown_color: Color
         crown.mesh = mesh
         crown.position.y = 2.2 + float(tier) * 0.95
         crown.rotation.y = float(tier) * 0.4
-        crown.material_override = _material(crown_color.lightened(0.05 * float(tier)))
+        # Foliage value tiers: lowest tier darkest (shadowed underside), upper
+        # tiers brighter (sun-facing) — the cone reads as volumetric, not flat.
+        var tier_color := crown_color.darkened(0.18 - 0.06 * float(tier))
+        crown.material_override = _material(tier_color.lightened(0.04 * float(tier)))
         tree.add_child(crown)
     # Trunk collision so the player can't pass through trees.
     var body := StaticBody3D.new()
@@ -708,6 +741,7 @@ func _add_tree(position: Vector3, surface: float, index: int, crown_color: Color
     tree.add_child(body)
 
 func _add_shrub(node_pos: Vector3, node_name: String) -> void:
+    _add_ground_shadow(node_pos, 1.0, 0.85, 0.42)
     var shrub := Node3D.new()
     shrub.name = node_name
     shrub.position = node_pos
@@ -747,6 +781,7 @@ func _add_crystal(position: Vector3, index: int) -> void:
     add_child(crystal)
 
 func _add_rock(position: Vector3, index: int, color: Color) -> void:
+    _add_ground_shadow(position, 1.05, 0.9, 0.45)
     var rock := MeshInstance3D.new()
     rock.name = "Rock_%02d" % index
     var mesh := PrismMesh.new()
@@ -881,6 +916,36 @@ func _apply_camera_framing() -> void:
     # Both are tighter than the map so the playable composition fills the frame.
     camera.size = 10.0 if aspect < 1.05 else 12.0
 
+# Grounding contact shadow: a tight dark disc at the object's base plus a wider,
+# fainter disc that softens outward. This is what makes props visibly TOUCH the
+# terrain instead of floating. Presentation-only.
+func _add_ground_shadow(center: Vector3, radius_x: float, radius_z: float, strength: float = 0.45) -> void:
+    var group := Node3D.new()
+    group.name = "GroundShadow"
+    group.position = center + Vector3(0.0, 0.03, 0.0)
+    for layer in [
+        {"r": 1.0, "a": strength},                # tight core
+        {"r": 1.55, "a": strength * 0.42},        # soft outer falloff
+    ]:
+        var disc := MeshInstance3D.new()
+        var mesh := CylinderMesh.new()
+        mesh.top_radius = radius_x * layer["r"]
+        mesh.bottom_radius = radius_x * layer["r"]
+        mesh.height = 0.02
+        disc.mesh = mesh
+        disc.scale.z = radius_z / maxf(0.01, radius_x)
+        disc.material_override = _ground_shadow_material(layer["a"])
+        group.add_child(disc)
+    add_child(group)
+
+func _ground_shadow_material(alpha: float) -> StandardMaterial3D:
+    var material := StandardMaterial3D.new()
+    material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+    material.albedo_color = Color(0.10, 0.07, 0.09, alpha)
+    material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+    material.roughness = 1.0
+    return material
+
 func _mesh_box(node_name: String, position: Vector3, size: Vector3, color: Color) -> MeshInstance3D:
     var node := MeshInstance3D.new()
     node.name = node_name
@@ -894,7 +959,9 @@ func _mesh_box(node_name: String, position: Vector3, size: Vector3, color: Color
 func _material(color: Color, emission_energy: float = 0.0) -> StandardMaterial3D:
     var material := StandardMaterial3D.new()
     material.albedo_color = color
-    material.roughness = 0.9
+    # Roughness 0.82 keeps the matte pastel look while letting the directional
+    # key produce gentle specular response on lit faces (form without gloss).
+    material.roughness = 0.82
     if emission_energy > 0.0:
         material.emission_enabled = true
         material.emission = color

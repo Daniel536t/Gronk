@@ -157,16 +157,18 @@ func _build_visual() -> Node3D:
     root.add_child(_body_group)
 
     # Body (hooded adventurer capsule silhouette, slightly exaggerated).
+    # Deeper teal than the pale terrain so the protagonist pops as the anchor.
     var body := MeshInstance3D.new()
     var body_mesh := CapsuleMesh.new()
     body_mesh.radius = 0.58
     body_mesh.height = 1.7
     body.mesh = body_mesh
     body.position.y = 0.95
-    body.material_override = _material(Color("8fd3c7"))
+    body.material_override = _material(Color("5fb8a8"))
     _body_group.add_child(body)
 
-    # Hood.
+    # Hood — warm coral-pink reads against both the teal body and the pale
+    # ground, giving the head a clear focal silhouette.
     var hood := MeshInstance3D.new()
     var hood_mesh := CylinderMesh.new()
     hood_mesh.top_radius = 0.06
@@ -174,7 +176,7 @@ func _build_visual() -> Node3D:
     hood_mesh.height = 1.0
     hood.mesh = hood_mesh
     hood.position.y = 2.0
-    hood.material_override = _material(Color("f0b0d0"))
+    hood.material_override = _material(Color("e89ab8"))
     _body_group.add_child(hood)
 
     # Hood tip (directional readout gives the silhouette a point, not a bean).
@@ -184,17 +186,17 @@ func _build_visual() -> Node3D:
     tip.mesh = tip_mesh
     tip.position = Vector3(0.0, 2.55, 0.05)
     tip.rotation.x = 0.15
-    tip.material_override = _material(Color("f0b0d0"))
+    tip.material_override = _material(Color("e89ab8"))
     _body_group.add_child(tip)
 
-    # Glowing eye.
+    # Glowing eye — brighter so the face reads even at mobile size.
     var eye := MeshInstance3D.new()
     var eye_mesh := SphereMesh.new()
-    eye_mesh.radius = 0.1
-    eye_mesh.height = 0.2
+    eye_mesh.radius = 0.11
+    eye_mesh.height = 0.22
     eye.mesh = eye_mesh
     eye.position = Vector3(0.0, 2.0, 0.62)
-    eye.material_override = _material(Color("fff0bd"), 0.35)
+    eye.material_override = _material(Color("fff6c8"), 0.6)
     _body_group.add_child(eye)
 
     # Cloak base: a flared cone under the body that reads as a robe and gives
@@ -207,7 +209,7 @@ func _build_visual() -> Node3D:
     cape_mesh.height = 0.9
     _cape.mesh = cape_mesh
     _cape.position.y = 0.5
-    _cape.material_override = _material(Color("f0b0d0"))
+    _cape.material_override = _material(Color("d87fa8"))
     _body_group.add_child(_cape)
 
     # Backpack accessory: reads at gameplay zoom, gives a traveller silhouette.
@@ -231,17 +233,28 @@ func _build_visual() -> Node3D:
     _backpack.add_child(strap)
     _body_group.add_child(_backpack)
 
-    # Contact shadow: flattened dark disc at the feet.
+    # Contact shadow: tight dark core + wider soft falloff so the player visibly
+    # anchors to the ground instead of hovering over the pale terrain.
     _shadow = MeshInstance3D.new()
     _shadow.name = "ContactShadow"
     var shadow_mesh := CylinderMesh.new()
-    shadow_mesh.top_radius = 0.9
-    shadow_mesh.bottom_radius = 0.9
-    shadow_mesh.height = 0.04
+    shadow_mesh.top_radius = 1.05
+    shadow_mesh.bottom_radius = 1.05
+    shadow_mesh.height = 0.03
     _shadow.mesh = shadow_mesh
-    _shadow.position = Vector3(0.0, 0.03, 0.0)
-    _shadow.material_override = _material(Color(0.02, 0.05, 0.06, 0.4))
+    _shadow.position = Vector3(0.0, 0.04, 0.0)
+    _shadow.material_override = _material(Color(0.04, 0.03, 0.05, 0.55))
     root.add_child(_shadow)
+    var soft := MeshInstance3D.new()
+    soft.name = "ContactShadowSoft"
+    var soft_mesh := CylinderMesh.new()
+    soft_mesh.top_radius = 1.6
+    soft_mesh.bottom_radius = 1.6
+    soft_mesh.height = 0.02
+    soft.mesh = soft_mesh
+    soft.position = Vector3(0.0, 0.035, 0.0)
+    soft.material_override = _material(Color(0.04, 0.03, 0.05, 0.28))
+    root.add_child(soft)
 
     return root
 

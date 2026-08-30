@@ -210,6 +210,14 @@ Applied a focused visual pass to take the starting region from stacked-primitive
 - [x] Root cause: `gather_nearest()` scans the `resource_nodes` group, but the world never instantiated a single `ResourceNode3D`, so the action button always returned "no resource nearby" and did nothing visible. Materialized 5 gatherable pickup markers (wood/stone/crystal/water) wired to the authoritative server node IDs from `src/astrix/state.ts`, on the walkable surface beside spawn, each with a floating glow marker. Gathering now follows the authoritative GATHER flow and visibly collects the node.
 - [x] Drag-probe fix (exit non-zero on drag errors / missing evidence / insecure context / collected errors) confirmed present (`capture-web.ts`).
 
+## Visual Pass 1 — lighting, value separation & grounding
+
+- [x] Lighting: warm key raised to energy 1.0 (was 0.72/0.55 effective), ambient lowered 0.35→0.22 so the key carries form, tight shadows (blur 1.6), cool fill 0.18, day/dusk lerp re-based (sun 1.0→0.45, ambient 0.22→0.16).
+- [x] Grounding: added `_add_ground_shadow()` (tight dark core + soft outer falloff) under player, trees, rocks, shrubs, mushrooms, flowers, pebbles, well, fence posts, crates, barrels, benches, lanterns, signposts, hut and bridge deck.
+- [x] Player readability: body deepened `8fd3c7→5fb8a8`, hood/cape warm coral `e89ab8/d87fa8`, brighter eye (emission 0.6), double-layer grounding shadow.
+- [x] Face separation: grass tops lightened, soil/stone steps darkened (0.28 darken), trunk lit/shadow halves, foliage value tiers (bottom darkest→top brightest), deeper violet water base.
+- [x] Verified: contrast (lum std 45.9→60.2), band spread (24→33), player color-distance vs ground (84→110), player pixel detection 374→565, edges 4.4%→6.4%; pastel saturation 0.28 preserved, near-white 0.1%, dusk still violet not crushed. Screenshot `/tmp/astrix-pass1-done.png`.
+
 ## Guardrails
 
 - The existing TypeScript browser client remains the reference client and must not be modified for ASTrix work.
