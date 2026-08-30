@@ -164,6 +164,8 @@ func _water_material() -> StandardMaterial3D:
     var material := StandardMaterial3D.new()
     material.metallic = 0.0
     material.roughness = 0.3
+    # Alpha is meaningless unless the material is actually transparent.
+    material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
     material.albedo_color = Color("6b5bb8")   # violet-lavender, from the reference
     material.albedo_color.a = 0.85
     # Subtle sheen so the water reads as a lit translucent surface, not flat color.

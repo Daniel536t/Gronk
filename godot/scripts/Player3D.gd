@@ -28,6 +28,12 @@ var _move_amount := 0.0
 func _ready() -> void:
     _visual = _build_visual()
     add_child(_visual)
+    # The action button (and keyboard E) both emit interact_triggered through
+    # AstrixInput; without this wiring the visible action button was inert.
+    AstrixInput.interact_triggered.connect(_on_interact_triggered)
+
+func _on_interact_triggered() -> void:
+    gather_nearest()
 
 func _physics_process(delta: float) -> void:
     var input_vector := AstrixInput.movement_vector()

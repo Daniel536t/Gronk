@@ -114,3 +114,16 @@ try {
 }
 await browser.close();
 tl("done");
+
+// Fail loudly so automation cannot report success when the probe itself
+// failed: drag dispatch errors, collected page/console errors, or a missing
+// secure context should all flip the exit code.
+const dragErr = drag && typeof drag === "object" && "error" in drag ? String((drag as { error: unknown }).error) : "";
+const missingEvidence =
+  simulateDragger &&
+  (!drag || typeof drag !== "object" || !("after" in drag));
+const exitCode = dragErr || missingEvidence || errors.length > 0 ? 1 : 0;
+if (exitCode !== 0) {
+  tl("PROBE FAILED: dragErr=" + (dragErr || "-") + " missingEvidence=" + missingEvidence + " errors=" + errors.length);
+}
+process.exit(exitCode);

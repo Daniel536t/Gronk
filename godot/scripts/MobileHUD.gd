@@ -123,11 +123,13 @@ func _reset_thumb() -> void:
     _thumb.position = (_joystick_zone.size / 2.0) - Vector2(JOY_THUMB_RADIUS, JOY_THUMB_RADIUS)
 
 func _on_joystick_input(event: InputEvent) -> void:
-    if event is InputEventScreenTouch and _active_touch == -1:
-        if event.pressed:
+    # Press requires no active touch; release must match the ACTIVE index, or a
+    # lifted finger can never reach _release_stick() and virtual movement sticks.
+    if event is InputEventScreenTouch:
+        if event.pressed and _active_touch == -1:
             _active_touch = event.index
             _stick_origin = event.position
-        elif event.index == _active_touch:
+        elif not event.pressed and event.index == _active_touch:
             _release_stick()
     elif event is InputEventScreenDrag and event.index == _active_touch:
         _update_stick(event.position)
