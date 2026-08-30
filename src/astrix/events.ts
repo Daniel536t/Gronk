@@ -6,6 +6,11 @@
 export const ASTRIX_AGENT_EVENT_TYPES = [
   "TURN_STARTED",
   "WORLD_OBSERVED",
+  // Steward decision lifecycle: started/completed with duration and a failure
+  // kind so MODEL LATENCY vs PARSING FAILURE vs PROVIDER FAILURE are
+  // distinguishable in the log without a second logging system.
+  "DECISION_STARTED",
+  "DECISION_COMPLETED",
   "PLAN_CREATED",
   "SUBAGENT_REQUESTED",
   "SUBAGENT_RESULT",

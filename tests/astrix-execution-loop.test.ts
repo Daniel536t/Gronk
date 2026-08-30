@@ -126,7 +126,9 @@ describe("ASTrix steward execution loop", () => {
     const types = eventTypes(events);
     expect(types[0]).toBe("TURN_STARTED");
     expect(types[1]).toBe("WORLD_OBSERVED");
-    expect(types[2]).toBe("PLAN_CREATED");
+    expect(types[2]).toBe("DECISION_STARTED");
+    expect(types[3]).toBe("DECISION_COMPLETED");
+    expect(types[4]).toBe("PLAN_CREATED");
     // Strict ordering: propose -> executing -> succeeded -> verification.
     expect(
       ["ACTION_PROPOSED", "ACTION_EXECUTING", "ACTION_SUCCEEDED", "VERIFICATION_STARTED", "VERIFICATION_SUCCEEDED"].every((t) =>

@@ -316,7 +316,7 @@ export const ASTRIX_TOOL_GUIDE = [
   "  inspect_resources: {}",
   "  inspect_buildings: {}",
   '  gather: { "resource_id": "<node id>" }  OR  { "resource_type": "wood" | "stone" | "food" | "water" | "crystal" }',
-  '  build: { "building_type": "house" | "farm" | "storage", "position": { "x": 0-100, "y": <ground level>, "z": 0-60 }, "island_id": "meadow" | "frost" | "dusk" }',
+  '  build: { "building_type": "house" | "farm" | "storage", "position": { "x": 0-100, "y": <ground level>, "z": 0-60 }, "island_id": "meadow" | "frost" | "dusk" }   (Frost/Dusk are UNREACHABLE from Meadow until a bridge exists — building there also requires a bridge)',
   '  plant: { "farm_plot_id": "<existing farm building id>", "crop_type": "wheat" }',
   '  harvest: { "crop_id": "<crop id>" }   (harvest a MATURE crop — growth 100% — for food; wheat yields 6 food)',
   '  clear_terrain: { "position": { "x", "y", "z" }, "radius": 1-20 }   (IRREVERSIBLE — auto human approval; yields 1 wood + 1 farmland plot per tree cleared but lowers biome health)',
@@ -341,6 +341,7 @@ export function buildStewardPrompt(snapshot: unknown, options: AstrixStewardTurn
     '{ "decision": "<one-line decision>", "recommendation": "<what you recommend>", "reasoning": "<why>", "toolCalls": [{ "tool": "<ASTrix tool>", "args": { ... } }] }',
     "ACT, do not merely observe: observation-only turns accomplish nothing and the village is starving. Inspect once or twice, then choose real mutations (gather, build a farm, plant, harvest mature crops; clear terrain only if genuinely needed — it pauses for human approval).",
     "WORLD RULES: a year is 30 days (Spring 1-8, Summer 9-16, Autumn 17-24, Winter 25-30 — see `season` in the state). Wheat matures in 8 days and STOPS growing in Winter, so plant early and HARVEST mature crops (growth 100%) before winter. Each villager eats 1 food/day (1.5 in Winter). Farmland is limited per island (see `farmland`: a farm consumes one plot, each farm holds up to 3 crops). When no farmland remains, clear_terrain creates new plots on that island (IRREVERSIBLE — pauses for human approval), or build a bridge to farm another island.",
+    "ECONOMICS: every turn compare projected food demand against available and future production. The state provides deterministic derived facts — `foodPerDay` (daily consumption), `daysOfFoodRemaining` (food divided by consumption, ignoring production), `harvestableFood` (harvest these now), `growingFood` (all planted crops if they mature), `projectedFoodAtWinter` (food + harvestable + growing minus consumption until Winter), `foodPressureLevel`. Empty farm plots are wasted production: if survival requires more food, plant every free plot and harvest as soon as crops mature. Never let the village run out of food before the next harvest.",
     "If nothing needs doing, return toolCalls: [] — that is a valid idle decision.",
     `Authoritative world state:\n${JSON.stringify(snapshot)}`,
   );

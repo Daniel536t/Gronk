@@ -20,6 +20,7 @@
     "provision": "tsx scripts/provision.ts",
     "provision:astrix": "tsx scripts/provision-astrix-agents.ts",
     "astrix:demo": "tsx scripts/astrix-demo.ts",
+    "astrix:eval": "tsx scripts/astrix-demo.ts",
     "astrix:steward-turn": "tsx scripts/astrix-steward-turn.ts",
     "verify:mode-a": "tsx scripts/verify-mode-a.ts",
     "tf:smoke": "tsx scripts/tf-smoke.ts",

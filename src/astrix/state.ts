@@ -44,6 +44,18 @@ export interface AstrixStateSnapshot {
   season: Season;
   /** Days until the next Winter start (0 when it is Winter). */
   daysUntilWinter: number;
+  /** Daily food consumption at current population/season (villagers eat 1/day, 1.5 in Winter). */
+  foodPerDay: number;
+  /** Whole days of food remaining at the current consumption rate, ignoring production. */
+  daysOfFoodRemaining: number;
+  /** Food that could be produced by harvesting every harvestable crop right now. */
+  harvestableFood: number;
+  /** Food from all planted crops if they all mature (future production potential). */
+  growingFood: number;
+  /** Projection: food + harvestableFood + growingFood - consumption until Winter (assumes all crops mature). */
+  projectedFoodAtWinter: number;
+  /** "critical" | "high" | "ok" — deterministic from daysOfFoodRemaining. */
+  foodPressureLevel: "critical" | "high" | "ok";
   resources: Record<ResourceType, number>;
   biomeHealth: Record<BiomeId, number>;
   crops: Array<AstrixCrop & { harvestable: boolean }>;
@@ -99,6 +111,12 @@ export function growthPerDay(cropType: string, season: Season): number {
   const config = (CROP_TYPES as Record<string, { daysToMature: number; yield: number }>)[cropType];
   if (!config) return 0;
   return 1 / config.daysToMature;
+}
+
+/** Food a crop of this type yields when harvested. */
+export function yieldOf(cropType: string): number {
+  const config = (CROP_TYPES as Record<string, { daysToMature: number; yield: number }>)[cropType];
+  return config?.yield ?? 1;
 }
 
 export class AstrixWorldState {
@@ -167,6 +185,34 @@ export class AstrixWorldState {
     return `${prefix}-${String(this.nextId++).padStart(3, "0")}`;
   }
 
+  /**
+   * Deterministic derived survival facts (computed from authoritative state,
+   * never a recommendation). These give the steward the facts it needs to
+   * reason about consequences without being scripted toward an action.
+   */
+  private survivalProjection(): {
+    foodPerDay: number;
+    daysOfFoodRemaining: number;
+    harvestableFood: number;
+    growingFood: number;
+    projectedFoodAtWinter: number;
+    foodPressureLevel: "critical" | "high" | "ok";
+  } {
+    const foodPerDay = this.population * FOOD_PER_VILLAGER_PER_DAY * (this.season === "winter" ? WINTER_FOOD_MULTIPLIER : 1);
+    const daysOfFoodRemaining = Math.floor(this.food / Math.max(1, foodPerDay));
+    let harvestableFood = 0;
+    let growingFood = 0;
+    for (const crop of this.crops) {
+      const yieldAmount = yieldOf(crop.cropType);
+      growingFood += yieldAmount;
+      if (crop.growthStage >= 1) harvestableFood += yieldAmount;
+    }
+    const projectedFoodAtWinter = this.food + harvestableFood + growingFood - daysUntilWinterFor(this.day) * foodPerDay;
+    const foodPressureLevel: "critical" | "high" | "ok" =
+      daysOfFoodRemaining < 3 ? "critical" : daysOfFoodRemaining < 7 ? "high" : "ok";
+    return { foodPerDay, daysOfFoodRemaining, harvestableFood, growingFood, projectedFoodAtWinter, foodPressureLevel };
+  }
+
   snapshot(): AstrixStateSnapshot {
     const usedFarmland = (island: BiomeId): number =>
       this.buildings.filter((building) => building.type === "farm" && building.islandId === island).length;
@@ -179,6 +225,7 @@ export class AstrixWorldState {
       foodSecurity: this.foodSecurity,
       season: this.season,
       daysUntilWinter: daysUntilWinterFor(this.day),
+      ...this.survivalProjection(),
       resources: { ...this.resources },
       biomeHealth: { ...this.biomeHealth },
       crops: this.crops.map((crop) => ({ ...crop, harvestable: crop.growthStage >= 1 })),

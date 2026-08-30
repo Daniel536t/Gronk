@@ -1,5 +1,18 @@
 # ASTrix Tasks
 
+## P3 — 30-day survival reliability (implemented; real eval running)
+
+- [x] **Configurable steward decision timeout**: live `ASTRIX_DECIDE_TIMEOUT_MS` raised 120s → **300s** (env, shared by the loop and the TrueForge provider; code default stays 60s for bounded tests). The previous real eval's 7/8 turn failures were 120s LLM latency timeouts.
+- [x] **Decision latency observability**: new `DECISION_STARTED` / `DECISION_COMPLETED` events with `durationMs`, `ok`, and `failureKind` (`timeout` | `parse` | `provider`) so MODEL LATENCY vs PARSING FAILURE vs PROVIDER FAILURE vs ACTION FAILURE are distinguishable in `/astrix/log` without a second logging system. `TURN_FAILED` now also carries `decisionDurationMs` / `decisionFailureKind`.
+- [x] **Strategic observability**: snapshot (and `WORLD_OBSERVED`) now expose deterministic derived survival facts — `foodPerDay`, `daysOfFoodRemaining`, `harvestableFood`, `growingFood`, `projectedFoodAtWinter` (food + harvestable + growing − consumption until Winter), `foodPressureLevel` (critical/high/ok). Facts only — no action recommendation.
+- [x] **Farm utilization guidance**: steward prompt + provisioned instructions gain an ECONOMICS block (compare demand vs production via the derived fields; empty farm plots are wasted production; harvest before winter; never run out before the next harvest). Explicitly NOT scripted — no "build exactly 3 farms" / "always clear terrain".
+- [x] **Connectivity/build consistency** (design-spec gap closed): `PLACE_BUILDING` on Frost/Dusk now requires a bridge from Meadow, matching the architecture's "building on an island without a bridge strands production" rule and the existing `gather` gate. The live eval had farmed Frost/Dusk without a bridge; now the bridge (approval-gated) is the only way to reach other islands' farmland. `gather` refactored onto the shared `islandReachableFromMeadow` helper.
+- [x] **Reproducible evaluation driver** (`scripts/astrix-demo.ts`, `npm run astrix:eval`): fresh world → real steward → real loop/bus/gate; **no auto-approval** (`ASTRIX_DEMO_APPROVAL_MODE=interactive` default; `auto`/`manual` opt-in); pauses at the approval gate and asks the human (approve/reject/quit); records full state + event timeline + approval payloads + before/after to `ASTRIX_DEMO_RECORD_DIR`; restarts the steward across runs until day 30/collapse; stops the loop cleanly.
+- [x] **Godot AgentConsole** (minimal): now shows day/30, season, population, food, food pressure (color-coded), days-left @ /day, per-island farm usage from the world snapshot, current agent activity, and APPROVE/REJECT buttons that call the real `/astrix/approval/respond` through GameClient. Headless boot clean.
+- [x] Tests: `tests/astrix-reliability.test.ts` (7: configurable timeout, timeout event kind, latency ordering, derived-field snapshot values incl. winter consumption, WORLD_OBSERVED fields, prompt economics text, connectivity/build gate incl. approval-gated bridge unlock). Execution-loop ordering test updated for the new decision events. Full suite **131/131**, both typechecks, `git diff --check`, Godot headless boot clean.
+- [x] Live env: pm2 restarted with `ASTRIX_DECIDE_TIMEOUT_MS=300000`; steward re-provisioned with economics guidance.
+- [ ] Real TrueForge steward evaluation with the fixed stack — in progress (`/tmp/astrix-eval-milestone`).
+
 ## P2 — simulation layer: seasons, crops, farmland & survival pressure (implemented)
 
 - [x] **Seasons**: 30-day year (Spring 1–8, Summer 9–16, Autumn 17–24, Winter 25–30, wraps). `season` + `daysUntilWinter` in the snapshot; `SEASON_CHANGED` emitted on the agent event stream when the season flips (`src/astrix/state.ts`, `events.ts`, `server.ts`).

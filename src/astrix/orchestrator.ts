@@ -298,6 +298,12 @@ export class AstrixStewardLoop {
           population: snapshot.population,
           food: snapshot.food,
           foodSecurity: snapshot.foodSecurity,
+          foodPerDay: snapshot.foodPerDay,
+          daysOfFoodRemaining: snapshot.daysOfFoodRemaining,
+          harvestableFood: snapshot.harvestableFood,
+          growingFood: snapshot.growingFood,
+          projectedFoodAtWinter: snapshot.projectedFoodAtWinter,
+          foodPressureLevel: snapshot.foodPressureLevel,
           resources: snapshot.resources,
           farmland: snapshot.farmland,
           crops: snapshot.crops.map((c) => ({
@@ -309,6 +315,11 @@ export class AstrixStewardLoop {
           })),
         });
 
+        // Decision lifecycle observability: DECISION_STARTED -> DECISION_COMPLETED
+        // with durationMs and a failureKind so MODEL LATENCY (timeout), PARSING
+        // FAILURE, and PROVIDER FAILURE are distinguishable in the event log.
+        const decidedAt = Date.now();
+        this.emit("DECISION_STARTED", { turn, provider: this.providerId, timeoutMs: this.decideTimeoutMs });
         let decision: StewardDecision;
         try {
           decision = await this.decideWithTimeout({
@@ -318,9 +329,33 @@ export class AstrixStewardLoop {
             history: this._actions,
             lastOutcome: this._lastOutcome,
           });
+          this.emit("DECISION_COMPLETED", {
+            turn,
+            provider: this.providerId,
+            durationMs: Date.now() - decidedAt,
+            ok: true,
+            toolCallCount: Array.isArray(decision.toolCalls) ? decision.toolCalls.length : 0,
+            failureKind: null,
+          });
         } catch (error) {
-          this._runError = `steward decision failed: ${(error as Error).message}`;
-          this.emit("TURN_FAILED", { turn, error: this._runError });
+          const message = (error as Error).message;
+          const durationMs = Date.now() - decidedAt;
+          const failureKind = message.includes("timed out") ? "timeout" : message.includes("no parseable decision") ? "parse" : "provider";
+          this.emit("DECISION_COMPLETED", {
+            turn,
+            provider: this.providerId,
+            durationMs,
+            ok: false,
+            failureKind,
+            error: message,
+          });
+          this._runError = `steward decision failed: ${message}`;
+          this.emit("TURN_FAILED", {
+            turn,
+            error: this._runError,
+            decisionDurationMs: durationMs,
+            decisionFailureKind: failureKind,
+          });
           this._state = "FAILED";
           return;
         }

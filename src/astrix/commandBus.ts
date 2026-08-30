@@ -146,6 +146,13 @@ export class AstrixGameCommandBus {
     if (command.command === "PLACE_BUILDING") {
       if (!command.buildingType || !COSTS[command.buildingType]) return { success: false, command: command.command, irreversible, error: "unknown building type" };
       if (!command.islandId) return { success: false, command: command.command, irreversible, error: "islandId is required" };
+      // Connectivity (design spec chain #3/#4): the settlement lives on Meadow;
+      // building on another island without a bridge strands production there,
+      // so BUILD obeys the same connectivity rule as GATHER. Building a bridge
+      // itself is always allowed (that is how connectivity is established).
+      if (command.islandId !== "meadow" && !this.islandReachableFromMeadow(command.islandId)) {
+        return { success: false, command: command.command, irreversible, error: `no bridge to ${command.islandId}: build a bridge to reach it` };
+      }
       const cost = COSTS[command.buildingType];
       for (const [resource, amount] of Object.entries(cost)) if (this.state.resources[resource as ResourceType] < amount) return { success: false, command: command.command, irreversible, error: `insufficient ${resource}` };
       if (command.buildingType === "farm") {
@@ -182,7 +189,7 @@ export class AstrixGameCommandBus {
     if (!node) return { success: false, command: command.command, irreversible, error: "resource node not found" };
     // Connectivity (design spec chain #3): the settlement lives on Meadow; other
     // islands' resources are unreachable until a bridge connects them.
-    if (node.islandId !== "meadow" && !this.state.bridges.some((bridge) => (bridge.islandA === "meadow" && bridge.islandB === node.islandId) || (bridge.islandA === node.islandId && bridge.islandB === "meadow"))) {
+    if (!this.islandReachableFromMeadow(node.islandId)) {
       return { success: false, command: command.command, irreversible, error: `no bridge to ${node.islandId}: build a bridge to reach it` };
     }
     const gathered = Math.min(1, node.quantity);
@@ -240,6 +247,15 @@ export class AstrixGameCommandBus {
     this.state.buildings.push(building);
     this.state.bridges.push({ id: building.id, islandA: command.islandA!, islandB: command.islandB! });
     return { success: true, command: command.command, irreversible, bridgeId: building.id, costDeducted: cost, length: 8, permanent: true };
+  }
+
+  private islandReachableFromMeadow(island: BiomeId): boolean {
+    if (island === "meadow") return true;
+    return this.state.bridges.some(
+      (bridge) =>
+        (bridge.islandA === "meadow" && bridge.islandB === island) ||
+        (bridge.islandA === island && bridge.islandB === "meadow"),
+    );
   }
 
   private validPosition(position: AstrixPosition): boolean {
