@@ -174,6 +174,14 @@ Applied from the user's reference clip (pastel voxel island: pale warm vista →
 - [x] Re-exported Godot Web build to `server/static/` and re-injected the reference-upload widget (multi-file, image+video) into the exported loader page; verified live: widget present on `https://astrixx.duckdns.org/`, `.wasm` served as `application/wasm`, `.pck` as `application/octet-stream`.
 - [x] Regression: typecheck passes, 80/80 tests pass.
 
+## Milestone — remove reference-upload widget (Qodo PR #16 follow-up)
+
+- [x] Remove the upload widget from the served Godot loader page (re-exported `server/static/index.html` without re-injecting it; verified live: no `upload-widget`/`uploadMany` markers on `https://astrixx.duckdns.org/`).
+- [x] Replace `server/static/watch.html` with a minimal closed notice page.
+- [x] Remove the `POST /api/upload-watch` endpoint entirely (now returns 404) along with the multipart parser, per-IP rate limiter, quota/prune helpers, and unused imports — no public upload sink remains.
+- [x] `scripts/capture-web.ts`: exit non-zero also when `ctx.secureContext === false` (probe comment claimed it but the check was missing).
+- [x] Regression: typecheck passes, 80/80 tests pass; game root + `/astrix/state` still 200 after pm2 restart.
+
 ### Visual pass notes / limitations
 - Cycle verification done with a temporary 4s cycle (movie-maker capture advances game-time by rendered frames, ~2fps on llvmpipe, so a 90s cycle needs ~45 min of capture); restored to 90s after confirming the lerp.
 - Still needs-authored assets to fully match references: detailed structures, realistic foliage, red-roofed buildings, polished props (GLB/CC0 packs).

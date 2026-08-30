@@ -122,8 +122,9 @@ const dragErr = drag && typeof drag === "object" && "error" in drag ? String((dr
 const missingEvidence =
   simulateDragger &&
   (!drag || typeof drag !== "object" || !("after" in drag));
-const exitCode = dragErr || missingEvidence || errors.length > 0 ? 1 : 0;
+const insecureCtx = ctx && ctx.secureContext === false;
+const exitCode = dragErr || missingEvidence || insecureCtx || errors.length > 0 ? 1 : 0;
 if (exitCode !== 0) {
-  tl("PROBE FAILED: dragErr=" + (dragErr || "-") + " missingEvidence=" + missingEvidence + " errors=" + errors.length);
+  tl("PROBE FAILED: dragErr=" + (dragErr || "-") + " missingEvidence=" + missingEvidence + " insecureCtx=" + insecureCtx + " errors=" + errors.length);
 }
 process.exit(exitCode);

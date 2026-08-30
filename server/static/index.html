@@ -89,84 +89,12 @@ body {
 	text-align: center;
 	z-index: 1;
 }
-
-		#upload-widget {
-			position: fixed;
-			inset: 0;
-			z-index: 9999;
-			display: flex;
-			align-items: center;
-			justify-content: center;
-			pointer-events: auto;
-		}
-		#upload-widget .backdrop {
-			position: absolute;
-			inset: 0;
-			background: rgba(10, 14, 16, 0.72);
-		}
-		#upload-widget .panel {
-			position: relative;
-			width: min(460px, 90vw);
-			background: #232c31;
-			border: 1px solid #3b474e;
-			border-radius: 18px;
-			padding: 30px 24px;
-			text-align: center;
-			font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-			color: #eef4f6;
-			box-shadow: 0 20px 60px rgba(0,0,0,0.5);
-		}
-		#upload-widget .panel h2 { margin: 0 0 6px; font-size: 20px; }
-		#upload-widget .panel .sub { color: #aab7bd; font-size: 13px; margin: 0 0 18px; }
-		#upload-widget .drop {
-			border: 2px dashed #6b7a81;
-			border-radius: 12px;
-			padding: 34px 16px;
-			cursor: pointer;
-			transition: border-color .15s, background .15s;
-		}
-		#upload-widget .drop.drag { border-color: #8fd3c7; background: rgba(143,211,199,0.08); }
-		#upload-widget .drop .big { font-size: 36px; margin-bottom: 8px; }
-		#upload-widget .drop .label { font-size: 15px; }
-		#upload-widget .drop .hint { font-size: 12px; color: #8a979d; margin-top: 4px; }
-		#upload-widget .status { min-height: 20px; margin-top: 14px; font-size: 14px; }
-		#upload-widget .status.ok { color: #8fd3c7; }
-		#upload-widget .status.err { color: #f0a090; }
-		#upload-widget .close {
-			position: absolute;
-			top: 10px;
-			right: 14px;
-			background: none;
-			border: none;
-			color: #aab7bd;
-			font-size: 22px;
-			cursor: pointer;
-			line-height: 1;
-		}
-		#upload-widget input[type=file] { display: none; }
-		#upload-widget.mounted.done { display: none; }
 		</style>
 		<link id="-gd-engine-icon" rel="icon" type="image/png" href="index.icon.png" />
 <link rel="apple-touch-icon" href="index.apple-touch-icon.png"/>
 
 	</head>
 	<body>
-		<div id="upload-widget" class="mounted">
-			<div class="backdrop"></div>
-			<div class="panel">
-				<button class="close" id="uw-close" title="Hide" aria-label="Hide">&times;</button>
-				<h2>🎥 Share a reference clip</h2>
-				<p class="sub">Drop a video or image (&lt;15&nbsp;MB) that shows the ASTrix look you're after.</p>
-				<div class="drop" id="uw-drop" role="button" tabindex="0">
-					<div class="big">🎥</div>
-					<div class="label">Drop video(s) or image(s) here, or click to choose</div>
-					<div class="hint">mp4 / webm / mov / png / jpg / webp &middot; up to 15 MB each &middot; multiple files</div>
-				</div>
-				<input type="file" id="uw-file" accept="video/*,.mp4,.webm,.mov,.m4v,image/*,.png,.jpg,.jpeg,.webp" multiple>
-				<div class="status" id="uw-status"></div>
-			</div>
-		</div>
-
 		<canvas id="canvas">
 			Your browser does not support the canvas tag.
 		</canvas>
@@ -181,60 +109,6 @@ body {
 			<div id="status-notice"></div>
 		</div>
 
-		<script>
-// Upload widget — self-contained; independent of the Godot engine.
-(function () {
-	var w = document.getElementById('upload-widget');
-	if (!w) return;
-	var drop = document.getElementById('uw-drop');
-	var file = document.getElementById('uw-file');
-	var stat = document.getElementById('uw-status');
-	function setStatus(text, ok) { stat.textContent = text; stat.className = 'status ' + (ok ? 'ok' : 'err'); }
-	function hideDone() { w.classList.add('done'); }
-	document.getElementById('uw-close').addEventListener('click', hideDone);
-	drop.addEventListener('click', function () { file.click(); });
-	drop.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); file.click(); } });
-	['dragenter','dragover'].forEach(function (t) { drop.addEventListener(t, function (e) { e.preventDefault(); drop.classList.add('drag'); }); });
-	['dragleave','drop'].forEach(function (t) { drop.addEventListener(t, function (e) { e.preventDefault(); drop.classList.remove('drag'); }); });
-	function upload(f) {
-		return new Promise(function (resolve) {
-			if (!f) { resolve({ ok: false, name: null }); return; }
-			if (f.size > 15 * 1024 * 1024) { setStatus('That file is over 15 MB.', false); resolve({ ok: false, name: f.name }); return; }
-			var form = new FormData();
-			form.append('clip', f);
-			setStatus('Uploading ' + f.name + '…', true);
-			fetch('/api/upload-watch', { method: 'POST', body: form }).then(function (r) { return r.json(); }).then(function (j) {
-				if (!j.ok) { setStatus('Upload failed: ' + (j.error || ''), false); resolve({ ok: false, name: f.name }); return; }
-				setStatus('Uploaded ✓ ' + f.name + ' (' + Math.round(j.bytes/1024) + ' KB)', true);
-				resolve({ ok: true, name: f.name });
-			}).catch(function () { setStatus('Upload error', false); resolve({ ok: false, name: f.name }); });
-		});
-	}
-	function uploadMany(list) {
-		var fs = Array.prototype.slice.call(list || []).filter(Boolean);
-		if (!fs.length) return;
-		var done = [];
-		var failed = [];
-		var i = 0;
-		setStatus('Uploading ' + fs.length + ' file(s)…', true);
-		(function next() {
-			if (i >= fs.length) {
-				if (failed.length) { setStatus('Uploaded ' + done.length + ' ✓ — failed: ' + failed.join(', '), false); return; }
-				setStatus('Uploaded ✓ ' + done.length + ' — filenames: ' + done.join(', '), true);
-				setTimeout(hideDone, 3000);
-				return;
-			}
-			var f = fs[i++];
-			upload(f).then(function (r) {
-				if (r && r.ok) { done.push(r.name); } else if (r) { failed.push(r.name); }
-				next();
-			});
-		}());
-	}
-	drop.addEventListener('drop', function (e) { uploadMany(e.dataTransfer.files); });
-	file.addEventListener('change', function () { uploadMany(file.files); file.value = ''; });
-}());
-</script>
 		<script src="index.js"></script>
 		<script>
 const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":61612,"index.wasm":39514754},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4};

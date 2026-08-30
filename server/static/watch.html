@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ASTrix — Share a reference clip</title>
+<title>ASTrix</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -18,109 +18,23 @@
     color: #eef4f6;
   }
   .card {
-    width: min(520px, 92vw);
+    width: min(480px, 92vw);
     background: rgba(255,255,255,0.04);
     border: 1px solid rgba(255,255,255,0.1);
     border-radius: 18px;
     padding: 28px;
     text-align: center;
   }
-  h1 { font-size: 22px; margin: 0 0 6px; letter-spacing: 0.02em; }
-  p.sub { color: #aab7bd; margin: 0 0 22px; font-size: 14px; }
-  .drop {
-    border: 2px dashed rgba(255,255,255,0.25);
-    border-radius: 14px;
-    padding: 42px 20px;
-    cursor: pointer;
-    transition: border-color 0.15s, background 0.15s;
-  }
-  .drop.drag { border-color: #8fd3c7; background: rgba(143,211,199,0.08); }
-  .drop .big { font-size: 40px; line-height: 1; margin-bottom: 10px; }
-  .drop .label { font-size: 15px; }
-  .drop .hint { font-size: 12px; color: #7d8a90; margin-top: 6px; }
-  input[type=file] { display: none; }
-  .status { margin-top: 18px; font-size: 14px; min-height: 20px; }
-  .status.ok { color: #8fd3c7; }
-  .status.err { color: #f0a090; }
-  #url {
-    width: 100%;
-    margin-top: 16px;
-    padding: 10px 12px;
-    border-radius: 8px;
-    border: 1px solid rgba(255,255,255,0.2);
-    background: rgba(0,0,0,0.3);
-    color: #eef4f6;
-    font: 13px ui-monospace, SFMono-Regular, Menlo, monospace;
-  }
-  .url { margin-top: 18px; font-size: 12px; color: #8a979d; }
+  h1 { font-size: 22px; margin: 0 0 10px; letter-spacing: 0.02em; }
+  p { color: #aab7bd; margin: 0 0 8px; font-size: 14px; line-height: 1.5; }
+  a { color: #8fd3c7; }
 </style>
 </head>
 <body>
   <div class="card">
-    <h1>⚡ Share a reference clip</h1>
-    <p class="sub">Drop a video or image (&lt;15&nbsp;MB) that captures the ASTrix visual you want the team to see.</p>
-    <div class="drop" id="drop" role="button" tabindex="0">
-      <div class="big">🎥</div>
-      <div class="label">Drop a video or image here, or click to choose</div>
-      <div class="hint">video / png / jpg / webp · up to 15 MB</div>
-    </div>
-    <input type="file" id="file" accept="video/*,.mp4,.webm,.mov,.m4v,image/*,.png,.jpg,.jpeg,.webp" multiple>
-    <div class="status" id="status"></div>
-    <div class="url">After it uploads, mention the clip name back in the chat.</div>
+    <h1>⚡ ASTrix</h1>
+    <p>Reference uploads are closed.</p>
+    <p><a href="/">Play ASTrix</a></p>
   </div>
-
-<script>
-  const drop = document.getElementById('drop');
-  const file = document.getElementById('file');
-  const statusEl = document.getElementById('status');
-
-  function setStatus(text, ok) {
-    statusEl.textContent = text;
-    statusEl.className = 'status ' + (ok ? 'ok' : 'err');
-  }
-
-  function upload(f) {
-    return new Promise((resolve) => {
-      if (!f) { resolve({ ok: false, name: null }); return; }
-      if (f.size > 15 * 1024 * 1024) { setStatus('That file is over 15 MB.', false); resolve({ ok: false, name: f.name }); return; }
-      const form = new FormData();
-      form.append('clip', f);
-      setStatus('Uploading ' + f.name + '…', true);
-      fetch('/api/upload-watch', { method: 'POST', body: form }).then((r) => r.json()).then((json) => {
-        if (!json.ok) { setStatus('Upload failed: ' + (json.error || ''), false); resolve({ ok: false, name: f.name }); return; }
-        setStatus('Uploaded ✓ — ' + f.name + ' (' + Math.round(json.bytes/1024) + ' KB)', true);
-        resolve({ ok: true, name: f.name });
-      }).catch(() => { setStatus('Upload error', false); resolve({ ok: false, name: f.name }); });
-    });
-  }
-  function uploadMany(list) {
-    const fs = Array.prototype.slice.call(list || []).filter(Boolean);
-    if (!fs.length) return;
-    const done = [];
-    const failed = [];
-    let i = 0;
-    setStatus('Uploading ' + fs.length + ' file(s)…', true);
-    (function next() {
-      if (i >= fs.length) {
-        if (failed.length) { setStatus('Uploaded ' + done.length + ' ✓ — failed: ' + failed.join(', '), false); return; }
-        setStatus('Uploaded ✓ ' + done.length + ' — filenames: ' + done.join(', '), true);
-        return;
-      }
-      const f = fs[i++];
-      setStatus('Uploading ' + f.name + '…', true);
-      upload(f).then((r) => {
-        if (r && r.ok) { done.push(r.name); } else if (r) { failed.push(r.name); }
-        next();
-      });
-    }());
-  }
-
-  drop.addEventListener('click', () => file.click());
-  drop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); file.click(); } });
-  ['dragenter','dragover'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add('drag'); }));
-  ['dragleave','drop'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove('drag'); }));
-  drop.addEventListener('drop', (e) => uploadMany(e.dataTransfer.files));
-  file.addEventListener('change', () => uploadMany(file.files));
-</script>
 </body>
 </html>

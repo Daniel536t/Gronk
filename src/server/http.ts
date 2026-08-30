@@ -10,9 +10,8 @@
 // The browser keeps { roomCode, playerId } in localStorage and sends them per
 // request — no cookies, works across refresh (durable-session groundwork).
 import http from "node:http";
-import { readFileSync, existsSync, statSync, mkdirSync, writeFileSync, readdirSync, unlinkSync } from "node:fs";
-import { extname, join, normalize, basename, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { readFileSync, existsSync, statSync } from "node:fs";
+import { extname, join, normalize } from "node:path";
 import { LobbyManager } from "./lobby";
 import type { McpHttpHandler } from "./mcpHttp";
 import type { AstrixService } from "../astrix/server";
@@ -45,46 +44,6 @@ function sendJson(res: http.ServerResponse, code: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
-/** Per-IP upload timestamps for the /api/upload-watch rate limit. */
-const uploadHits = new Map<string, number[]>();
-
-/** Bound disk usage for the reference-upload sink: drop files older than 7
- *  days, then if total size still exceeds 512 MB remove oldest files first.
- *  Best-effort; failures never fail the upload itself. */
-function pruneUploads(uploadDir: string): void {
-  try {
-    const MAX_TOTAL = 512 * 1024 * 1024;
-    const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-    const now = Date.now();
-    const entries = readdirSync(uploadDir).map((name) => {
-      const p = join(uploadDir, name);
-      let size = 0;
-      let mtime = 0;
-      try {
-        const st = statSync(p);
-        size = st.size;
-        mtime = st.mtimeMs;
-      } catch {
-        /* raced with deletion */
-      }
-      return { name, p, size, mtime };
-    });
-    let total = entries.reduce((sum, e) => sum + e.size, 0);
-    for (const e of [...entries].sort((a, b) => a.mtime - b.mtime)) {
-      const expired = now - e.mtime > MAX_AGE_MS;
-      if (expired || total > MAX_TOTAL) {
-        try {
-          unlinkSync(e.p);
-          total -= e.size;
-        } catch {
-          /* best-effort */
-        }
-      }
-    }
-  } catch {
-    /* best-effort */
-  }
-}
 
 /** Serve the Vite build output (dist/) for single-port production mode. Returns
  *  true if a file was served. Path traversal is blocked by normalizing and
@@ -110,58 +69,6 @@ function serveStatic(
 /** Parse a browser <form> multipart upload and return a single quoted-value part
  *  that looks like a video file. Enforces a hard byte cap and only accepts
  *  well-formed multipart frames, so this is not a general request parser. */
-function readMultipartVideoBytes(
-  req: http.IncomingMessage,
-  maxBytes: number,
-): Promise<{ filename: string; data: Buffer }> {
-  return new Promise((resolve, reject) => {
-    const contentType = req.headers["content-type"] ?? "";
-    const boundary = /boundary=(?:"([^"]+)"|([^;\s]+))/i.exec(contentType)?.[1] ?? /boundary=(?:"([^"]+)"|([^;\s]+))/i.exec(contentType)?.[2];
-    if (!boundary) {
-      reject(new Error("missing multipart boundary"));
-      return;
-    }
-    const chunks: Buffer[] = [];
-    let size = 0;
-    req.on("data", (c: Buffer) => {
-      size += c.length;
-      if (size > maxBytes) {
-        reject(new Error("file too large"));
-        req.destroy();
-        return;
-      }
-      chunks.push(c);
-    });
-    req.on("end", () => {
-      try {
-        const raw = Buffer.concat(chunks);
-        const delim = Buffer.from(`--${boundary}`);
-        // Find the first part boundary start and the next boundary after the length.
-        const headerStart = raw.indexOf(delim);
-        if (headerStart < 0) {
-          reject(new Error("invalid multipart body"));
-          return;
-        }
-        const headerBody = raw.indexOf(Buffer.from("\r\n\r\n"), headerStart);
-        if (headerBody < 0) {
-          reject(new Error("missing part headers"));
-          return;
-        }
-        const headerText = raw.subarray(headerStart, headerBody).toString("latin1");
-        const fn = /filename="([^"]*)"/i.exec(headerText)?.[1] ?? "clip";
-        const next = raw.indexOf(delim, headerBody + 4);
-        const endOfPart = next < 0 ? raw.length : next;
-        let data = raw.subarray(headerBody + 4, endOfPart);
-        if (data.length >= 2 && data[data.length - 2] === 13 && data[data.length - 1] === 10) data = data.subarray(0, data.length - 2);
-        resolve({ filename: basename(fn).replace(/[^\w.-]/g, "_") || "clip.mp4", data: Buffer.from(data) });
-      } catch (e) {
-        reject(e instanceof Error ? e : new Error(String(e)));
-      }
-    });
-    req.on("error", reject);
-  });
-}
-
 function readBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     let data = "";
@@ -277,67 +184,10 @@ export function createHttpServer(
       return;
     }
 
-    // ---- POST /api/upload-watch (reference video/image dropzone, <15MB) ---
-    // Reference-only workflow: only image/video extensions are accepted, files
-    // get unique server-side names, and a per-IP rate limit plus aggregate
-    // quota and retention bound disk usage (no unauth public write sink).
-    if (
-      req.method === "POST" &&
-      url.pathname === "/api/upload-watch" &&
-      /multipart\/form-data/i.test(req.headers["content-type"] ?? "")
-    ) {
-      const maxBytes = 15 * 1024 * 1024;
-      // Multipart framing (headers + boundary) adds overhead on top of the
-      // payload; allow a bounded slack at the request layer, then validate the
-      // extracted payload itself against the 15 MB cap.
-      const requestCap = maxBytes + 2 * 1024 * 1024;
-      const ALLOWED_EXT = new Set([".mp4", ".webm", ".mov", ".m4v", ".png", ".jpg", ".jpeg", ".webp", ".gif"]);
-      try {
-        const ip = req.socket.remoteAddress ?? "unknown";
-        // Per-IP rate limit: 20 uploads per rolling 10 minutes.
-        const now = Date.now();
-        const window = 10 * 60 * 1000;
-        const hits = uploadHits.get(ip) ?? [];
-        const recent = hits.filter((t) => now - t < window);
-        if (recent.length >= 20) {
-          sendJson(res, 429, { error: "too many uploads, try later" });
-          return;
-        }
-        recent.push(now);
-        uploadHits.set(ip, recent);
-
-        const { filename, data } = await readMultipartVideoBytes(req, requestCap);
-        if (data.length === 0) {
-          sendJson(res, 400, { error: "empty upload" });
-          return;
-        }
-        if (data.length > maxBytes) {
-          sendJson(res, 413, { error: "file too large (max 15 MB)" });
-          return;
-        }
-        const ext = extname(filename).toLowerCase();
-        if (!ALLOWED_EXT.has(ext)) {
-          sendJson(res, 400, { error: `extension .${ext.replace(".", "")} not allowed (media only)` });
-          return;
-        }
-        // Uploads live under the SAME directory the server actually serves so
-        // the returned URL works in both dev and container deployments.
-        const uploadDir = opts.staticDir
-          ? join(opts.staticDir, "uploads")
-          : join(dirname(fileURLToPath(import.meta.url)), "..", "..", "server", "static", "uploads");
-        mkdirSync(uploadDir, { recursive: true });
-        // Unique server-side name — same basename uploads never overwrite.
-        const safe = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}${ext}`;
-        writeFileSync(join(uploadDir, safe), data);
-        pruneUploads(uploadDir);
-        console.error(`[upload-watch] saved ${safe} (${data.length} bytes)`);
-        sendJson(res, 200, { ok: true, filename: `/uploads/${safe}`, bytes: data.length });
-        return;
-      } catch (e) {
-        sendJson(res, 400, { error: (e as Error).message });
-        return;
-      }
-    }
+    // ---- POST /api/upload-watch (REMOVED) -------------------------------
+    // The reference-upload widget was removed from the site, so the public
+    // upload endpoint is gone entirely: no unauth write sink, no disk quota
+    // or rate-limit surface, no container-ephemeral storage concern.
 
     // ---- POST endpoints -------------------------------------------------
     if (req.method === "POST") {
