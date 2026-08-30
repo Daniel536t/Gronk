@@ -186,6 +186,25 @@ Applied from the user's reference clip (pastel voxel island: pale warm vista →
 - Cycle verification done with a temporary 4s cycle (movie-maker capture advances game-time by rendered frames, ~2fps on llvmpipe, so a 90s cycle needs ~45 min of capture); restored to 90s after confirming the lerp.
 - Still needs-authored assets to fully match references: detailed structures, realistic foliage, red-roofed buildings, polished props (GLB/CC0 packs).
 
+## Visual transformation pass — polished vertical slice
+
+Applied a focused visual pass to take the starting region from stacked-primitive "prototype" toward a convincing diorama without touching gameplay/server/network.
+
+- [x] Add asset-ready scaffolding: `godot/assets/{characters,environment,props,terrain,materials}` + wrapper scenes `godot/scenes/{characters,environment,props}` + `godot/assets/ASSET_PIPELINE.md` documenting GLB scale/orientation (up=+Y, feet pivot) and required animation names (idle/walk/run/interact/hide/emerge/stun).
+- [x] Player presentation interface: `play_state()` maps state names to procedural motion so a rigged GLB can drive visuals later without touching `GameClient`/`WorldState`/server; added a flared cloak base + backpack accessory and movement-linked cape/backpack bob.
+- [x] Terrain diorama language: rounded chunky rims per island (fat turf overhang balls along the grass-top rim + a stepped soil mound ring lower/outer) so edges read as hand-built layered elevation, not sharp boxes.
+- [x] Densify the starting clearing: flowers (14), pebbles (10), mushrooms (2), a small well, a barrel (2 crates + barrel), a split fence lining the southern path, extra rocks.
+- [x] Camera: pulled in (offset 13/14.5/13 → 11/12.2/11) with lower pitch and tighter ortho sizes (portrait 10, landscape 12) so the clearing (not the whole 100×60 map) fills the frame with less sky; player stays the anchor.
+- [x] Lighting: warm cream key from the upper-left (energy 0.72) + a soft pale-blue fill from the right so shadow faces are never flat-black; softer shadows (`shadow_blur 3.5`, fade-in).
+- [x] Water: added a brighter translucent rippling "top" plane (sparkle sheen) over the violet base + shoreline sand/foam band ringing each island so the land→water transition reads.
+- [x] Verify: rendered day + dusk frames; day is warm pale (brightness ~159, near-white 0.1%), dusk is violet/magenta (mean BGR 101/74/104) — matches reference moods; dense edge/detail map across the frame.
+- [x] Regression: Godot parse + headless/Xvfb launch clean; no server/engine/TrueForge/browser files touched.
+
+### Visual pass notes / limitations
+- No external GLB models added yet — the scaffolding + wrapper scenes are the integration points; authored assets are the next upgrade layer (see `ASSET_PIPELINE.md`).
+- Collision remains simple boxes (presentation-only, no server rules implied).
+- Visual quality is still verified numerically + by reviewer here; a human screenshots gate is the final art check.
+
 ## Guardrails
 
 - The existing TypeScript browser client remains the reference client and must not be modified for ASTrix work.

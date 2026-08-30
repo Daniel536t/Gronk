@@ -1,0 +1,2 @@
+# Bridge wrapper scene. See Tree.tscn for the GLB integration pattern.
+[node name="Bridge" type="Node3D"]

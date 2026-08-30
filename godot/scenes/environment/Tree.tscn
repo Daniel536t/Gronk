@@ -1,0 +1,7 @@
+# Tree wrapper scene.
+# GLB upgrade path: drop assets/environment/tree.glb into the project, then add:
+#   [ext_resource type="PackedScene" path="res://assets/environment/tree.glb" id="2_tree"]
+# and instance it here in place of the Node3D placeholder root.
+# The world instantiates trees via _add_tree() in World3D.gd; point that helper
+# at this scene once an authored asset is available.
+[node name="Tree" type="Node3D"]

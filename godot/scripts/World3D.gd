@@ -22,11 +22,13 @@ const MEADOW_SURFACE := 3.3
 const FROST_SURFACE := 4.3
 const DUSK_SURFACE := 2.8
 
-# Isometric gameplay camera. A deliberate lower pitch (~32deg from horizontal)
-# reveals object sides (tree trunks, cliff faces, bridge elevation, hut walls) so
-# the world reads as a 2.5D miniature rather than a top-down bird's-eye view.
-const CAMERA_OFFSET := Vector3(13.0, 14.5, 13.0)
-const CAMERA_LOOK_HEIGHT := 0.8
+# Isometric gameplay camera. A deliberate lower pitch (~24deg from horizontal)
+# reveals object sides (tree trunks, cliff faces, bridge elevation, hut walls) and
+# keeps the horizon/sky out of frame, so the world reads as a 2.5D miniature
+# instead of a top-down bird's-eye view. Pulled in closer than the map so the
+# starting clearing (not the whole 100x60 world) is the composition.
+const CAMERA_OFFSET := Vector3(11.0, 12.2, 11.0)
+const CAMERA_LOOK_HEIGHT := 0.9
 # Look slightly ahead along the southern path so the player stays prominent
 # while the shoreline, bridge and magic islet remain in frame.
 const CAMERA_LOOK_AHEAD := 4.0
@@ -68,6 +70,10 @@ func _process(delta: float) -> void:
         camera.look_at(focal, Vector3.UP)
     for i in range(_animated_water.size()):
         _animated_water[i].position.y = _water_surface - 0.06 + sin(_time * 0.8 + float(i) * 0.45) * 0.035
+    if is_instance_valid(_water_ripple):
+        # Slow shimmering drift so the ripple reads as moving water.
+        _water_ripple.position.x = 50.0 + sin(_time * 0.3) * 1.5
+        _water_ripple.position.z = 30.0 + cos(_time * 0.25) * 1.2
     for i in range(_animated_plants.size()):
         var plant := _animated_plants[i]
         plant.rotation.z = sin(_time * 0.55 + float(i) * 1.3) * 0.025
@@ -114,16 +120,29 @@ func _build_environment() -> void:
     environment.environment = settings
     add_child(environment)
 
+    # Warm key light from the upper-left: soft pastel diorama illumination with
+    # readable warm highlights and a gentle fill from the right.
     var sun := DirectionalLight3D.new()
     sun.name = "WarmSun"
     _sun = sun
-    sun.rotation_degrees = Vector3(-50.0, 42.0, 0.0)
-    sun.light_color = Color("ffe9c9")                 # warm cream sun
-    sun.light_energy = 0.6
+    sun.rotation_degrees = Vector3(-46.0, -38.0, 0.0)   # upper-left key
+    sun.light_color = Color("ffe6bd")                   # warm cream sunlight
+    sun.light_energy = 0.72
     sun.shadow_enabled = true
-    sun.directional_shadow_max_distance = 120.0
-    sun.shadow_blur = 2.0
+    sun.directional_shadow_max_distance = 110.0
+    sun.shadow_blur = 3.5
+    sun.directional_shadow_fade_start = 0.6
     add_child(sun)
+
+    # Soft warm cool-toned fill from the lower-right so shadow faces are never
+    # flat-black; keeps matte pastel surfaces readable.
+    var fill := DirectionalLight3D.new()
+    fill.name = "WarmFill"
+    fill.rotation_degrees = Vector3(36.0, 42.0, 0.0)
+    fill.light_color = Color("c8dbe8")                 # pale blue fill
+    fill.light_energy = 0.22
+    fill.shadow_enabled = false
+    add_child(fill)
 
 # Advances the day/dusk cycle and eases all lighting/sky colors between the two
 # reference moods. Pure presentation; no gameplay state.
@@ -145,33 +164,52 @@ func _update_cycle(delta: float) -> void:
         _sun.light_color = Color("ffe9c9").lerp(Color("c9a0d8"), dusk)
         _sun.light_energy = lerpf(0.55, 0.28, dusk)
 
-# Saturated violet-lavender translucent water matching the reference's signature
-# purple world (#7060b0 family). Semi-matte sheen, gentle motion, restrained glow.
+# Stylized violet-lavender translucent water. A large calm base surface carries
+# a slightly brighter rippling "top" plane so it reads as water with depth under
+# the warm key, plus a soft bright shoreline band ringing each island.
 var _water_surface := -0.2
+var _water_ripple: MeshInstance3D
 func _build_water() -> void:
     var water := MeshInstance3D.new()
     water.name = "StylizedWater"
     var mesh := PlaneMesh.new()
     mesh.size = WORLD_SIZE + Vector2(20.0, 20.0)
-    mesh.material = _water_material()
+    mesh.material = _water_material(false)
     water.mesh = mesh
     water.rotation_degrees.x = -90.0
     water.position = Vector3(50.0, _water_surface, 30.0)
     add_child(water)
     _animated_water.append(water)
 
-func _water_material() -> StandardMaterial3D:
+    # Brighter translucent top plane with subtle emission = light depth + sparkle.
+    _water_ripple = MeshInstance3D.new()
+    _water_ripple.name = "WaterRipple"
+    var ripple_mesh := PlaneMesh.new()
+    ripple_mesh.size = WORLD_SIZE + Vector2(8.0, 8.0)
+    ripple_mesh.material = _water_material(true)
+    _water_ripple.mesh = ripple_mesh
+    _water_ripple.rotation_degrees.x = -90.0
+    _water_ripple.position = Vector3(50.0, _water_surface + 0.02, 30.0)
+    add_child(_water_ripple)
+    _animated_water.append(_water_ripple)
+
+func _water_material(ripple: bool) -> StandardMaterial3D:
     var material := StandardMaterial3D.new()
     material.metallic = 0.0
-    material.roughness = 0.3
-    # Alpha is meaningless unless the material is actually transparent.
+    material.roughness = 0.22
     material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-    material.albedo_color = Color("6b5bb8")   # violet-lavender, from the reference
-    material.albedo_color.a = 0.85
-    # Subtle sheen so the water reads as a lit translucent surface, not flat color.
-    material.emission_enabled = true
-    material.emission = Color("7a6cc9")
-    material.emission_energy_multiplier = 0.12
+    if ripple:
+        material.albedo_color = Color("8d7fd4")   # brighter lavender sparkle plane
+        material.albedo_color.a = 0.5
+        material.emission_enabled = true
+        material.emission = Color("9a8be0")
+        material.emission_energy_multiplier = 0.2
+    else:
+        material.albedo_color = Color("6b5bb8")   # violet-lavender, from the reference
+        material.albedo_color.a = 0.85
+        material.emission_enabled = true
+        material.emission = Color("5150a8")
+        material.emission_energy_multiplier = 0.12
     return material
 
 # ---------------------------------------------------------------------------
@@ -181,6 +219,8 @@ func _build_islands() -> void:
     for biome_id in ISLANDS:
         var data: Dictionary = ISLANDS[biome_id]
         _add_island_slabs(biome_id, data)
+        _add_island_rim(biome_id, data)
+        _add_shoreline_band(biome_id, data)
         _add_biome_features(biome_id, data)
         _add_island_floor(biome_id, data)
     # Flush the frost snow cap by raising its top slab height.
@@ -207,6 +247,54 @@ func _add_island_slabs(biome_id: String, data: Dictionary) -> void:
         var sand := _mesh_box("DuskSandCap", center + Vector3(0.0, top + 0.32, 0.0), Vector3(radius.x * 1.42, 0.18, radius.y * 1.42), Color("e3bd9a"))
         sand.rotation.y = 0.05
         add_child(sand)
+
+# Rounded "chunky edge" rim for each island slab: fat turf overhang balls around
+# the grass-top rim (so the lip is soft, not a sharp box) plus a sparse ring of
+# small soil/pebble mounds at the soil-step boundary for layered, hand-built
+# elevation. Never spaced too regularly so it reads natural, not tessellated.
+func _add_island_rim(biome_id: String, data: Dictionary) -> void:
+    var c: Vector3 = data["center"]
+    var radius: Vector2 = data["radius"]
+    var top: float = data["top"]
+    var surface := _surface_of(biome_id)
+    var tuft_color := (data["color"] as Color).darkened(0.08)
+    var mound_color := Color("b9a888") if biome_id == "meadow" else (
+        Color("aeb6c4") if biome_id == "frost" else Color("b79b86"))
+    var count := 18
+    for i in range(count):
+        # Grass overhang just proud of the grass-top rim.
+        var ang := TAU * float(i) / float(count) + fmod(float(i * 7), TAU) * 0.03
+        var gx := c.x + cos(ang) * (radius.x * 1.70)
+        var gz := c.z + sin(ang) * (radius.y * 1.70)
+        var turf := _mesh_box("RimTurf_%s_%02d" % [biome_id, i], Vector3(gx, surface - 0.18, gz), Vector3(1.1, 0.4, 1.1), tuft_color)
+        turf.rotation.y = ang + PI * 0.25
+        turf.material_override = _material(tuft_color)
+        add_child(turf)
+        # Layered soil mound slightly farther out, a touch lower -> stepped edge.
+        if i % 2 == 0:
+            var mx := c.x + cos(ang) * (radius.x * 1.82)
+            var mz := c.z + sin(ang) * (radius.y * 1.82)
+            var mound := _mesh_box("RimMound_%s_%02d" % [biome_id, i], Vector3(mx, top - 0.5, mz), Vector3(1.5, 0.5, 1.5), mound_color)
+            mound.rotation.y = ang
+            mound.material_override = _material(mound_color)
+            add_child(mound)
+
+# Soft bright sand/foam band ringing an island at the water line. This is the
+# shoreline->water transition the viewer reads to understand where dry land ends.
+func _add_shoreline_band(biome_id: String, data: Dictionary) -> void:
+    var c: Vector3 = data["center"]
+    var radius: Vector2 = data["radius"]
+    var segments := 14
+    var top: float = data["top"]
+    var band_color := Color("d9b98a") if biome_id == "meadow" else (Color("bcd4d0") if biome_id == "frost" else Color("deaa8f"))
+    for i in range(segments):
+        var ang := TAU * float(i) / float(segments)
+        var px := c.x + cos(ang) * (radius.x * 1.42)
+        var pz := c.z + sin(ang) * (radius.y * 1.42)
+        var band := _mesh_box("Shore_%s_%02d" % [biome_id, i], Vector3(px, top - 0.65, pz), Vector3(2.1, 0.24, 2.1), band_color)
+        band.rotation.y = ang
+        band.material_override = _material(band_color)
+        add_child(band)
 
 # Invisible StaticBody floor at the true walkable surface so the player rests on
 # the terrain (froze at their spawn height otherwise).
@@ -277,7 +365,32 @@ func _build_starting_area() -> void:
     _add_lantern(Vector3(24.5, s, 29.5))
     _add_bench(Vector3(16.5, s, 27.0))
     _add_crate(Vector3(27.0, s, 33.0))
+    _add_crate(Vector3(27.9, s, 33.8))
+    _add_barrel(Vector3(26.2, s, 33.4))
     _add_rock(Vector3(31.5, s, 31.0), 80, Color("8f98a3"))
+    _add_rock(Vector3(13.5, s, 36.0), 81, Color("9aa3ae"))
+    # A little well by the hut path edge ties the clearing to "habitation".
+    _add_well(Vector3(19.5, s, 24.5))
+    # A low split fence lines the southern path from spawn toward the shore,
+    # guiding the eye (and traversal) toward the bridge and magic islet.
+    for i in range(4):
+        _add_fence_post(Vector3(24.6, s, 34.2 + float(i) * 2.4), float(i) * 90.0)
+
+    # Flowers + pebbles scattered around the clearing give readable grass dressing.
+    var flower_colors := [Color("f5c6d8"), Color("f0e08a"), Color("e8a0b8"), Color("f4f0c8")]
+    for i in range(14):
+        var fx: float = 15.0 + fmod(float(i) * 3.7, 12.0)
+        var fz: float = 24.5 + fmod(float(i) * 5.1, 9.0)
+        if Vector2(fx - 22.0, fz - 30.0).length() > 7.5:
+            _add_flower(Vector3(fx, s, fz), i, flower_colors[i % flower_colors.size()])
+    for i in range(10):
+        var px: float = 14.0 + fmod(float(i) * 4.3, 14.0)
+        var pz: float = 23.0 + fmod(float(i) * 6.7, 11.0)
+        if Vector2(px - 22.0, pz - 30.0).length() > 7.8:
+            _add_pebble(Vector3(px, s, pz), i)
+    # A couple of mushrooms at the tree bases for a cozy, hand-planted feel.
+    _add_mushroom(Vector3(15.2, s, 39.6), 0)
+    _add_mushroom(Vector3(27.2, s, 38.4), 1)
 
     # Southern shore, water edge + the bridge to the magic islet, all kept
     # close to spawn so the clearing -> path -> water -> bridge -> landmark
@@ -438,6 +551,121 @@ func _add_crate(pos: Vector3) -> void:
     box.material_override = _material(Color("c2925f"))
     add_child(box)
     _obstacle(pos + Vector3(0.0, 0.55, 0.0), Vector3(1.1, 1.1, 1.1))
+
+func _add_barrel(pos: Vector3) -> void:
+    var barrel := MeshInstance3D.new()
+    barrel.name = "Barrel"
+    var bm := CylinderMesh.new()
+    bm.top_radius = 0.55
+    bm.bottom_radius = 0.62
+    bm.height = 1.15
+    barrel.mesh = bm
+    barrel.position = pos + Vector3(0.0, 0.57, 0.0)
+    barrel.material_override = _material(Color("a9795c"))
+    add_child(barrel)
+    # Band accent for material readability.
+    var band := _mesh_box("Band", pos + Vector3(0.0, 0.95, 0.0), Vector3(1.1, 0.12, 1.1), Color("7d5237"))
+    add_child(band)
+    _obstacle(pos + Vector3(0.0, 0.55, 0.0), Vector3(1.2, 1.15, 1.2))
+
+func _add_flower(pos: Vector3, index: int, color: Color) -> void:
+    var flower := MeshInstance3D.new()
+    flower.name = "Flower_%02d" % index
+    var stem := CylinderMesh.new()
+    stem.top_radius = 0.02
+    stem.bottom_radius = 0.025
+    stem.height = 0.32
+    flower.mesh = stem
+    flower.position = pos + Vector3(0.0, 0.16, 0.0)
+    flower.material_override = _material(Color("6f9a55"))
+    add_child(flower)
+    var head := MeshInstance3D.new()
+    var hm := SphereMesh.new()
+    hm.radius = 0.1
+    hm.height = 0.18
+    head.mesh = hm
+    head.position = pos + Vector3(0.0, 0.34, 0.0)
+    head.material_override = _material(color)
+    add_child(head)
+
+func _add_pebble(pos: Vector3, index: int) -> void:
+    var pebble := MeshInstance3D.new()
+    pebble.name = "Pebble_%02d" % index
+    var pm := SphereMesh.new()
+    pm.radius = 0.16 + float(index % 3) * 0.05
+    pm.height = 0.2
+    pebble.mesh = pm
+    pebble.position = pos + Vector3(0.0, 0.09, 0.0)
+    pebble.rotation.x = 0.6
+    pebble.rotation.y = float(index) * 0.9
+    pebble.material_override = _material(Color("b8b4aa"))
+    add_child(pebble)
+
+func _add_mushroom(pos: Vector3, index: int) -> void:
+    var mushroom := Node3D.new()
+    mushroom.name = "Mushroom_%02d" % index
+    mushroom.position = pos
+    add_child(mushroom)
+    var stem := MeshInstance3D.new()
+    var sm := CylinderMesh.new()
+    sm.top_radius = 0.06
+    sm.bottom_radius = 0.09
+    sm.height = 0.26
+    stem.mesh = sm
+    stem.position.y = 0.13
+    stem.material_override = _material(Color("e8e3d6"))
+    mushroom.add_child(stem)
+    var cap := MeshInstance3D.new()
+    var cm := SphereMesh.new()
+    cm.radius = 0.18
+    cm.height = 0.22
+    cap.mesh = cm
+    cap.position.y = 0.27
+    cap.scale = Vector3(1.0, 0.7, 1.0)
+    cap.material_override = _material(Color("e05f4e"))
+    mushroom.add_child(cap)
+
+func _add_well(pos: Vector3) -> void:
+    var group := Node3D.new()
+    group.name = "Well"
+    group.position = pos + Vector3(0.0, 0.0, 0.0)
+    add_child(group)
+    var base := MeshInstance3D.new()
+    var bm := CylinderMesh.new()
+    bm.top_radius = 0.95
+    bm.bottom_radius = 1.05
+    bm.height = 1.0
+    base.mesh = bm
+    base.position.y = 0.5
+    base.material_override = _material(Color("c9c5ba"))
+    group.add_child(base)
+    var rim := MeshInstance3D.new()
+    var rm := CylinderMesh.new()
+    rm.top_radius = 0.95
+    rm.bottom_radius = 0.95
+    rm.height = 0.3
+    rim.mesh = rm
+    rim.position.y = 1.0
+    rim.material_override = _material(Color("8a8378"))
+    group.add_child(rim)
+    var post_l := _mesh_box("PostL", Vector3(-0.62, 1.6, 0.0), Vector3(0.14, 1.4, 0.14), Color("7d5237"))
+    var post_r := _mesh_box("PostR", Vector3(0.62, 1.6, 0.0), Vector3(0.14, 1.4, 0.14), Color("7d5237"))
+    group.add_child(post_l)
+    group.add_child(post_r)
+    var cross := _mesh_box("Cross", Vector3(0.0, 2.25, 0.0), Vector3(1.6, 0.14, 0.14), Color("8a5a3f"))
+    group.add_child(cross)
+    _obstacle(pos + Vector3(0.0, 0.9, 0.0), Vector3(2.2, 1.6, 2.2))
+
+func _add_fence_post(pos: Vector3, rot_deg: float) -> void:
+    var post := _mesh_box("FencePost", pos + Vector3(0.0, 0.5, 0.0), Vector3(0.16, 1.0, 0.5), Color("9a6a45"))
+    post.rotation.y = deg_to_rad(rot_deg)
+    post.material_override = _material(Color("9a6a45"))
+    add_child(post)
+    var rail := _mesh_box("FenceRail", pos + Vector3(0.0, 0.72, 0.0), Vector3(0.16, 0.1, 0.86), Color("b98a5f"))
+    rail.rotation.y = deg_to_rad(rot_deg)
+    rail.material_override = _material(Color("b98a5f"))
+    add_child(rail)
+    _obstacle(pos + Vector3(0.0, 0.4, 0.0), Vector3(0.4, 0.9, 0.6))
 
 func _obstacle(center: Vector3, size: Vector3) -> void:
     var body := StaticBody3D.new()
@@ -606,9 +834,10 @@ func _apply_camera_framing() -> void:
         return
     var size := vp.get_visible_rect().size
     var aspect := size.x / maxf(1.0, size.y)
-    # Tall (portrait) viewports get more zoom so the player stays a clear anchor;
-    # wide (landscape) viewports show a little more world.
-    camera.size = 11.5 if aspect < 1.05 else 13.5
+    # Tall (portrait) and square viewports get a smaller ortho size (more zoom) so
+    # the player stays a clear anchor; wide (landscape) shows a bit more clearing.
+    # Both are tighter than the map so the playable composition fills the frame.
+    camera.size = 10.0 if aspect < 1.05 else 12.0
 
 func _mesh_box(node_name: String, position: Vector3, size: Vector3, color: Color) -> MeshInstance3D:
     var node := MeshInstance3D.new()
