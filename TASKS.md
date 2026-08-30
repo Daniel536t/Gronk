@@ -205,6 +205,11 @@ Applied a focused visual pass to take the starting region from stacked-primitive
 - Collision remains simple boxes (presentation-only, no server rules implied).
 - Visual quality is still verified numerically + by reviewer here; a human screenshots gate is the final art check.
 
+### Action-button fix (Qodo PR #16)
+
+- [x] Root cause: `gather_nearest()` scans the `resource_nodes` group, but the world never instantiated a single `ResourceNode3D`, so the action button always returned "no resource nearby" and did nothing visible. Materialized 5 gatherable pickup markers (wood/stone/crystal/water) wired to the authoritative server node IDs from `src/astrix/state.ts`, on the walkable surface beside spawn, each with a floating glow marker. Gathering now follows the authoritative GATHER flow and visibly collects the node.
+- [x] Drag-probe fix (exit non-zero on drag errors / missing evidence / insecure context / collected errors) confirmed present (`capture-web.ts`).
+
 ## Guardrails
 
 - The existing TypeScript browser client remains the reference client and must not be modified for ASTrix work.
