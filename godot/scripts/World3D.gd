@@ -40,6 +40,7 @@ var camera: Camera3D
 var _time := 0.0
 var _animated_water: Array[MeshInstance3D] = []
 var _animated_plants: Array[Node3D] = []
+var _portrait := false
 
 func _ready() -> void:
     var world_state := get_node_or_null("/root/WorldState")
@@ -62,10 +63,12 @@ func _process(delta: float) -> void:
     _update_cycle(delta)
     if is_instance_valid(camera) and is_instance_valid(player):
         # Constant iso offset: camera glides with the player, yaw never rolls.
-        var target := player.global_position + CAMERA_OFFSET
-        # Temporarily move the player up locally so the look_at yaw doesn't roll
-        # with height; keep the constant iso offset for a stable diamond view.
-        var focal := player.global_position + Vector3(0.0, CAMERA_LOOK_HEIGHT, CAMERA_LOOK_AHEAD)
+        # Portrait pulls the x-offset in and looks further ahead so the beacon
+        # destination stays in frame on narrow mobile viewports.
+        var offset := Vector3(8.0 if _portrait else CAMERA_OFFSET.x, CAMERA_OFFSET.y, CAMERA_OFFSET.z)
+        var look_ahead := 6.0 if _portrait else CAMERA_LOOK_AHEAD
+        var target := player.global_position + offset
+        var focal := player.global_position + Vector3(0.0, CAMERA_LOOK_HEIGHT, look_ahead)
         var k := 1.0 - exp(-CAMERA_SMOOTH * delta)
         camera.global_position = camera.global_position.lerp(target, k)
         camera.look_at(focal, Vector3.UP)
@@ -75,6 +78,14 @@ func _process(delta: float) -> void:
         # Slow shimmering drift so the ripple reads as moving water.
         _water_ripple.position.x = 50.0 + sin(_time * 0.3) * 1.5
         _water_ripple.position.z = 30.0 + cos(_time * 0.25) * 1.2
+    if is_instance_valid(_water_highlight):
+        # The sun sheen travels across the surface, catching the light.
+        _water_highlight.position.x = 50.0 + sin(_time * 0.14) * 20.0
+        _water_highlight.position.z = 30.0 + cos(_time * 0.11) * 12.0
+        _water_highlight.rotation.y = sin(_time * 0.05) * 0.6
+    for i in range(_water_sparkles.size()):
+        var sparkle := _water_sparkles[i]
+        sparkle.visible = fmod(_time * 0.7 + float(i) * 1.7, 1.0) < 0.6
     for i in range(_animated_plants.size()):
         var plant := _animated_plants[i]
         plant.rotation.z = sin(_time * 0.55 + float(i) * 1.3) * 0.025
@@ -170,11 +181,14 @@ func _update_cycle(delta: float) -> void:
         _sun.light_color = Color("ffe9c9").lerp(Color("c9a0d8"), dusk)
         _sun.light_energy = lerpf(1.0, 0.45, dusk)
 
-# Stylized violet-lavender translucent water. A large calm base surface carries
-# a slightly brighter rippling "top" plane so it reads as water with depth under
-# the warm key, plus a soft bright shoreline band ringing each island.
+# Stylized violet-lavender translucent water — ASTrix's signature material.
+# Layered treatment: a rich violet base plane, a brighter drifting ripple plane,
+# a long moving sun-highlight band, small sparkle patches, and shoreline foam
+# discs where land meets water. All presentation-only.
 var _water_surface := -0.2
 var _water_ripple: MeshInstance3D
+var _water_highlight: MeshInstance3D
+var _water_sparkles: Array[MeshInstance3D] = []
 func _build_water() -> void:
     var water := MeshInstance3D.new()
     water.name = "StylizedWater"
@@ -199,25 +213,108 @@ func _build_water() -> void:
     add_child(_water_ripple)
     _animated_water.append(_water_ripple)
 
-func _water_material(ripple: bool) -> StandardMaterial3D:
+    # Long moving sun-highlight band: a thin bright sheen that drifts across the
+    # water so the surface visibly changes under the warm key (reads as water).
+    _water_highlight = MeshInstance3D.new()
+    _water_highlight.name = "WaterHighlight"
+    var highlight_mesh := PlaneMesh.new()
+    highlight_mesh.size = Vector2(46.0, 7.0)
+    highlight_mesh.material = _water_material(true, true)
+    _water_highlight.mesh = highlight_mesh
+    _water_highlight.rotation_degrees.x = -90.0
+    _water_highlight.position = Vector3(50.0, _water_surface + 0.045, 30.0)
+    add_child(_water_highlight)
+    _animated_water.append(_water_highlight)
+
+    # Small soft sparkle patches scattered over the water for surface variation.
+    var sparkle_rng := RandomNumberGenerator.new()
+    sparkle_rng.seed = 7331
+    for i in range(9):
+        var sparkle := MeshInstance3D.new()
+        var sparkle_mesh := PlaneMesh.new()
+        sparkle_mesh.size = Vector2(2.0 + sparkle_rng.randf() * 2.5, 1.2 + sparkle_rng.randf() * 1.6)
+        sparkle_mesh.material = _water_material(true, true)
+        sparkle.mesh = sparkle_mesh
+        sparkle.rotation_degrees.x = -90.0
+        sparkle.position = Vector3(20.0 + sparkle_rng.randf() * 60.0, _water_surface + 0.05, 8.0 + sparkle_rng.randf() * 44.0)
+        sparkle.rotation.y = sparkle_rng.randf() * TAU
+        add_child(sparkle)
+        _water_sparkles.append(sparkle)
+        _animated_water.append(sparkle)
+
+    _build_shore_foam()
+
+# Foam/edge discs at the water line around each island so the land->water
+# boundary reads as a bright edge instead of a hard cut.
+func _build_shore_foam() -> void:
+    var foam_color := Color("c9bcee")
+    for biome_id in ISLANDS:
+        var data: Dictionary = ISLANDS[biome_id]
+        var c: Vector3 = data["center"]
+        var radius: Vector2 = data["radius"]
+        for i in range(16):
+            var ang := TAU * float(i) / 16.0 + fmod(float(i * 5), TAU) * 0.02
+            var fx := c.x + cos(ang) * (radius.x * 1.52)
+            var fz := c.z + sin(ang) * (radius.y * 1.52)
+            var foam := MeshInstance3D.new()
+            var foam_mesh := PlaneMesh.new()
+            foam_mesh.size = Vector2(1.1, 0.7)
+            foam_mesh.material = _foam_material()
+            foam.mesh = foam_mesh
+            foam.rotation_degrees.x = -90.0
+            foam.position = Vector3(fx, _water_surface + 0.01, fz)
+            foam.rotation.y = ang
+            add_child(foam)
+    # Foam ring around the magic islet shore too.
+    for i in range(10):
+        var ang := TAU * float(i) / 10.0
+        var foam := MeshInstance3D.new()
+        var foam_mesh := PlaneMesh.new()
+        foam_mesh.size = Vector2(1.0, 0.6)
+        foam_mesh.material = _foam_material()
+        foam.mesh = foam_mesh
+        foam.rotation_degrees.x = -90.0
+        foam.position = Vector3(22.0 + cos(ang) * 3.6, _water_surface + 0.01, 43.5 + sin(ang) * 3.6)
+        foam.rotation.y = ang
+        add_child(foam)
+
+func _foam_material() -> StandardMaterial3D:
+    var material := StandardMaterial3D.new()
+    material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+    material.albedo_color = Color(0.79, 0.74, 0.93, 0.75)
+    material.emission_enabled = true
+    material.emission = Color("b8a8e8")
+    material.emission_energy_multiplier = 0.45
+    material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+    material.roughness = 0.6
+    return material
+
+func _water_material(ripple: bool, highlight: bool = false) -> StandardMaterial3D:
     var material := StandardMaterial3D.new()
     material.metallic = 0.0
     material.roughness = 0.22
     material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-    if ripple:
+    if highlight:
+        # Bright moving sheen: the sun reflecting off the surface.
+        material.albedo_color = Color("b4a4ea")
+        material.albedo_color.a = 0.55
+        material.emission_enabled = true
+        material.emission = Color("c8b8f4")
+        material.emission_energy_multiplier = 0.5
+    elif ripple:
         material.albedo_color = Color("8d7fd4")   # brighter lavender sparkle plane
         material.albedo_color.a = 0.5
         material.emission_enabled = true
         material.emission = Color("9a8be0")
         material.emission_energy_multiplier = 0.2
     else:
-        # Slightly deeper violet than before so the water reads darker than the
-        # sand/grass above it — the base of the value hierarchy, not a pale wash.
-        material.albedo_color = Color("5a4a9e")
-        material.albedo_color.a = 0.88
+        # Rich violet-lavender base, deeper than the sand/grass above it so the
+        # water is the dark base of the value hierarchy, not a pale wash.
+        material.albedo_color = Color("54439c")
+        material.albedo_color.a = 0.9
         material.emission_enabled = true
-        material.emission = Color("4a3c88")
-        material.emission_energy_multiplier = 0.1
+        material.emission = Color("45388a")
+        material.emission_energy_multiplier = 0.12
     return material
 
 # ---------------------------------------------------------------------------
@@ -409,6 +506,73 @@ func _build_starting_area() -> void:
     _build_shoreline(s)
     _build_bridge(s)
     _build_magic_islet(s + 0.5)
+    _build_staging()
+
+# ---------------------------------------------------------------------------
+# Foreground / midground / background staging (Presentation Pass 2).
+# Foreground: large framing elements entering the frame corners for overlap &
+# occlusion depth. Midground: clusters filling the once-hollow center. Far:
+# a quieter rim of trees behind the clearing. All coords computed from the
+# ortho camera's world->screen mapping at spawn so staging lands on-frame.
+# ---------------------------------------------------------------------------
+func _build_staging() -> void:
+    var s := MEADOW_SURFACE
+
+    # FOREGROUND — bottom-right frame corner gets a large tree that partially
+    # enters the frame (overlap/occlusion depth); the bottom-left is already the
+    # beacon destination, so the left edge gets shore rocks + a shrub instead.
+    _add_tree(Vector3(31.3, 0.0, 29.3), s, 100, Color("e89fc0"), 1.6)    # right foreground tree
+    _add_rock(Vector3(19.1, s, 41.8), 82, Color("9aa3ae"))                # left edge shore rock
+    _add_rock(Vector3(23.2, s, 39.8), 83, Color("8f98a3"))
+    _add_shrub(Vector3(19.6, s, 40.9), "Shrub_FG1")
+    _add_shrub(Vector3(28.3, s, 31.7), "Shrub_FG2")
+    _add_grass(Vector3(30.2, s, 30.6), 100, Color("8fc08a"))
+    _add_grass(Vector3(32.6, s, 28.4), 101, Color("8fc08a"))
+    _add_flower(Vector3(30.0, s, 30.0), 110, Color("f5d0e0"))
+    _add_flower(Vector3(32.4, s, 28.0), 111, Color("f0e08a"))
+
+    # MIDGROUND — clusters that fill the previously hollow center band (world
+    # z ~31-37) without blocking the path. Intentional groups, not scatter.
+    _add_shrub(Vector3(24.6, s, 33.6), "Shrub_M1")
+    _add_rock(Vector3(25.2, s, 34.8), 84, Color("a0a9b2"))
+    _add_flower(Vector3(25.8, s, 34.2), 112, Color("e8c4f0"))
+    _add_flower(Vector3(24.9, s, 35.2), 113, Color("f5d0e0"))
+    _add_shrub(Vector3(18.9, s, 34.0), "Shrub_M2")
+    _add_pebble(Vector3(18.3, s, 33.4), 20)
+    _add_pebble(Vector3(19.6, s, 34.5), 21)
+    _add_grass(Vector3(19.4, s, 33.4), 102, Color("a8c98a"))
+    _add_grass(Vector3(25.4, s, 31.2), 103, Color("a8c98a"))
+    _add_flower(Vector3(26.2, s, 30.8), 114, Color("f0e08a"))
+    _add_flower(Vector3(20.4, s, 32.2), 115, Color("c8e8ff"))
+    _add_mushroom(Vector3(26.6, s, 32.8), 5)
+
+    # BACKGROUND RIM — a quieter, smaller tree line behind the clearing (upper
+    # frame) that frames the scene without competing with the foreground.
+    _add_tree(Vector3(12.5, 0.0, 36.8), s, 102, Color("a5d873"), 0.85)
+    _add_tree(Vector3(15.0, 0.0, 32.1), s, 103, Color("ed9dcc"), 0.9)
+    _add_tree(Vector3(20.8, 0.0, 24.4), s, 104, Color("a5d873"), 1.0)
+    _add_rock(Vector3(14.4, s, 34.5), 87, Color("aab6c2"))
+    _add_grass(Vector3(16.2, s, 31.0), 104, Color("8fc08a"))
+
+    # AUTHORED GROUPS — little composed scenes so the world feels designed.
+    # Hut garden: fence posts + flowers on the hut's south face.
+    _add_fence_post(Vector3(28.0, s, 28.3), 0.0)
+    _add_fence_post(Vector3(30.0, s, 28.3), 0.0)
+    _add_flower(Vector3(28.6, s, 27.9), 116, Color("f5c6d8"))
+    _add_flower(Vector3(29.4, s, 27.7), 117, Color("f0e08a"))
+    _add_pebble(Vector3(29.0, s, 27.5), 22)
+    # Well cluster: barrel + crate + flowers around the well.
+    _add_crate(Vector3(18.8, s, 23.8))
+    _add_barrel(Vector3(20.3, s, 23.6))
+    _add_flower(Vector3(18.4, s, 24.8), 118, Color("e8a0b8"))
+    _add_grass(Vector3(20.9, s, 24.0), 105, Color("a8c98a"))
+    # Bridge shoreline: rocks + flowers flanking the bridge head on both sides.
+    _add_rock(Vector3(19.2, s, 40.6), 88, Color("8f98a3"))
+    _add_rock(Vector3(24.6, s, 40.7), 89, Color("a0a9b2"))
+    _add_flower(Vector3(19.8, s, 39.9), 119, Color("c8e8ff"))
+    _add_flower(Vector3(24.0, s, 39.9), 123, Color("f5d0e0"))
+    _add_grass(Vector3(20.6, s, 39.6), 106, Color("8fc08a"))
+    _add_grass(Vector3(23.4, s, 39.6), 107, Color("8fc08a"))
 
 func _build_shoreline(s: float) -> void:
     for i in range(5):
@@ -464,25 +628,63 @@ func _build_magic_islet(s: float) -> void:
     add_child(_mesh_box("MagicIslet_Top", Vector3(22.0, s - 0.22, 43.5), Vector3(7.0, 0.5, 7.0), Color("c4b18e")))
     add_child(_mesh_box("MagicIslet_Grass", Vector3(22.0, s - 0.02, 43.5), Vector3(6.4, 0.1, 6.4), Color("a5b886")))
 
-    # The magic landmark: a soft glowing obelisk.
+    # The magic landmark: a softly glowing obelisk beacon. Emissive body + tip,
+    # a warm violet light pool at its base, a small OmniLight, and a ring of
+    # standing stones so it reads as a deliberate destination, not a prop.
     var obelisk := MeshInstance3D.new()
     obelisk.name = "MagicLandmark"
     var om := BoxMesh.new()
-    om.size = Vector3(0.9, 4.6, 0.9)
+    om.size = Vector3(1.0, 4.8, 1.0)
     obelisk.mesh = om
-    obelisk.position = Vector3(22.0, s + 2.3, 43.5)
-    obelisk.material_override = _material(Color("8a6cc9"), 0.35)
+    obelisk.position = Vector3(22.0, s + 2.4, 43.5)
+    obelisk.material_override = _material(Color("8a6cc9"), 0.5)
     add_child(obelisk)
     var tip := MeshInstance3D.new()
     var tm := PrismMesh.new()
-    tm.size = Vector3(1.3, 1.0, 1.3)
+    tm.size = Vector3(1.4, 1.1, 1.4)
     tip.mesh = tm
-    tip.position = Vector3(22.0, s + 4.9, 43.5)
-    tip.material_override = _material(Color("a88ae6"), 0.5)
+    tip.position = Vector3(22.0, s + 5.1, 43.5)
+    tip.material_override = _material(Color("a88ae6"), 0.7)
     add_child(tip)
-    var base := _mesh_box("LandmarkBase", Vector3(22.0, s + 0.35, 43.5), Vector3(2.2, 0.7, 2.2), Color("5e6f78"))
+    var base := _mesh_box("LandmarkBase", Vector3(22.0, s + 0.4, 43.5), Vector3(2.4, 0.8, 2.4), Color("5e6f78"))
     base.material_override = _material(Color("5e6f78"))
     add_child(base)
+    # Warm violet glow pool on the ground under the beacon.
+    var pool := MeshInstance3D.new()
+    var pool_mesh := CylinderMesh.new()
+    pool_mesh.top_radius = 1.7
+    pool_mesh.bottom_radius = 1.7
+    pool_mesh.height = 0.02
+    pool.mesh = pool_mesh
+    pool.position = Vector3(22.0, s + 0.03, 43.5)
+    pool.material_override = _material(Color("a889e8"), 0.65)
+    add_child(pool)
+    # Small localized light so the beacon visibly illuminates its surroundings.
+    var beacon_light := OmniLight3D.new()
+    beacon_light.name = "BeaconLight"
+    beacon_light.position = Vector3(22.0, s + 3.4, 43.5)
+    beacon_light.light_color = Color("c9a0ff")
+    beacon_light.light_energy = 2.2
+    beacon_light.omni_range = 11.0
+    beacon_light.shadow_enabled = false
+    add_child(beacon_light)
+    # Standing-stone ring: chunky silhouettes that frame the beacon.
+    for i in range(6):
+        var ang := TAU * float(i) / 6.0 + 0.3
+        var stone := MeshInstance3D.new()
+        var stone_mesh := PrismMesh.new()
+        stone_mesh.size = Vector3(0.7, 1.6 + float(i % 3) * 0.5, 0.7)
+        stone.mesh = stone_mesh
+        stone.position = Vector3(22.0 + cos(ang) * 2.6, s + 0.8 + float(i % 2) * 0.3, 43.5 + sin(ang) * 2.6)
+        stone.rotation.y = ang
+        stone.material_override = _material(Color("7a5a9e"))
+        add_child(stone)
+    # Surrounding vegetation + a couple of rocks so the islet feels lived-in.
+    _add_flower(Vector3(20.2, s, 42.4), 120, Color("e8c4f0"))
+    _add_flower(Vector3(23.9, s, 44.6), 121, Color("c8e8ff"))
+    _add_flower(Vector3(20.6, s, 45.0), 122, Color("f0e0c0"))
+    _add_rock(Vector3(24.6, s, 42.6), 85, Color("8a7a9e"))
+    _add_rock(Vector3(19.4, s, 43.9), 86, Color("96849e"))
 
 func _build_hut(center: Vector3) -> void:
     var s := center.y
@@ -703,11 +905,12 @@ func _obstacle(center: Vector3, size: Vector3) -> void:
     body.add_child(cs)
     add_child(body)
 
-func _add_tree(position: Vector3, surface: float, index: int, crown_color: Color) -> void:
-    _add_ground_shadow(Vector3(position.x, surface, position.z), 1.9, 1.7, 0.42)
+func _add_tree(position: Vector3, surface: float, index: int, crown_color: Color, scale_mult: float = 1.0) -> void:
+    _add_ground_shadow(Vector3(position.x, surface, position.z), 1.9 * scale_mult, 1.7 * scale_mult, 0.42)
     var tree := Node3D.new()
     tree.name = "Tree_%02d" % index
     tree.position = Vector3(position.x, surface, position.z)
+    tree.scale = Vector3(scale_mult, scale_mult, scale_mult)
     add_child(tree)
     _animated_plants.append(tree)
     var trunk := _mesh_box("Trunk", Vector3(0.0, 1.0, 0.0), Vector3(0.6, 2.0, 0.6), Color("8a5a3f"))
@@ -911,10 +1114,11 @@ func _apply_camera_framing() -> void:
         return
     var size := vp.get_visible_rect().size
     var aspect := size.x / maxf(1.0, size.y)
-    # Tall (portrait) and square viewports get a smaller ortho size (more zoom) so
-    # the player stays a clear anchor; wide (landscape) shows a bit more clearing.
-    # Both are tighter than the map so the playable composition fills the frame.
-    camera.size = 10.0 if aspect < 1.05 else 12.0
+    _portrait = aspect < 1.05
+    # Portrait zooms out slightly (13 vs 12) with a narrower x-offset and longer
+    # look-ahead so the player anchor AND the beacon destination both stay on
+    # screen; landscape keeps the fuller clearing view.
+    camera.size = 13.0 if _portrait else 12.0
 
 # Grounding contact shadow: a tight dark disc at the object's base plus a wider,
 # fainter disc that softens outward. This is what makes props visibly TOUCH the

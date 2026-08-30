@@ -218,6 +218,15 @@ Applied a focused visual pass to take the starting region from stacked-primitive
 - [x] Face separation: grass tops lightened, soil/stone steps darkened (0.28 darken), trunk lit/shadow halves, foliage value tiers (bottom darkest→top brightest), deeper violet water base.
 - [x] Verified: contrast (lum std 45.9→60.2), band spread (24→33), player color-distance vs ground (84→110), player pixel detection 374→565, edges 4.4%→6.4%; pastel saturation 0.28 preserved, near-white 0.1%, dusk still violet not crushed. Screenshot `/tmp/astrix-pass1-done.png`.
 
+## Visual Pass 2 — composition, depth, water & world staging
+
+- [x] Water: layered treatment — richer violet base (#54439c), drifting bright sun-highlight band, shoreline foam discs around every island + the magic islet, twinkling sparkle patches. Verified 16.5% violet base + 51% bright highlight mix = reads as water.
+- [x] Beacon: magic obelisk enlarged + emissive tip, warm glow pool on the islet floor, OmniLight, 6 standing stones ring, vegetation/rocks around it. Verified visible lower-left in landscape (0.24, 0.74) and — after the portrait camera fix — on-frame in portrait (0.17, 0.70).
+- [x] Staging: computed world→screen mapping from the ortho camera to place foreground corner tree + shore rocks, midground clusters filling the once-hollow center band, and a quieter background tree rim. Verified: every frame band now carries detail (center no longer hollow), all four corners have occlusion density.
+- [x] Authored groups: hut garden (fence + flowers), well cluster (crate + barrel + flowers), bridge shoreline rocks/flowers both sides, midground flower/rock/shrub/mushroom clusters.
+- [x] Mobile/portrait: aspect-aware camera — portrait ortho 13 + x-offset 8 + look-ahead 6 keeps player anchor AND beacon on-screen (beacon went from off-frame x=-0.21 to 0.17). Verified at 720×1280.
+- [x] Verified: headless parse clean, Xvfb renders 1280×720 + 720×1280, server `/astrix/state` 200, legacy routes intact (404 on /api/lobby without ?room= is pre-existing), typecheck clean, 80/80 tests pass. Screenshots `/tmp/astrix-pass2-done.png` + `/tmp/astrix-pass2-portrait.png`.
+
 ## Guardrails
 
 - The existing TypeScript browser client remains the reference client and must not be modified for ASTrix work.
