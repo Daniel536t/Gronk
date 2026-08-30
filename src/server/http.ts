@@ -44,6 +44,7 @@ function sendJson(res: http.ServerResponse, code: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
+
 /** Serve the Vite build output (dist/) for single-port production mode. Returns
  *  true if a file was served. Path traversal is blocked by normalizing and
  *  verifying the resolved path stays under staticDir. */
@@ -65,6 +66,9 @@ function serveStatic(
   return true;
 }
 
+/** Parse a browser <form> multipart upload and return a single quoted-value part
+ *  that looks like a video file. Enforces a hard byte cap and only accepts
+ *  well-formed multipart frames, so this is not a general request parser. */
 function readBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     let data = "";
@@ -179,6 +183,11 @@ export function createHttpServer(
       });
       return;
     }
+
+    // ---- POST /api/upload-watch (REMOVED) -------------------------------
+    // The reference-upload widget was removed from the site, so the public
+    // upload endpoint is gone entirely: no unauth write sink, no disk quota
+    // or rate-limit surface, no container-ephemeral storage concern.
 
     // ---- POST endpoints -------------------------------------------------
     if (req.method === "POST") {

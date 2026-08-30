@@ -14,6 +14,10 @@ ENV NODE_ENV=production PORT=8787 BOTS=scripted
 COPY package*.json ./
 RUN npm ci --omit=dev && npm i -g pm2 typescript tsx
 COPY --from=build /app/dist ./dist
+# Godot HTML5 export + uploads root: the HTTP server derives its static dir
+# from server/static and writes reference uploads under it, so the image must
+# include the tree it serves (otherwise returned /uploads/* URLs 404).
+COPY --from=build /app/server/static ./server/static
 COPY src ./src
 COPY .env ./
 # Run under pm2 so it restarts on crashes / restarts.

@@ -145,6 +145,66 @@ Caddy config: `/etc/caddy/Caddyfile` (see deployment report). Backup at `/etc/ca
 - Actual game logic authority remains the ASTrix server; Godot collision is presentation-only.
 - Gronk is not yet a separate chaser in this Godot build — recast as the companion follow placeholder pending the agent/Gronk scope.
 
+## Milestone — mobile-first gameplay camera + visible touch controls
+
+Real Android tablet testing (post-HTTPs deploy) showed the build was a *viewer*, not a *game*: the camera was near-vertical (dev/bird's-eye), the player was a tiny speck, and no controls were visible in the shipped build.
+
+- [x] Gameplay camera: retargeted to a deliberate low-pitch isometric (~32deg from horizontal) with constant offset + non-rolling yaw + smooth follow + look-ahead. Reveals object sides/cliff faces/bridge elevation (true 2.5D depth) instead of a top-down view.
+- [x] Player-anchored framing: portrait/tall viewports get a smaller ortho size (more zoom) so the player is a clear anchor; fixed the reversed framing logic; re-frame on `size_changed` for tablet rotation. Player is prominent in both portrait and landscape.
+- [x] Visible touch controls: rewrote `MobileHUD.gd` with a large high-contrast virtual joystick (dark base + bright ring + teal thumb) and a gold action button, safe-margin positioned (no longer off-edge), plus ASTRIX label and pause button.
+- [x] Fixed the REAL reason controls were invisible: `class_name Circle` was declared inside `MobileHUD.gd` (invalid in GDScript 4.7 → the whole HUD script failed to load in the exported build with "Unexpected class_name in class body"). Moved to standalone `godot/scripts/Circle.gd` (also fixed a 3-arg `minf` misuse) and wired it by `preload`.
+- [x] Unified input: joystick + action button feed the same `AstrixInput` abstraction as WASD/arrows + E; desktop keyboard unchanged.
+- [x] Touch drag moves the player: Playwright/CDP emulated a 390x844 touch joystick drag against the public HTTPS URL; before/after frames show the player moving and the camera following, zero console errors.
+- [x] Both viewports verified: 390x844 portrait and 1280x720 desktop render the world + all controls with zero console errors; export boots clean.
+- [x] Regression: typecheck passes, 80/80 tests pass.
+
+### Mobile-first milestone notes / limitations
+- Headless Playwright cannot reproduce exact Android hardware+multi-touch behavior; the CDP-emulated drag validates the input path but true device feel needs a real-device pass.
+- Title top area / camera look-ahead leave some sky at the top in portrait (acceptable exploration framing).
+- Action button currently triggers `AstrixInput.request_interact()` (interact action); contextual hide prompt is a follow-up.
+
+## Milestone — reference-driven visual pass (video + still art direction)
+
+Applied from the user's reference clip (pastel voxel island: pale warm vista → saturated violet world → soft purple) and two stills (bright teal+orange daylight, dark violet/magenta night), extracted with an OpenCV-based analyzer (`.cv/` venv + `cv_analyze.py`).
+
+- [x] Water: opaque light teal → saturated violet-lavender translucent (`#6b5bb8`, alpha 0.85, soft sheen + gentle motion) matching the reference's signature purple water.
+- [x] Terrain palette: bright green/teal → pale parchment-lavender biomes (`#c8bfa6` meadow, `#c2c8d4` frost, `#c9ad92` dusk) with warm accents; shoreline sand, islet, bridge and magic landmark retinted warm-tan + violet accent.
+- [x] Sky/lighting: flat bright sky → soft procedural gradient (pale warm blue-violet top, warm horizon) with a 90s day↔dusk cycle (violet/magenta at dusk, dimmer ambient + warm-violet sun).
+- [x] Fix overexposure root cause: the old build blew the whole frame to near-white (82% near-white pixels). Fixed by shrinking the procedural sun disc (40° → 8°), dimming sky colors, lowering ambient 0.45→0.35 and tonemap exposure 0.62→0.5. Verified via render: near-white dropped to ~7–10%, day avg RGB (202,175,154) warm pale, dusk avg RGB (108,69,106) violet.
+- [x] Re-exported Godot Web build to `server/static/` and re-injected the reference-upload widget (multi-file, image+video) into the exported loader page; verified live: widget present on `https://astrixx.duckdns.org/`, `.wasm` served as `application/wasm`, `.pck` as `application/octet-stream`.
+- [x] Regression: typecheck passes, 80/80 tests pass.
+
+## Milestone — remove reference-upload widget (Qodo PR #16 follow-up)
+
+- [x] Remove the upload widget from the served Godot loader page (re-exported `server/static/index.html` without re-injecting it; verified live: no `upload-widget`/`uploadMany` markers on `https://astrixx.duckdns.org/`).
+- [x] Replace `server/static/watch.html` with a minimal closed notice page.
+- [x] Remove the `POST /api/upload-watch` endpoint entirely (now returns 404) along with the multipart parser, per-IP rate limiter, quota/prune helpers, and unused imports — no public upload sink remains.
+- [x] `scripts/capture-web.ts`: exit non-zero also when `ctx.secureContext === false` (probe comment claimed it but the check was missing).
+- [x] Regression: typecheck passes, 80/80 tests pass; game root + `/astrix/state` still 200 after pm2 restart.
+
+### Visual pass notes / limitations
+- Cycle verification done with a temporary 4s cycle (movie-maker capture advances game-time by rendered frames, ~2fps on llvmpipe, so a 90s cycle needs ~45 min of capture); restored to 90s after confirming the lerp.
+- Still needs-authored assets to fully match references: detailed structures, realistic foliage, red-roofed buildings, polished props (GLB/CC0 packs).
+
+## Visual transformation pass — polished vertical slice
+
+Applied a focused visual pass to take the starting region from stacked-primitive "prototype" toward a convincing diorama without touching gameplay/server/network.
+
+- [x] Add asset-ready scaffolding: `godot/assets/{characters,environment,props,terrain,materials}` + wrapper scenes `godot/scenes/{characters,environment,props}` + `godot/assets/ASSET_PIPELINE.md` documenting GLB scale/orientation (up=+Y, feet pivot) and required animation names (idle/walk/run/interact/hide/emerge/stun).
+- [x] Player presentation interface: `play_state()` maps state names to procedural motion so a rigged GLB can drive visuals later without touching `GameClient`/`WorldState`/server; added a flared cloak base + backpack accessory and movement-linked cape/backpack bob.
+- [x] Terrain diorama language: rounded chunky rims per island (fat turf overhang balls along the grass-top rim + a stepped soil mound ring lower/outer) so edges read as hand-built layered elevation, not sharp boxes.
+- [x] Densify the starting clearing: flowers (14), pebbles (10), mushrooms (2), a small well, a barrel (2 crates + barrel), a split fence lining the southern path, extra rocks.
+- [x] Camera: pulled in (offset 13/14.5/13 → 11/12.2/11) with lower pitch and tighter ortho sizes (portrait 10, landscape 12) so the clearing (not the whole 100×60 map) fills the frame with less sky; player stays the anchor.
+- [x] Lighting: warm cream key from the upper-left (energy 0.72) + a soft pale-blue fill from the right so shadow faces are never flat-black; softer shadows (`shadow_blur 3.5`, fade-in).
+- [x] Water: added a brighter translucent rippling "top" plane (sparkle sheen) over the violet base + shoreline sand/foam band ringing each island so the land→water transition reads.
+- [x] Verify: rendered day + dusk frames; day is warm pale (brightness ~159, near-white 0.1%), dusk is violet/magenta (mean BGR 101/74/104) — matches reference moods; dense edge/detail map across the frame.
+- [x] Regression: Godot parse + headless/Xvfb launch clean; no server/engine/TrueForge/browser files touched.
+
+### Visual pass notes / limitations
+- No external GLB models added yet — the scaffolding + wrapper scenes are the integration points; authored assets are the next upgrade layer (see `ASSET_PIPELINE.md`).
+- Collision remains simple boxes (presentation-only, no server rules implied).
+- Visual quality is still verified numerically + by reviewer here; a human screenshots gate is the final art check.
+
 ## Guardrails
 
 - The existing TypeScript browser client remains the reference client and must not be modified for ASTrix work.
