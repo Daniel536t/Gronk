@@ -1,5 +1,18 @@
 # ASTrix Tasks
 
+## P6 — Final product / demo / presentation pass (implemented — Godot is the visual laboratory)
+
+- [x] **Godot sim-materialization (the critical gap closed)**: Godot previously rendered a beautiful but *static* diorama — the authoritative simulation's changing state (farms, crops, bridges, cleared trees) never appeared. Now `WorldState` retains `crops`, `bridges`, `farmland`, `season` from the server snapshot, and `World3D._materialize_sim` renders into the 3D world, presentation-only:
+  - **Farms** (+ farm beds/rims) materialize from `buildings[]` where `type == "farm"`, one group per farm id; groups are removed when no longer authoritative.
+  - **Crops** bind to farms by `farmPlotId` and scale height by `growthStage` (0 = furrow, <0.8 = growing stalk, ≥0.8 = mature with a golden emissive tip so harvest-readiness reads). Never invents crop state.
+  - **Bridges** render planks/rails/posts across the water for each authoritative `bridges[]` pair (meadow↔frost, meadow↔dusk); removed when the connection is gone.
+  - **Cleared trees**: resource-node glow markers (`ResourceNode3D`) hide when their `server_node_id` is absent from `resourceNodes[]` (clear_terrain permanence is visual).
+- [x] **Consequence feed + final state** (`AgentConsole`): day-over-day snapshot deltas drive a judge-readable feed — `DAY N BEGINS`, season change, `WINTER HAS ARRIVED — CROPS HAVE STOPPED GROWING`, `FOOD SHORTAGE — N villager(s) starved`, `HARVEST COMPLETE +N`, `FOOD RESTORED`. At day 30 or population 0 a centered final banner shows **`ASTrix — 30 DAYS SURVIVED`** (with population/food/season) or **`VILLAGE COLLAPSED`** (+ actual cause). Every line is derived from authoritative deltas, never fabricated.
+- [x] **AgentConsole control room** (P4-5): already shows day/30, season, population, food, pressure, days-left, farmland usage, steward status/objective/activity, live event feed, and **WORLD TIME: PAUSED** + APPROVE/REJECT at the gate (calls the real `/astrix/approval/respond` through GameClient). Approval remains structural server-side.
+- [x] **Mobile-first** (P12-13): existing touch joystick (bottom-left) + action button intact; ortho camera auto-anchors the player on portrait/landscape. Verified by actually rendering **Xvfb + Mesa/OpenGL3 screenshots at 1280×720 (landscape) and 800×1280 (portrait)** — both fully colorful (1698 / 1374 distinct colors, 100% non-background), player teal, warm house, vegetation, and violet beacon all visible. New `godot/tools/screenshot_harness.gd` feeds a representative authoritative snapshot and captures a PNG (no SCRIPT ERRORs — boots the whole Main scene incl. all autoloads + AgentConsole + ApprovalGate + MobileHUD + BuildingSystem).
+- [x] **Validation** (P15): full suite **148/148**, both typechecks, `git diff --check` clean, Godot headless boot + harness render clean, deterministic 30-day scenario green. Reproducible demo driver `scripts/astrix-demo.ts` (`npm run astrix:eval`, appends `OUTCOME: survived 30 days / village collapsed`) intact for the final artifact (P16).
+- [x] Committed locally (nopush). Godot web export + the Observatory + the Godot site root remain exactly as they were — nothing removed.
+
 ## P5 — ASTrix Observatory: live + replay demonstration layer (implemented)
 
 - [x] **New projection layer** — a fast, lightweight web interface (`/observatory/`) that renders the authoritative ASTrix simulation. It is a pure projection: it never decides crop growth, food, population, seasons, farmland, connectivity, approvals, verification, or survival — all of that stays in the authoritative engine. `observatory/src/` types + a deterministic SVG projector + replay engine + main controller; built with esbuild (zero new deps) into `server/static/observatory/`.

@@ -12,6 +12,10 @@ var biome_health: Dictionary = {"meadow": 1.0, "frost": 1.0, "dusk": 1.0}
 var resources: Dictionary = {"wood": 0, "stone": 0, "food": 12, "water": 0, "crystal": 0}
 var resource_nodes: Dictionary = {}
 var buildings: Dictionary = {}
+var crops: Dictionary = {}
+var bridges: Array[Dictionary] = []
+var farmland: Dictionary = {}
+var season: String = "spring"
 var pending_approvals: Array[Dictionary] = []
 
 func _ready() -> void:
@@ -27,6 +31,10 @@ func snapshot() -> Dictionary:
         "resources": resources.duplicate(true),
         "resource_nodes": resource_nodes.duplicate(true),
         "buildings": buildings.duplicate(true),
+        "crops": crops.duplicate(true),
+        "bridges": bridges.duplicate(true),
+        "farmland": farmland.duplicate(true),
+        "season": season,
         "pending_approvals": pending_approvals.duplicate(true),
     }
 
@@ -53,6 +61,19 @@ func apply_snapshot(snapshot_data: Dictionary) -> void:
         for building in remote_buildings:
             if building is Dictionary:
                 buildings[str(building.get("id", "building"))] = building.duplicate(true)
+    crops.clear()
+    var remote_crops: Variant = snapshot_data.get("crops", [])
+    if remote_crops is Array:
+        for crop in remote_crops:
+            if crop is Dictionary:
+                crops[str(crop.get("id", "crop"))] = crop.duplicate(true)
+    bridges = []
+    var remote_bridges: Variant = snapshot_data.get("bridges", [])
+    if remote_bridges is Array:
+        for bridge in remote_bridges:
+            if bridge is Dictionary:
+                bridges.append(bridge.duplicate(true))
+    season = str(snapshot_data.get("season", season))
     var approvals: Variant = snapshot_data.get("pendingApprovals", snapshot_data.get("pending_approvals", pending_approvals))
     if approvals is Array:
         # JSON.parse yields untyped Arrays; rebuild as a typed Array[Dictionary]

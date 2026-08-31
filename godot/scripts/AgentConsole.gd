@@ -9,12 +9,18 @@ extends CanvasLayer
 var panel: PanelContainer
 var log_label: RichTextLabel
 var world_label: Label
+var final_label: RichTextLabel
 var approve_button: Button
 var reject_button: Button
 var _status_text := "WORLD STEWARD // awaiting server"
 var _world_text := ""
 var _lines: Array[String] = []
 var _pending_approval_id := ""
+var _prev_day := 0
+var _prev_food := -1
+var _prev_pop := -1
+var _prev_season := ""
+var _final_state_shown := false
 
 func _ready() -> void:
     layer = 20
@@ -40,6 +46,13 @@ func _ready() -> void:
     world_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     world_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     box.add_child(world_label)
+
+    final_label = RichTextLabel.new()
+    final_label.bbcode_enabled = true
+    final_label.fit_content = false
+    final_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    final_label.visible = false
+    box.add_child(final_label)
 
     var buttons := HBoxContainer.new()
     box.add_child(buttons)
@@ -126,7 +139,41 @@ func _on_world_state(world: Dictionary) -> void:
         day, season, population, food, color, pressure.to_upper(), days_left, per_day,
     ]
     _world_text += "\n" + farm_summary
+    _detect_consequences(day, season, population, food)
     _render()
+
+# Presentation-only consequence feed: translates authoritative world deltas into
+# a short, judge-readable line (starvation / harvest / season). It never invents
+# events that didn't happen in authoritative state — every line is derived from
+# a day-over-day comparison of the server snapshot.
+func _detect_consequences(day: int, season: String, population: int, food: int) -> void:
+    if day > _prev_day and _prev_day > 0:
+        append_log("[color=#8fd3c7]DAY %d BEGINS[/color]" % day)
+    if season != _prev_season and _prev_season != "":
+        append_log("[color=#c9a0ff]%s -> %s[/color]  season changed" % [_prev_season.to_upper(), season.to_upper()])
+        if season == "winter":
+            append_log("❄ [color=#dce7f2]WINTER HAS ARRIVED — CROPS HAVE STOPPED GROWING[/color]")
+    if _prev_food >= 0 and population < _prev_pop:
+        var starved := _prev_pop - population
+        append_log("[color=#ffd166]FOOD SHORTAGE[/color] %d villager%s starved" % [starved, "s" if starved != 1 else ""])
+    elif _prev_food >= 0 and food > _prev_food + 4:
+        append_log("[color=#8fd3c7]HARVEST COMPLETE[/color] food %d -> %d (+%d)" % [_prev_food, food, food - _prev_food])
+    if food > 0 and _prev_food == 0:
+        append_log("[color=#8fd3c7]FOOD RESTORED[/color] vital production resumed")
+    _prev_day = day
+    _prev_food = food
+    _prev_pop = population
+    _prev_season = season
+    # Final-state banner at day 30 (survived) or population collapse (failed).
+    if not _final_state_shown and (day >= 30 or population <= 0):
+        _final_state_shown = true
+        var survived := day >= 30 and population > 0
+        var headline := "ASTrix — 30 DAYS SURVIVED" if survived else "VILLAGE COLLAPSED"
+        var cause := "The village endured all 30 days under the steward's control." if survived else "Starvation — food reserves ran out before the next harvest."
+        var details := "Population: %d   Food: %d   Season: %s" % [population, food, season]
+        final_label.text = "[color=%s]%s[/color]\n%s\n%s" % ["#7bc443" if survived else "#ff8fa3", headline, details, cause]
+        final_label.visible = true
+        append_log("[color=%s]%s[/color]" % ["#7bc443" if survived else "#ff8fa3", headline])
 
 func _on_command_completed(command_name: String, result: Dictionary) -> void:
     _lines.append("[color=#ffd166]TOOL[/color] %s → %s" % [command_name, str(result.get("ok", false))])

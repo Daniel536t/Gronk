@@ -1056,8 +1056,223 @@ func _build_decor() -> void:
 
 func _on_astrix_state_received(state: Dictionary) -> void:
     var world_state := get_node_or_null("/root/WorldState")
+    var prev: Variant = null if world_state == null else {
+        "crops": world_state.crops.duplicate(true), "bridges": world_state.bridges.duplicate(true),
+        "buildings": world_state.buildings.duplicate(true), "season": world_state.season,
+    }
     if world_state:
         world_state.apply_snapshot(state)
+    _materialize_sim(prev)
+
+# ---------------------------------------------------------------------------
+# SIM MATERIALIZATION (final pass): render the authoritative simulation's
+# changing state into the world so Godot is the agent's visible laboratory.
+# Presentation-only — every entity below is driven purely by the server
+# snapshot (GameClient polls /astrix/state). Never simulates locally.
+# ---------------------------------------------------------------------------
+var _sim_nodes: Dictionary = {}
+var _materialized_once := false
+
+const SIM_BRIDGE_SPANS := {
+    "frost-meadow": {"p": Vector3(36.5, 0.0, 22.0), "rot": 0.55},
+    "dusk-meadow": {"p": Vector3(50.0, 0.0, 35.0), "rot": -0.4},
+}
+
+func _surface_for_island(island_id: String) -> float:
+    if island_id == "frost":
+        return FROST_SURFACE
+    if island_id == "dusk":
+        return DUSK_SURFACE
+    return MEADOW_SURFACE
+
+func _seed_materializer() -> void:
+    if _materialized_once:
+        return
+    _materialized_once = true
+    # Decorative authored trees get a node-name mapping so clear_terrain can
+    # hide them. The tree seeds at these indexes correspond to resource nodes.
+    _sim_nodes["trees"] = {}
+
+func _materialize_sim(prev: Dictionary) -> void:
+    _seed_materializer()
+    var world_state := get_node_or_null("/root/WorldState")
+    if world_state == null:
+        return
+
+    # 1) FARMS + CROPS — build one farmoplot group per authoritative farm; crop
+    # height scales with growthStage (0 = newly planted, <0.8 growing, >=0.8 mature).
+    var handled_farms := {}
+    var idx := 0
+    for building in world_state.buildings.values():
+        if not (building is Dictionary):
+            continue
+        if str(building.get("type", "")) != "farm":
+            continue
+        handled_farms[str(building.get("id", "farm_%d" % idx))] = true
+        _build_sim_farm(building, world_state, str(building.get("id", "farm_%d" % idx)))
+        idx += 1
+    # Remove farm groups no longer in authoritative state.
+    for key in _sim_nodes.keys():
+        if str(key).begins_with("farm:") and not handled_farms.has(str(key).substr(5)):
+            _free_sim_node(key)
+
+    # 2) BRIDGES — render where authoritative connectivity says islands are joined.
+    var seen_pairs := {}
+    for bridge in world_state.bridges:
+        var pair := [str(bridge.get("islandA", "")), str(bridge.get("islandB", ""))]
+        pair.sort()
+        var key := String(pair[0]) + "-" + String(pair[1])
+        if seen_pairs.has(key):
+            continue
+        seen_pairs[key] = true
+        var span = SIM_BRIDGE_SPANS.get(key)
+        if span is Dictionary:
+            _build_sim_bridge(key, span, bridge)
+    # Remove bridge groups whose pair is no longer connected.
+    for key in _sim_nodes.keys():
+        if str(key).begins_with("bridge:") and not seen_pairs.has(str(key).substr(7)):
+            _free_sim_node(key)
+
+    # 3) RESOURCE NODES — hide glow markers when their authoritative server id
+    # is gone (clear_terrain permanently removes wood nodes). Presentation-only.
+    var live_ids := {}
+    for node in world_state.resource_nodes.values():
+        if node is Dictionary:
+            live_ids[str(node.get("id", ""))] = true
+    for rn in get_tree().get_nodes_in_group("resource_nodes"):
+        if rn is ResourceNode3D:
+            var rn3 := rn as ResourceNode3D
+            var sid := rn3.server_node_id
+            rn3.visible = live_ids.has(sid)
+    notify_property_list_changed()
+
+func _build_sim_farm(building: Dictionary, world_state: Node, farm_id: String) -> void:
+    var node_key := "farm:" + farm_id
+    var group: Node3D = _sim_nodes.get(node_key) as Node3D
+    if group == null:
+        group = Node3D.new()
+        group.name = "SimFarm_" + farm_id
+        add_child(group)
+        _sim_nodes[node_key] = group
+    # Clear previous plot meshes (sim nodes only — cheap, ~3 plots/farm).
+    for child in group.get_children():
+        child.queue_free()
+    var pos := _snapshot_pos(building)
+    var surface := _surface_for_island(str(building.get("islandId", "meadow")))
+    group.position = Vector3(pos.x, surface, pos.z)
+
+    # Farm bed + up to 3 crop plots.
+    var bed := MeshInstance3D.new()
+    var bm := BoxMesh.new()
+    bm.size = Vector3(3.6, 0.12, 4.6)
+    bed.mesh = bm
+    bed.position = Vector3(0.0, 0.06, 0.0)
+    bed.material_override = _material(Color("8a5a2b"))
+    group.add_child(bed)
+    var rim := MeshInstance3D.new()
+    var rm := BoxMesh.new()
+    rm.size = Vector3(3.9, 0.06, 0.35)
+    rim.mesh = rm
+    rim.position = Vector3(0.0, 0.1, 2.4)
+    rim.material_override = _material(Color("6e4a24"))
+    group.add_child(rim)
+
+    # Attach crops from authoritative crops[] by matching farmPlotId.
+    var plot_stages: Array[float] = [0.0, 0.0, 0.0]
+    var used := 0
+    for crop in world_state.crops.values():
+        if str(crop.get("farmPlotId", "")) != farm_id:
+            continue
+        if used < plot_stages.size():
+            plot_stages[used] = float(crop.get("growthStage", 0.0))
+            used += 1
+    var plot_colors := [Color("6fbf3f"), Color("7ccb48"), Color("e7cf5a")]
+    for i in range(plot_stages.size()):
+        var stage := plot_stages[i]
+        if stage <= 0.0:
+            # Empty furrow.
+            var furrow := MeshInstance3D.new()
+            var fm := BoxMesh.new()
+            fm.size = Vector3(1.4, 0.06, 0.8)
+            furrow.mesh = fm
+            furrow.position = Vector3((float(i) - 1.0) * 1.5, 0.12, 0.0)
+            furrow.material_override = _material(Color("6e4a24").darkened(0.15))
+            group.add_child(furrow)
+            continue
+        # Crop stalk — height reflects growth (planted=short, mature=tall).
+        var mature := stage >= 0.8
+        var height := 0.5 + stage * 1.3
+        var crop := MeshInstance3D.new()
+        var cm := BoxMesh.new()
+        cm.size = Vector3(0.22, height, 0.22)
+        crop.mesh = cm
+        crop.position = Vector3((float(i) - 1.0) * 1.5, 0.12 + height * 0.5, 0.0)
+        crop.material_override = _material(plot_colors[i % plot_colors.size()])
+        crop.name = "Crop_plot%d_stage%.1f" % [i, stage]
+        group.add_child(crop)
+        if mature:
+            # Mature crops get a small golden tip + slight emissive so harvest-readiness reads.
+            var tip := MeshInstance3D.new()
+            var tm := BoxMesh.new()
+            tm.size = Vector3(0.3, 0.08, 0.3)
+            tip.mesh = tm
+            tip.position = crop.position + Vector3(0.0, height * 0.5, 0.0)
+            tip.material_override = _material(Color("ffd98a"), 0.45)
+            group.add_child(tip)
+
+func _build_sim_bridge(pair_key: String, span: Dictionary, bridge: Dictionary) -> void:
+    var node_key := "bridge:" + pair_key
+    if _sim_nodes.has(node_key):
+        return  # already rendered
+    var group := Node3D.new()
+    group.name = "SimBridge_" + pair_key
+    var base := span["p"] as Vector3
+    var surface := MEADOW_SURFACE - 0.1
+    group.position = Vector3(base.x, surface, base.z)
+    add_child(group)
+    _sim_nodes[node_key] = group
+
+    # Deck planks across the water gap, oriented along the span.
+    for i in range(6):
+        var plank := MeshInstance3D.new()
+        var pm := BoxMesh.new()
+        pm.size = Vector3(1.0, 0.2, 3.0)
+        plank.mesh = pm
+        var t := (float(i) - 2.5) * 0.85
+        plank.position = Vector3(0.0, 0.0, t)
+        plank.material_override = _material(Color("a9713a"))
+        group.add_child(plank)
+    for side in [-1.0, 1.0]:
+        var rail := MeshInstance3D.new()
+        var rrm := BoxMesh.new()
+        rrm.size = Vector3(0.12, 1.1, 6.0)
+        rail.mesh = rrm
+        rail.position = Vector3(side * 0.9, 0.9, 0.25)
+        rail.material_override = _material(Color("6b4a22"))
+        group.add_child(rail)
+    for end in [-4.0, 4.0]:
+        var post := MeshInstance3D.new()
+        var pom := BoxMesh.new()
+        pom.size = Vector3(0.5, 1.2, 0.5)
+        post.mesh = pom
+        post.position = Vector3(0.0, 0.6, end)
+        post.material_override = _material(Color("6b4a22"))
+        group.add_child(post)
+    group.rotation.y = float(span["rot"])
+
+func _snapshot_pos(node: Dictionary) -> Vector3:
+    var p: Variant = node.get("position", Vector3.ZERO)
+    if p is Dictionary:
+        return Vector3(float(p.get("x", 0.0)), 0.0, float(p.get("z", 0.0)))
+    if p is Vector3:
+        return p
+    return Vector3.ZERO
+
+func _free_sim_node(key: String) -> void:
+    var node = _sim_nodes.get(key)
+    if node is Node:
+        node.queue_free()
+    _sim_nodes.erase(key)
 
 func _build_systems() -> void:
     var building_system := Node3D.new()
