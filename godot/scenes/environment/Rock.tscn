@@ -1,2 +1,3 @@
-# Rock wrapper scene. See Tree.tscn for the GLB integration pattern.
+[gd_scene load_steps=1 format=3]
+
 [node name="Rock" type="Node3D"]
