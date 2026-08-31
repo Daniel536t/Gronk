@@ -384,6 +384,9 @@ var mode = "home";
 var liveConnected = false;
 var currentSnapshot = null;
 var liveSimRunning = false;
+var theme = "experience";
+var evidenceLog = [];
+var lastLiveKey = "";
 var svg = $("#world");
 function paint(snapshot, removedTrees) {
   currentSnapshot = snapshot;
@@ -404,6 +407,8 @@ function paint(snapshot, removedTrees) {
   const level = snapshot.foodPressureLevel ?? "ok";
   $("#pressure-text").textContent = level.toUpperCase();
   $("#pressure-fill").style.background = level === "critical" ? "var(--danger)" : level === "high" ? "var(--warn)" : "var(--ok)";
+  if (theme === "evidence") paintEvidence(snapshot);
+  if (mode === "live") liveObserve(snapshot);
 }
 var livePollTimer = null;
 var sseSource = null;
@@ -558,6 +563,7 @@ function playStep() {
   if (step.event.type === "SEASON_CHANGED") setSeasonFlash(String(step.event.data?.season ?? ""));
   if (step.starvation && step.starvation > 0) flash(`FOOD SHORTAGE \u2014 ${step.starvation} villager${step.starvation > 1 ? "s" : ""} starved`, true);
   if (isHarvestSuccess(step.event)) harvestFlash();
+  appendLog(`${eventLabel(step.event)} \xB7 day ${step.snapshot?.day ?? String(step.event.data?.day ?? "?")}`);
   stepIndex += 1;
   if (stepIndex >= steps.length) {
     playbackActive = false;
@@ -829,21 +835,91 @@ function updateSpeedLabel() {
   else label.style.color = "";
 }
 updateSpeedLabel();
-$("#evidence-toggle").addEventListener("click", () => {
-  const drawer = $("#evidence");
-  const body = $("#evidence-body");
-  drawer.classList.toggle("hidden");
-  if (!drawer.classList.contains("hidden")) {
-    const b = getBundle();
-    if (b) {
-      const summary = b.events.filter((e) => ["APPROVAL_REQUIRED", "APPROVAL_GRANTED", "APPROVAL_REJECTED", "ACTION_SUCCEEDED", "VERIFICATION_SUCCEEDED", "ACTION_FAILED", "TURN_FAILED"].includes(e.type));
-      body.textContent = summary.map((e) => `${String(e.type).padEnd(24)} day=${String(e.data?.day ?? "?")} ${JSON.stringify(e.data ?? {})}`.slice(0, 160)).join("\n");
-    } else {
-      body.textContent = "No bundle loaded.";
-    }
+function setTheme(next) {
+  theme = next;
+  $("#observatory").dataset.obsTheme = next;
+  $("#theme-experience").classList.toggle("active", next === "experience");
+  $("#theme-evidence").classList.toggle("active", next === "evidence");
+  $("#theme-experience").setAttribute("aria-selected", String(next === "experience"));
+  $("#theme-evidence").setAttribute("aria-selected", String(next === "evidence"));
+  if (next === "evidence") {
+    $("#evidence").classList.remove("hidden");
+    if (currentSnapshot) paintEvidence(currentSnapshot);
+    renderLog();
+  } else {
+    $("#evidence").classList.add("hidden");
   }
+}
+function appendLog(line) {
+  evidenceLog.push(line);
+  if (evidenceLog.length > 250) evidenceLog.shift();
+  if (theme !== "evidence") return;
+  renderLog();
+}
+function renderLog() {
+  const el = $("#evidence-log");
+  if (el.classList.contains("hidden")) return;
+  el.textContent = evidenceLog.join("\n");
+  el.scrollTop = el.scrollHeight;
+}
+function liveObserve(ss) {
+  const key = `${ss.day}|${ss.food}|${ss.population}|${ss.season}`;
+  if (key === lastLiveKey) return;
+  lastLiveKey = key;
+  appendLog(`OBSERVE \xB7 day ${ss.day} ${String(ss.season).toUpperCase()} food ${ss.food} food/day ${ss.foodPerDay} pop ${ss.population} pressure ${ss.foodPressureLevel}`);
+}
+function paintEvidence(ss) {
+  const row = (k, v) => `<div class="ev-row"><span>${k}</span><b>${v ?? ""}</b></div>`;
+  const sec = (t) => `<div class="ev-sec">${t}</div>`;
+  const r = ss.resources ?? {};
+  let h = sec("WORLD");
+  h += row("Day", ss.day);
+  h += row("Season", String(ss.season ?? "").toUpperCase());
+  h += row("Days until winter", ss.daysUntilWinter);
+  h += row("Population", ss.population);
+  h += row("Food", ss.food);
+  h += row("Food / day", ss.foodPerDay);
+  h += row("Days of food remaining", ss.daysOfFoodRemaining);
+  h += row("Harvestable food", ss.harvestableFood);
+  h += row("Food pressure", ss.foodPressureLevel);
+  h += sec("RESOURCES");
+  for (const k of ["wood", "stone", "food", "water", "crystal"]) h += row(k, r[k] ?? 0);
+  h += sec("WORLD OBJECTS");
+  h += row("Trees", countTrees(ss));
+  h += row("Farms", farmlandUsed(ss));
+  h += row("Bridges", (ss.bridges ?? []).length);
+  h += sec("FARMLAND");
+  for (const plot of ss.farmland ?? []) h += row(plot.islandId, `${plot.used}/${plot.capacity} used`);
+  h += sec("CROPS");
+  const crops = (ss.crops ?? []).map((c) => `${c.cropType} @ ${(c.growthStage * 100).toFixed(0)}%`).join(" \xB7 ");
+  h += row("In ground", crops || "none");
+  h += sec("CONNECTIVITY");
+  h += row("Bridges", (ss.bridges ?? []).map((b) => `${b.islandA}\u2194${b.islandB}`).join(" \xB7 ") || "none");
+  $("#evidence-state").innerHTML = h;
+}
+function farmlandUsed(ss) {
+  const plots = ss.farmland ?? [];
+  const used = plots.reduce((a, p) => a + (p.used ?? 0), 0);
+  const cap = plots.reduce((a, p) => a + (p.capacity ?? 0), 0);
+  return `${used}/${cap}`;
+}
+$("#theme-experience").addEventListener("click", () => setTheme("experience"));
+$("#theme-evidence").addEventListener("click", () => setTheme("evidence"));
+$("#evidence-toggle").addEventListener("click", () => setTheme("evidence"));
+$("#evidence-close").addEventListener("click", () => setTheme("experience"));
+$("#evidence-tab-state").addEventListener("click", () => {
+  $("#evidence-tab-state").classList.add("active");
+  $("#evidence-tab-events").classList.remove("active");
+  $("#evidence-state").classList.remove("hidden");
+  $("#evidence-log").classList.add("hidden");
 });
-$("#evidence-close").addEventListener("click", () => $("#evidence").classList.add("hidden"));
+$("#evidence-tab-events").addEventListener("click", () => {
+  $("#evidence-tab-events").classList.add("active");
+  $("#evidence-tab-state").classList.remove("active");
+  $("#evidence-state").classList.add("hidden");
+  $("#evidence-log").classList.remove("hidden");
+  renderLog();
+});
 $("#btn-live").addEventListener("click", () => {
   startLive();
 });

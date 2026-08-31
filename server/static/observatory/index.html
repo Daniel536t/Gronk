@@ -21,7 +21,7 @@
     </section>
 
     <!-- OBSERVATORY -->
-    <section id="observatory" class="screen hidden">
+    <section id="observatory" data-obs-theme="experience" class="screen hidden">
       <div id="world-wrap">
         <svg id="world" role="img" aria-label="ASTrix world"></svg>
         <div id="world-overlay" class="hidden"></div>
@@ -33,6 +33,10 @@
           <span class="brand-mini">ASTrix</span>
           <span id="live-dot" class="live-dot off" title="LIVE connection"></span>
           <span id="mode-label" class="mode-label">LIVE</span>
+          <div id="theme-toggle" class="theme-toggle" role="tablist" aria-label="View">
+            <button id="theme-experience" class="th active" role="tab" aria-selected="true">EXPERIENCE</button>
+            <button id="theme-evidence" class="th" role="tab" aria-selected="false">EVIDENCE</button>
+          </div>
         </div>
         <div class="hud-right" id="hud-values"></div>
       </div>
@@ -88,11 +92,19 @@
         <div id="timeline-track" class="timeline-track"></div>
       </div>
 
-      <!-- Evidence drawer -->
-      <button id="evidence-toggle" class="evidence-toggle">EVIDENCE</button>
-      <div id="evidence" class="evidence hidden">
-        <div class="evidence-head">EVIDENCE <button id="evidence-close" class="rc-btn">✕</button></div>
-        <pre id="evidence-body" class="evidence-body"></pre>
+      <!-- Evidence panel (EVIDENCE theme) -->
+      <button id="evidence-toggle" class="evidence-toggle hidden">EVIDENCE ▸</button>
+      <div id="evidence" class="evidence hidden" role="region" aria-label="Evidence">
+        <div class="evidence-head">
+          <span class="tt">EVIDENCE</span>
+          <div class="evidence-tabs">
+            <button id="evidence-tab-state" class="et active">STATE</button>
+            <button id="evidence-tab-events" class="et">EVENTS</button>
+          </div>
+          <button id="evidence-close" class="rc-btn" title="Close">✕</button>
+        </div>
+        <div id="evidence-state" class="evidence-scroll"></div>
+        <pre id="evidence-log" class="evidence-log hidden"></pre>
       </div>
 
       <!-- Final screen -->
