@@ -56,6 +56,8 @@ function serveStatic(
   if (!existsSync(staticDir)) return false;
   let pathname = new URL(req.url ?? "/", "http://localhost").pathname;
   if (pathname === "/") pathname = "/index.html";
+  // Directory index fallback: /observatory/ -> /observatory/index.html
+  if (pathname.endsWith("/")) pathname += "index.html";
   const resolved = normalize(join(staticDir, pathname));
   if (!resolved.startsWith(normalize(staticDir))) return false;
   if (!existsSync(resolved) || !statSync(resolved).isFile()) return false;

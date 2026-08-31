@@ -1,0 +1,155 @@
+// ASTrix Observatory — pure-logic tests.
+// Verifies the projector is a faithful projection of authoritative state (no
+// independent simulation) and the replay engine preserves the recorded event
+// timeline exactly. These run in jsdom-free node because the projector and
+// replay modules are DOM-independent (string assembly only).
+import { describe, it, expect } from "vitest";
+import { renderWorld, hudLine } from "../observatory/src/projector";
+import { buildSteps, eventLabel, emphasisFor } from "../observatory/src/replay";
+import type { DerivedReplayBundle } from "../observatory/src/replay";
+import type { WorldSnapshot, AgentEvent } from "../observatory/src/types";
+
+function baseSnap(over: Partial<WorldSnapshot> = {}): WorldSnapshot {
+  return {
+    day: 1,
+    season: "spring",
+    time: "10:00",
+    population: 4,
+    food: 40,
+    daysUntilWinter: 24,
+    foodPerDay: 4,
+    daysOfFoodRemaining: 10,
+    harvestableFood: 0,
+    growingFood: 0,
+    projectedFoodAtWinter: -56,
+    foodPressureLevel: "ok",
+    resources: { wood: 30, stone: 15, food: 40, water: 0, crystal: 5 },
+    biomeHealth: { meadow: 0.8, frost: 0.6, dusk: 0.4 },
+    crops: [],
+    farmland: [{ islandId: "meadow", capacity: 2, used: 0, available: 2 }],
+    bridges: [],
+    buildings: [{ id: "house-001", type: "house", position: { x: 20, y: 3.6, z: 30 }, health: 1, islandId: "meadow" }],
+    resourceNodes: [
+      { id: "tree-1", type: "wood", position: { x: 12, y: 3, z: 24 }, quantity: 5, islandId: "meadow" },
+      { id: "tree-2", type: "wood", position: { x: 30, y: 3, z: 36 }, quantity: 5, islandId: "meadow" },
+      { id: "rock-1", type: "stone", position: { x: 44, y: 4, z: 14 }, quantity: 4, islandId: "frost" },
+    ],
+    islands: [{ id: "meadow", biome: "meadow", health: 0.8, connectivity: [] }],
+    pendingApprovals: [],
+    ...over,
+  };
+}
+
+describe("projector / state mapping", () => {
+  it("renders trees only when authoritative resourceNodes contain wood nodes", () => {
+    const w = renderWorld(baseSnap());
+    expect(w.svg).toContain("conifer");
+    expect(w.trees).toBe(2); // two wood nodes present
+    // stone node must NOT become a tree
+    expect(w.trees).toBeLessThan(3);
+  });
+
+  it("removes a tree when the authoritative record marks it removed (clear_terrain)", () => {
+    const snap = baseSnap();
+    const removed = new Set<string>(["tree-1"]);
+    const w = renderWorld(snap, removed);
+    expect(w.trees).toBe(1);
+    // no conifer at tree-1 rendered twice: total conifers counted via trees
+    expect(w.svg).not.toContain('id="tree-1"');
+  });
+
+  it("farm count reflects the authoritative building list and crop stage reflects growth", () => {
+    const snap = baseSnap({
+      buildings: [
+        { id: "farm-1", type: "farm", position: { x: 25, y: 3, z: 35 }, health: 1, islandId: "meadow" },
+        { id: "farm-2", type: "farm", position: { x: 45, y: 4, z: 14 }, health: 1, islandId: "frost" },
+      ],
+      crops: [{ id: "crop-1", farmPlotId: "farm-1", cropType: "wheat", growthStage: 0.25 }],
+    });
+    const w = renderWorld(snap);
+    expect(w.farms).toBe(2);
+    // A crop with 0.25 stage produces a "crop" element (not an empty furrow).
+    expect(w.svg).toContain('class="crop"');
+  });
+
+  it("bridge appears only when an authoritative bridge exists", () => {
+    const noBridge = renderWorld(baseSnap());
+    expect(noBridge.bridges).toBe(0);
+    const withBridge = renderWorld(baseSnap({ bridges: [{ id: "b", islandA: "meadow", islandB: "frost" }] }));
+    expect(withBridge.bridges).toBe(1);
+    expect(withBridge.svg).toContain('class="bridge"');
+  });
+
+  it("season drives the palette deterministically", () => {
+    const winter = renderWorld(baseSnap({ season: "winter" }));
+    const summer = renderWorld(baseSnap({ season: "summer" }));
+    expect(winter.svg).not.toEqual(summer.svg);
+    expect(winter.svg).toContain("#eef2f7"); // winter roof
+  });
+
+  it("hudLine reflects authoritative day/food", () => {
+    const line = hudLine(baseSnap({ day: 13, food: 12 }));
+    expect(line).toContain("DAY 13 / 30");
+    expect(line).toContain("FOOD 12");
+  });
+});
+
+describe("replay engine / event preservation", () => {
+  function bundle(): DerivedReplayBundle {
+    const events: AgentEvent[] = [
+      { type: "TURN_STARTED", turn: 1, at: 1000, data: {} },
+      { type: "WORLD_OBSERVED", turn: 1, at: 1100, data: { day: 1, food: 40 } as Record<string, unknown> },
+      { type: "PLAN_CREATED", turn: 1, at: 1200, data: { decision: "build farm" } as Record<string, unknown> },
+      { type: "ACTION_SUCCEEDED", turn: 1, at: 1300, data: { tool: "build" } as Record<string, unknown> },
+      { type: "APPROVAL_REQUIRED", turn: 2, at: 2000, data: { approval: { id: "approval-1", command: "CLEAR_TERRAIN" } } as Record<string, unknown> },
+      { type: "APPROVAL_GRANTED", turn: 2, at: 2100, data: { approvalId: "approval-1" } as Record<string, unknown> },
+      { type: "VERIFICATION_SUCCEEDED", turn: 2, at: 2200, data: { tool: "clear_terrain" } as Record<string, unknown> },
+    ];
+    return {
+      meta: { name: "t", generatedAt: "", source: "", dayStart: 1, dayEnd: 30, seasonEnd: "winter", populationStart: 4, populationEnd: 2, foodStart: 40, foodEnd: 62, approvals: 1, approved: 1, rejected: 0 },
+      events,
+      frames: [
+        { ts: 1000, day: 1, snapshot: baseSnap() },
+        { ts: 2000, day: 2, snapshot: baseSnap({ day: 2, food: 36 }) },
+        { ts: 2100, day: 2, snapshot: baseSnap({ day: 2, food: 36 }) },
+      ],
+      approvals: { "approval-1": { tool: "clear_terrain", command: "CLEAR_TERRAIN" } },
+    };
+  }
+
+  it("buildSteps preserves event order", () => {
+    const steps = buildSteps(bundle());
+    expect(steps.map((s) => s.event.type)).toEqual([
+      "TURN_STARTED",
+      "WORLD_OBSERVED",
+      "PLAN_CREATED",
+      "ACTION_SUCCEEDED",
+      "APPROVAL_REQUIRED",
+      "APPROVAL_GRANTED",
+      "VERIFICATION_SUCCEEDED",
+    ]);
+  });
+
+  it("approval events are preserved and emphatic", () => {
+    const steps = buildSteps(bundle());
+    const apro = steps.find((s) => s.event.type === "APPROVAL_REQUIRED")!;
+    expect(apro.emphasis).toBe(0); // pauses
+    expect(apro.snapshot).toBeTruthy();
+  });
+
+  it("rejection events are preserved as rejections", () => {
+    const b = bundle();
+    b.events[5] = { type: "APPROVAL_REJECTED", turn: 2, at: 2100, data: { approvalId: "approval-1" } };
+    const steps = buildSteps(b);
+    expect(steps.map((s) => s.event.type)).toContain("APPROVAL_REJECTED");
+  });
+
+  it("eventLabel maps events to honest labels without fabricating", () => {
+    expect(eventLabel({ type: "ACTION_SUCCEEDED", turn: 1, at: 1, data: { tool: "clear_terrain" } })).toContain("clear_terrain");
+    expect(eventLabel({ type: "APPROVAL_REQUIRED", turn: 1, at: 1, data: {} })).toContain("APPROVAL");
+  });
+
+  it("expansion labels special seasons", () => {
+    expect(emphasisFor({ type: "SEASON_CHANGED", turn: 0, at: 1, data: { season: "winter" } })).toBeLessThan(1);
+  });
+});

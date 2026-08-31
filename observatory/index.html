@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>ASTrix Observatory</title>
+  <link rel="stylesheet" href="./observatory.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- MODE SPLASH / HOME -->
+    <section id="home" class="screen">
+      <h1 class="brand">ASTrix</h1>
+      <p class="tagline">Autonomous Agent Observatory</p>
+      <div class="mode-buttons">
+        <button id="btn-live" class="btn btn-primary">LIVE</button>
+        <button id="btn-replay" class="btn">REPLAY</button>
+        <button id="btn-demo" class="btn">▶ DEMO (3 min)</button>
+      </div>
+      <p id="home-status" class="muted home-status"></p>
+    </section>
+
+    <!-- OBSERVATORY -->
+    <section id="observatory" class="screen hidden">
+      <div id="world-wrap">
+        <svg id="world" role="img" aria-label="ASTrix world"></svg>
+        <div id="world-overlay" class="hidden"></div>
+      </div>
+
+      <!-- HUD -->
+      <div id="hud" class="hud">
+        <div class="hud-left">
+          <span class="brand-mini">ASTrix</span>
+          <span id="live-dot" class="live-dot off" title="LIVE connection"></span>
+          <span id="mode-label" class="mode-label">LIVE</span>
+        </div>
+        <div class="hud-right" id="hud-values"></div>
+      </div>
+
+      <!-- Survival pressure bar -->
+      <div id="pressure" class="pressure">
+        <span class="pressure-label">FOOD PRESSURE</span>
+        <div class="pressure-track"><div id="pressure-fill" class="pressure-fill"></div></div>
+        <span id="pressure-text" class="pressure-text"></span>
+      </div>
+
+      <!-- Replay controls -->
+      <div id="replay-controls" class="replay-controls hidden">
+        <button id="rc-prev" class="rc-btn" title="Previous event">◀</button>
+        <button id="rc-play" class="rc-btn rc-play" title="Play/Pause">▶</button>
+        <button id="rc-next" class="rc-btn" title="Next event">▶|</button>
+        <span id="rc-speed" class="rc-speed">5×</span>
+        <button id="rc-speed-btn" class="rc-btn" title="Cycle speed">SPEED</button>
+        <span id="rc-pos" class="rc-pos">DAY 1</span>
+      </div>
+
+      <!-- Agent panel -->
+      <div id="agent-panel" class="agent-panel">
+        <div class="agent-head">
+          <span class="agent-title">ASTrix STEWARD</span>
+          <span id="phase" class="phase">● OBSERVE</span>
+        </div>
+        <div class="agent-body">
+          <div id="agent-objective" class="agent-objective muted"></div>
+          <div id="agent-current" class="agent-current"></div>
+          <div id="agent-activity" class="agent-activity"></div>
+        </div>
+      </div>
+
+      <!-- Approval panel -->
+      <div id="approval-panel" class="approval-panel hidden">
+        <div class="approval-inner">
+          <div class="approval-title">⚠ HUMAN APPROVAL REQUIRED</div>
+          <div id="approval-action" class="approval-action"></div>
+          <div id="approval-reason" class="approval-reason muted"></div>
+          <div id="approval-impact" class="approval-impact"></div>
+          <div id="approval-proof" class="approval-proof"></div>
+          <div id="approval-worldtime" class="approval-worldtime">WORLD TIME: PAUSED</div>
+          <div class="approval-buttons">
+            <button id="approve-btn" class="btn btn-approve">APPROVE</button>
+            <button id="reject-btn" class="btn btn-reject">REJECT</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Timeline -->
+      <div id="timeline" class="timeline">
+        <div id="timeline-track" class="timeline-track"></div>
+      </div>
+
+      <!-- Evidence drawer -->
+      <button id="evidence-toggle" class="evidence-toggle">EVIDENCE</button>
+      <div id="evidence" class="evidence hidden">
+        <div class="evidence-head">EVIDENCE <button id="evidence-close" class="rc-btn">✕</button></div>
+        <pre id="evidence-body" class="evidence-body"></pre>
+      </div>
+
+      <!-- Final screen -->
+      <div id="final" class="final hidden"></div>
+
+      <!-- Connection banner -->
+      <div id="conn-banner" class="conn-banner hidden"></div>
+    </section>
+  </div>
+  <script type="module" src="./observatory.js"></script>
+</body>
+</html>
