@@ -62,6 +62,11 @@ function paint(snapshot: WorldSnapshot, removedTrees?: Set<string>): void {
   );
   const root = doc.documentElement;
   svg.replaceChildren(...Array.from(root.childNodes));
+  // Apply the computed viewBox so the projected world is framed and centered
+  // in the visible canvas instead of being clipped off-screen (the root cause
+  // of the previous dark/empty world). preserveAspectRatio keeps it centered.
+  svg.setAttribute("viewBox", world.viewBox);
+  svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
   // HUD
   const parts = hudLine(snapshot).split(/\s{3,}/);
   $("#hud-values").innerHTML = parts.map((p) => `<span>${p}</span>`).join("");

@@ -1,179 +1,82 @@
 // ASTrix Observatory — deterministic projector.
 //
-// Converts an authoritative WorldSnapshot into an SVG document string. This is
-// a PURE function of state: the same snapshot always produces the same scene.
-// It performs NO simulation — it only reflects what the authoritative server
-// (live) or the recorded replay timeline says. Trees appear iff authoritative
-// resourceNodes contain them; farms match farmland.used; crop growth stage maps
-// to a visual stage; bridges appear only when authoritative bridges exist;
-// season drives the palette/atmosphere.
+// Converts an authoritative WorldSnapshot into an SVG document string and a
+// computed viewBox. This is a PURE function of state: the same snapshot always
+// produces the same scene, and it performs NO simulation — it only reflects
+// what the authoritative server (live) or the recorded replay timeline says.
+//
+// FIX (this pass): the previous renderer produced coordinates in an unbounded
+// user space (world x/z projected via a hand-tuned iso() with island centres
+// landing at NEGATIVE screen coords) and never set an SVG viewBox, so the world
+// was CLIPPED entirely off-canvas — the "dark/empty world" bug. Now the projector
+// returns a viewBox computed from the actual content bounds (with margin), the
+// iso transform spreads the three islands left→right, and water is a full
+// background layer. The Observatory UI then sets viewBox + preserveAspectRatio
+// so the miniature world is centered and visible at any aspect ratio.
 import type { BiomeId, Season, WorldSnapshot } from "./types";
 
-// Canonical world geometry (from the recorded evaluation's before/after
-// snapshots and the authoritative state model — a 100x60 x/z world).
-interface Vec { x: number; z: number }
-
-// Island centres in world space (x, z) and a radius for the terrain blob.
-const ISLANDS: Record<BiomeId, { c: Vec; r: number }> = {
-  meadow: { c: { x: 24, z: 30 }, r: 16 },
-  frost: { c: { x: 50, z: 12 }, r: 13 },
-  dusk: { c: { x: 72, z: 34 }, r: 12 },
-};
+// ---- projection -------------------------------------------------------------
+// Isometric: sx grows with (x-z), sy grows with (x+z). Both world coords are in
+// [0,100]x[0,60], so sx ranges roughly -120..200 and sy 0..160 in user units.
+// Island centres are chosen so Meadow/Frost/Dusk spread out across the frame.
+function iso(x: number, z: number): { sx: number; sy: number } {
+  const sx = (x - z) * 2;
+  const sy = (x + z) * 1;
+  return { sx, sy };
+}
 
 export const WORLD_X0 = 0;
 export const WORLD_X1 = 100;
 export const WORLD_Z0 = 0;
 export const WORLD_Z1 = 60;
 
-// Common tree position when authoritative node data is absent (fallback that
-// only paints canonical decoration; authoritative trees override this below).
-const CANONICAL_TREES: Record<BiomeId, Vec[]> = {
+// Island centres in world space and a terrain radius.
+export const ISLANDS: Record<BiomeId, { c: { x: number; z: number }; r: number }> = {
+  meadow: { c: { x: 24, z: 30 }, r: 15 },
+  frost: { c: { x: 50, z: 16 }, r: 12 },
+  dusk: { c: { x: 76, z: 34 }, r: 12 },
+};
+
+// Decoration trees used only when the authoritative node list has no wood nodes
+// (canonical dressing for a fresh/empty world; authoritative nodes override).
+const CANONICAL_TREES: Record<BiomeId, { x: number; z: number }[]> = {
   meadow: [
-    { x: 14, z: 22 }, { x: 34, z: 20 }, { x: 18, z: 40 }, { x: 32, z: 42 }, { x: 12, z: 32 },
+    { x: 14, z: 22 }, { x: 34, z: 20 }, { x: 18, z: 40 }, { x: 32, z: 42 }, { x: 12, z: 33 },
   ],
-  frost: [{ x: 44, z: 8 }, { x: 57, z: 16 }],
-  dusk: [{ x: 66, z: 30 }, { x: 80, z: 40 }],
+  frost: [{ x: 44, z: 10 }, { x: 57, z: 20 }],
+  dusk: [{ x: 70, z: 28 }, { x: 84, z: 40 }],
 };
 
 const SEASON_BG: Record<Season, string> = {
-  spring: "#d9e6ff",
-  summer: "#cfe5ff",
-  autumn: "#f4e3c8",
-  winter: "#dfe7f2",
+  spring: "#aee0c8",
+  summer: "#a9d8b4",
+  autumn: "#ecd9b8",
+  winter: "#dce7f2",
 };
-
+const WATER_A: Record<Season, string> = {
+  spring: "#4aa6d6",
+  summer: "#3f9fd6",
+  autumn: "#4a9cc9",
+  winter: "#7fa7c9",
+};
+const WATER_B: Record<Season, string> = {
+  spring: "#2e7fB8",
+  summer: "#2a79b5",
+  autumn: "#3379a8",
+  winter: "#5e8ab5",
+};
 const ISLAND_FILL: Record<Season, string> = {
-  spring: "#7fbf5a",
-  summer: "#74b74f",
-  autumn: "#c9a35c",
-  winter: "#e7ecf2",
+  spring: "#8ecb63",
+  summer: "#83c457",
+  autumn: "#d3a860",
+  winter: "#eef2f6",
 };
-
 const ISLAND_EDGE: Record<Season, string> = {
   spring: "#5d9a41",
   summer: "#55983b",
   autumn: "#9c7c40",
-  winter: "#c7ceda",
+  winter: "#c2ccd6",
 };
-
-function iso(x: number, z: number): { sx: number; sy: number } {
-  // Simple dimetric projection. sx grows right, sy grows down as z shrinks.
-  return { sx: x * 3 - z * 3, sy: (60 - z) * 1.9 + x * 0.55 };
-}
-
-// ---- deterministic helpers -------------------------------------------------
-
-function escapeXml(s: string): string {
-  return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-// Tree: chunky conifer silhouette (ASErix art direction).
-function treeSvg(x: number, z: number, stage: "alive" | "removed", scale = 1): string {
-  if (stage === "removed") return "";
-  const { sx, sy } = iso(x, z);
-  return (
-    `<g transform="translate(${sx.toFixed(1)} ${sy.toFixed(1)}) scale(${scale})">` +
-    `<ellipse cx="0" cy="0" rx="1.5" ry="0.6" class="shadow"/>` +
-    `<path d="M0 -11 L3.2 -5 Q3 -4.5 3 -4 L-3 -4 Q-3 -4.5 -3.2 -5 Z" class="trunk"/>` +
-    `<path d="M0 -16 L4.5 -9 L2.6 -9 L5.5 -4 L-5.5 -4 L-2.6 -9 L-4.5 -9 Z" class="conifer"/>` +
-    `</g>`
-  );
-}
-
-// Farm: a plot bed with capacity crops; each plot shows crop stage or empty.
-function farmSvg(x: number, z: number, crops: number[], season: Season): string {
-  const { sx, sy } = iso(x, z);
-  const plots = crops.map((stage, i) => {
-    const px = sx + (i - 1) * 3.0;
-    const py = sy;
-    return plotSvg(px, py, stage, season);
-  });
-  return `<g transform="translate(${(sx).toFixed(1)} ${(sy + 1).toFixed(1)})"><g class="farm">${plots.join("")}</g></g>`;
-}
-
-function plotSvg(cx: number, cy: number, stage: number, season: Season): string {
-  const dark = season === "winter";
-  const soil = dark ? "#dcd7cf" : "#8a5a2b";
-  const cropColor = dark ? "#c9d4bf" : season === "autumn" ? "#e7cf7a" : "#7bc443";
-  let inner = "";
-  if (stage > 0) {
-    const h = 2.2 + stage * 3.4; // taller as it matures
-    inner = `<rect x="${(cx - 0.9).toFixed(1)}" y="${(cy - h).toFixed(1)}" width="1.8" height="${h.toFixed(1)}" rx="0.5" class="crop" fill="${cropColor}"/>`;
-  } else {
-    // empty plot furrow
-    inner = `<rect x="${(cx - 0.9).toFixed(1)}" y="${(cy - 0.5).toFixed(1)}" width="1.8" height="0.9" rx="0.4" class="furrow"/>`;
-  }
-  return `<g transform="translate(${cx.toFixed(1)} ${cy.toFixed(1)}) scale(1)"><rect x="-1.7" y="-1.2" width="3.4" height="2.4" rx="0.7" fill="${soil}" class="plot"/>${inner}</g>`;
-}
-
-// A house / building.
-function buildingSvg(x: number, z: number, label: string, season: Season): string {
-  const { sx, sy } = iso(x, z);
-  const roof = season === "winter" ? "#eef2f7" : "#d98a4e";
-  const wall = "#f3d9a8";
-  return (
-    `<g transform="translate(${sx.toFixed(1)} ${sy.toFixed(1)}) scale(1)">` +
-    `<ellipse cx="0" cy="0.6" rx="3" ry="1.2" class="shadow"/>` +
-    `<rect x="-2.6" y="-2.6" width="5.2" height="3.4" fill="${wall}" rx="0.4" class="wall"/>` +
-    `<path d="M-3.2 -2.2 L0 -5.2 L3.2 -2.2 Z" fill="${roof}" class="roof"/>` +
-    `<rect x="-0.5" y="-1.6" width="1" height="2.4" fill="#7a4a21" class="door"/>` +
-    (label ? `<title>${escapeXml(label)}</title>` : "") +
-    `</g>`
-  );
-}
-
-// A bridge span between two island edges.
-function bridgeSvg(x: number, z: number, season: Season): string {
-  const { sx, sy } = iso(x, z);
-  const plank = season === "winter" ? "#cfd6e0" : "#a9713a";
-  return (
-    `<g transform="translate(${sx.toFixed(1)} ${sy.toFixed(1)})">` +
-    `<rect x="-1.7" y="-0.35" width="3.4" height="1" rx="0.3" fill="${plank}" class="bridge"/>` +
-    `<rect x="-1.7" y="-1.3" width="0.35" height="1.6" class="rail"/>` +
-    `<rect x="1.35" y="-1.3" width="0.35" height="1.6" class="rail"/>` +
-    `</g>`
-  );
-}
-
-// Water: an animated band. Given two screen points (span) render a wavy strip.
-function waterBand(): string {
-  return (
-    `<g class="water">` +
-    `<path class="water-shape"  d="M0 120 L120 40 L240 120 L120 200 Z" fill="#5bb8d6" opacity="0.9"/>` +
-    `<path class="water-ripple" d="M20 96 L40 114 L60 96 L80 114 L100 96" fill="none" stroke="#cdeef7" stroke-width="1.2" opacity="0.7"/>` +
-    `<path class="water-ripple2" d="M35 118 L60 100 L85 118 L110 100" fill="none" stroke="#a8dff0" stroke-width="1.1" opacity="0.6"/>` +
-    `</g>`
-  );
-}
-
-function islandSvg(id: BiomeId, season: Season, health: number): string {
-  const { c, r } = ISLANDS[id];
-  const { sx, sy } = iso(c.x, c.z);
-  // A soft hexagonal terrain tile.
-  const pts = 6;
-  const verts: string[] = [];
-  for (let i = 0; i < pts; i++) {
-    // alternate angle so the top edge is flat-ish
-    const a = (Math.PI / pts) * 2 * i - Math.PI / 2 - Math.PI / 6;
-    const rx = r * 2.6;
-    const ry = r * 2.0;
-    const vx = sx + Math.cos(a) * rx;
-    const vy = sy + Math.sin(a) * ry;
-    verts.push(`${vx.toFixed(1)},${vy.toFixed(1)}`);
-  }
-  const fillScale = 0.55 + health * 0.45;
-  const f = shade(ISLAND_FILL[season], fillScale);
-  return (
-    `<g class="island island-${id}" data-island="${id}">` +
-    `<path d="M${verts.join("L")}Z" fill="${f}" stroke="${ISLAND_EDGE[season]}" stroke-width="1.4" class="terrain"/>` +
-    `<text x="${(sx).toFixed(1)}" y="${(sy + r * 1.9).toFixed(1)}" text-anchor="middle" class="island-label">${escapeXml(id.toUpperCase())}</text>` +
-    `</g>`
-  );
-}
 
 function shade(hex: string, k: number): string {
   const n = parseInt(hex.slice(1), 16);
@@ -182,100 +85,226 @@ function shade(hex: string, k: number): string {
   const b = Math.min(255, Math.round((n & 255) * k));
   return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, "0")}`;
 }
+function esc(s: string): string {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
 
-// ---- public projector -----------------------------------------------------
+// ---- content bound tracker ---------------------------------------------------
+class Bounds {
+  minX = Infinity; minY = Infinity; maxX = -Infinity; maxY = -Infinity;
+  add(x: number, y: number): this {
+    if (x < this.minX) this.minX = x;
+    if (y < this.minY) this.minY = y;
+    if (x > this.maxX) this.maxX = x;
+    if (y > this.maxY) this.maxY = y;
+    return this;
+  }
+  grow(dx: number, dy: number): this { this.add(this.minX - dx, this.minY - dy); this.add(this.maxX + dx, this.maxY + dy); return this; }
+}
 
-/**
- * Rendering result: the full scene SVG inner markup + a list of entity records
- * (for hit testing / tooltips) + derived metrics.
- */
+// ---- shape helpers -----------------------------------------------------------
+function treeSvg(x: number, z: number, stage: "alive" | "removed", bounds: Bounds, scale = 1): string {
+  if (stage === "removed") return "";
+  const { sx, sy } = iso(x, z);
+  bounds.add(sx - 6 * scale, sy - 17 * scale).add(sx + 6 * scale, sy);
+  return (
+    `<g transform="translate(${sx.toFixed(1)} ${sy.toFixed(1)}) scale(${scale})" class="tree-group">` +
+    `<ellipse cx="0" cy="0" rx="2.6" ry="1.0" fill="rgba(20,40,25,0.30)" class="shadow"/>` +
+    `<rect x="-0.9" y="-5" width="1.8" height="5" rx="0.6" fill="#79603a" class="trunk"/>` +
+    `<path d="M0 -18 L5 -11 L3 -11 L5.8 -5 L-5.8 -5 L-3 -11 L-5 -11 Z" fill="#3f8f3f"/>` +
+    `<path d="M0 -18 L4.6 -12 L-4.6 -12 Z" fill="#55a14e" class="conifer"/>` +
+    `</g>`
+  );
+}
+
+function buildingSvg(x: number, z: number, label: string, season: Season, bounds: Bounds): string {
+  const { sx, sy } = iso(x, z);
+  const roof = season === "winter" ? "#eef2f7" : "#d9822e";
+  bounds.add(sx - 7, sy - 8).add(sx + 7, sy + 3);
+  return (
+    `<g transform="translate(${sx.toFixed(1)} ${sy.toFixed(1)})">` +
+    `<ellipse cx="0" cy="1.5" rx="5" ry="1.8" fill="rgba(20,30,25,0.28)"/>` +
+    `<rect x="-4.4" y="-4.6" width="8.8" height="5.6" rx="0.6" fill="#f3d9a8" stroke="#c8a05e" stroke-width="1"/>` +
+    `<path d="M-5.1 -4.4 L0 -8.5 L5.1 -4.4 Z" fill="${roof}" stroke="#b96a1f" stroke-width="1"/>` +
+    `<rect x="-0.9" y="-2.9" width="1.8" height="3.9" rx="0.5" fill="#7a4a21"/>` +
+    `<rect x="1.6" y="-3.6" width="1.4" height="1.4" rx="0.3" fill="#cfe4ff"/>` +
+    (label ? `<title>${esc(label)}</title>` : "") +
+    `</g>`
+  );
+}
+
+function plotSvg(cx: number, cy: number, stage: number, season: Season): string {
+  const dark = season === "winter";
+  const soil = dark ? "#dcd7cf" : "#8a5a2b";
+  const cropColor = dark ? "#c9d4bf" : season === "autumn" ? "#e7cf7a" : "#6fbf3f";
+  let inner = "";
+  if (stage > 0) {
+    const h = 2.4 + stage * 3.2;
+    inner = `<rect x="${(cx - 0.9).toFixed(1)}" y="${(cy - h).toFixed(1)}" width="1.8" height="${h.toFixed(1)}" rx="0.5" fill="${cropColor}" class="crop"/>`;
+  } else {
+    inner = `<rect x="${(cx - 0.9).toFixed(1)}" y="${(cy - 0.6).toFixed(1)}" width="1.8" height="1" rx="0.5" fill="#6e4a24" class="furrow"/>`;
+  }
+  return `<g><rect x="${(cx - 1.9).toFixed(1)}" y="${(cy - 1.3).toFixed(1)}" width="3.8" height="2.6" rx="0.8" fill="${soil}" class="plot"/>${inner}</g>`;
+}
+
+function farmSvg(x: number, z: number, crops: number[], season: Season, bounds: Bounds): string {
+  const { sx, sy } = iso(x, z);
+  bounds.add(sx - 8, sy - 6).add(sx + 8, sy + 6);
+  const plots = crops.map((stage, i) => plotSvg(sx + (i - 1) * 4.4, sy, stage, season));
+  return `<g>${plots.join("")}</g>`;
+}
+
+function bridgeSvg(x: number, z: number, season: Season, bounds: Bounds): string {
+  const { sx, sy } = iso(x, z);
+  const plank = season === "winter" ? "#cfd6e0" : "#a9713a";
+  bounds.add(sx - 10, sy - 3).add(sx + 10, sy + 3);
+  const angle = -30; // span runs along the iso x-axis
+  return (
+    `<g transform="translate(${sx.toFixed(1)} ${sy.toFixed(1)}) rotate(${angle})" class="bridge-g">` +
+    `<rect x="-9" y="-0.6" width="18" height="1.6" rx="0.8" fill="${plank}" stroke="#7a5226" stroke-width="0.7" class="bridge"/>` +
+    `<rect x="-8" y="-1.9" width="0.5" height="3.2" fill="#6b4a22" class="rail"/><rect x="7.5" y="-1.9" width="0.5" height="3.2" fill="#6b4a22" class="rail"/>` +
+    `</g>`
+  );
+}
+
+function islandSvg(id: BiomeId, season: Season, health: number): { svg: string; minX: number; minY: number; maxX: number; maxY: number } {
+  const { c, r } = ISLANDS[id];
+  const { sx, sy } = iso(c.x, c.z);
+  const rx = r * 1.35; // multipled for the flattened diamond look
+  const ry = r * 0.95;
+  // rough organic blob by drawing a rounded hexagon
+  const n = 8;
+  const pts: string[] = [];
+  for (let i = 0; i < n; i++) {
+    const a = (Math.PI * 2 * i) / n + 0.4;
+    const rad = rx * (i % 2 === 0 ? 1 : 0.6);
+    const vx = sx + Math.cos(a) * rad;
+    const vy = sy + Math.sin(a) * rad * (ry / rx);
+    pts.push(`${vx.toFixed(1)},${vy.toFixed(1)}`);
+  }
+  const f = shade(ISLAND_FILL[season], 0.62 + health * 0.4);
+  // inner slope highlight
+  const light = shade(ISLAND_FILL[season], Math.min(1, 0.7 + health * 0.5));
+  const xMin = sx - rx, yMin = sy - ry, xMax = sx + rx, yMax = sy + ry;
+  return {
+    svg:
+      `<g class="island island-${id}" data-island="${id}">` +
+      `<path d="M${pts.join("L")}Z" fill="${f}" stroke="${ISLAND_EDGE[season]}" stroke-width="1.6"/>` +
+      `<ellipse cx="${sx}" cy="${sy}" rx="${rx * 0.72}" ry="${ry * 0.55}" fill="${light}" opacity="0.5"/>` +
+      `<text x="${sx.toFixed(1)}" y="${(sy - ry).toFixed(1)}" text-anchor="middle" class="island-label">${esc(id.toUpperCase())}</text>` +
+      `</g>`,
+    minX: xMin, minY: yMin, maxX: xMax, maxY: yMax,
+  };
+}
+
+// ---- public projector --------------------------------------------------------
 export interface RenderedWorld {
   svg: string;
+  viewBox: string;
   entities: { kind: string; id: string; sx: number; sy: number; label: string }[];
   trees: number;
   farms: number;
   bridges: number;
 }
 
-/**
- * Build the world scene purely from an authoritative snapshot. `removedTrees`
- * is an optional set of node ids the authoritative record marks removed (e.g.
- * clear_terrain). When absent, we trust resourceNodes themselves.
- */
 export function renderWorld(snapshot: WorldSnapshot, removedTrees?: Set<string>): RenderedWorld {
   const season: Season = snapshot.season ?? "spring";
   const entities: { kind: string; id: string; sx: number; sy: number; label: string }[] = [];
-  let trees = 0;
+  let trees = 0, farms = 0, bridges = 0;
+  const bounds = new Bounds();
 
   const parts: string[] = [];
-  parts.push(`<rect x="-30" y="-30" width="320" height="220" class="bg" fill="${SEASON_BG[season]}"/>`);
-  parts.push(waterBand());
 
-  // Islands (in draw order: frost back, meadow mid, dusk frontmost-ish).
+  // Full-bleed water background (covers a generous area; viewBox clips it).
+  const waterGrad =
+    `<linearGradient id="wg" x1="0" y1="0" x2="1" y2="1">` +
+    `<stop offset="0" stop-color="${WATER_A[season]}"/><stop offset="1" stop-color="${WATER_B[season]}"/></linearGradient>`;
+  parts.push(`<defs>${waterGrad}</defs>`);
+  parts.push(`<rect x="-220" y="-160" width="900" height="600" fill="url(#wg)"/>`);
+  // static ripple highlights
+  parts.push(`<g class="waterfx" opacity="0.5">` +
+    `<path d="M-80 40 Q-40 30 -0 40 Q40 50 80 40" stroke="#d9f4ff" stroke-width="2" fill="none"/>` +
+    `<path d="M-40 90 Q0 78 40 90 Q80 102 120 90" stroke="#d9f4ff" stroke-width="2" fill="none"/>` +
+    `<path d="M-70 140 Q-30 130 10 140" stroke="#bfe9ff" stroke-width="2" fill="none"/>` +
+    `</g>`);
+  // sun/season tint overlay
+  parts.push(`<rect x="-220" y="-160" width="900" height="600" fill="#fff" opacity="${season === "winter" ? 0.22 : 0.06}" class="season-tint"/>`);
+
+  // Islands (frost back, meadow mid, dusk front).
   for (const id of ["frost", "meadow", "dusk"] as BiomeId[]) {
     const island = snapshot.islands.find((i) => i.id === id);
-    parts.push(islandSvg(id, season, island?.health ?? 1));
+    const r = islandSvg(id, season, island?.health ?? 1);
+    parts.push(r.svg);
+    bounds.add(r.minX, r.minY).add(r.maxX, r.maxY);
   }
 
-  // Resource nodes -> trees (authoritative). removedTrees filters cleared ones.
+  // Resource nodes -> trees; authoritative wins.
   for (const node of snapshot.resourceNodes ?? []) {
     if (node.type !== "wood") continue;
     if (removedTrees?.has(node.id)) continue;
     const { sx, sy } = iso(node.position.x, node.position.z);
     entities.push({ kind: "tree", id: node.id, sx, sy, label: `${node.id} (wood ${node.quantity})` });
-    parts.push(treeSvg(node.position.x, node.position.z, "alive"));
+    parts.push(treeSvg(node.position.x, node.position.z, "alive", bounds));
     trees++;
   }
-  // Canonical decoration trees if authoritative node list is empty but the
-  // island is known (only fills obvious empty worlds; authoritative wins).
   if ((snapshot.resourceNodes ?? []).filter((n) => n.type === "wood").length === 0) {
     for (const id of ["meadow", "frost", "dusk"] as BiomeId[]) {
-      for (const t of CANONICAL_TREES[id]) {
-        parts.push(treeSvg(t.x, t.z, "alive", 0.8));
-      }
+      for (const t of CANONICAL_TREES[id]) parts.push(treeSvg(t.x, t.z, "alive", bounds, 0.85));
     }
   }
 
-  // Buildings: houses + farms (with crops). Farms map crops by farmPlotId.
-  let farms = 0;
+  // Buildings: houses + farms (with crops mapped by farmPlotId).
   for (const b of snapshot.buildings ?? []) {
+    const { sx, sy } = iso(b.position.x, b.position.z);
     if (b.type === "house") {
-      entities.push({ kind: "building", id: b.id, sx: iso(b.position.x, b.position.z).sx, sy: iso(b.position.x, b.position.z).sy, label: b.id });
-      parts.push(buildingSvg(b.position.x, b.position.z, b.id, season));
+      entities.push({ kind: "building", id: b.id, sx, sy, label: b.id });
+      parts.push(buildingSvg(b.position.x, b.position.z, b.id, season, bounds));
     } else if (b.type === "farm") {
       farms++;
-      const stages = new Array<number>(3).fill(0); // up to FARM_CROP_CAPACITY=3
+      const stages = new Array<number>(3).fill(0);
       for (const c of snapshot.crops ?? []) {
         if (c.farmPlotId !== b.id) continue;
         const slot = stages.findIndex((s) => s === 0);
         if (slot >= 0) stages[slot] = c.growthStage;
       }
-      entities.push({ kind: "farm", id: b.id, sx: iso(b.position.x, b.position.z).sx, sy: iso(b.position.x, b.position.z).sy, label: b.id });
-      parts.push(farmSvg(b.position.x, b.position.z, stages, season));
+      entities.push({ kind: "farm", id: b.id, sx, sy, label: b.id });
+      parts.push(farmSvg(b.position.x, b.position.z, stages, season, bounds));
     }
   }
 
-  // Bridges: rendered where authoritative connectivity says islands are joined.
-  let bridges = 0;
-  const bridgeSpans: Record<string, Vec> = {
-    "meadow-frost": { x: 39, z: 22 },
-    "frost-meadow": { x: 39, z: 22 },
-    "meadow-dusk": { x: 50, z: 34 },
-    "dusk-meadow": { x: 50, z: 34 },
+  // Bridges where authoritative connectivity says islands are joined.
+  const bridgeSpans: Record<string, { x: number; z: number }> = {
+    "frost-meadow": { x: 40, z: 24 },
+    "dusk-meadow": { x: 52, z: 34 },
   };
-  const seenPairs = new Set<string>();
+  const seen = new Set<string>();
   for (const br of snapshot.bridges ?? []) {
     const key = [br.islandA, br.islandB].sort().join("-");
-    if (seenPairs.has(key)) continue;
-    seenPairs.add(key);
-    const span = bridgeSpans[key];
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const span = bridgeSpans[["frost-meadow", "dusk-meadow"].includes(key) ? key : "frost-meadow"];
     if (!span) continue;
     bridges++;
-    entities.push({ kind: "bridge", id: br.id, sx: iso(span.x, span.z).sx, sy: iso(span.x, span.z).sy, label: `${br.islandA} ↔ ${br.islandB}` });
-    parts.push(bridgeSvg(span.x, span.z, season));
+    const { sx, sy } = iso(span.x, span.z);
+    entities.push({ kind: "bridge", id: br.id, sx, sy, label: `${br.islandA} ↔ ${br.islandB}` });
+    parts.push(bridgeSvg(span.x, span.z, season, bounds));
   }
 
-  return { svg: parts.join(""), entities, trees, farms, bridges };
+  // Compute viewBox from content bounds with generous margin so the whole
+  // miniature world is on-canvas.
+  bounds.grow(26, 26);
+  const w = Math.max(1, bounds.maxX - bounds.minX);
+  const h = Math.max(1, bounds.maxY - bounds.minY);
+  const viewBox = `${bounds.minX.toFixed(1)} ${bounds.minY.toFixed(1)} ${w.toFixed(1)} ${h.toFixed(1)}`;
+
+  return {
+    svg: parts.join("\n"),
+    viewBox,
+    entities,
+    trees,
+    farms,
+    bridges,
+  };
 }
 
 /** Build the footer/HUD line purely from state. */

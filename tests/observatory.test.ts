@@ -92,6 +92,41 @@ describe("projector / state mapping", () => {
     expect(line).toContain("DAY 13 / 30");
     expect(line).toContain("FOOD 12");
   });
+
+  it("emits a viewBox that contains every rendered entity (world is on-canvas)", () => {
+    // REGRESSION: the world used to render at negative/overflow coordinates in a
+    // pixel-space SVG (no viewBox), so absolutely everything was clipped off the
+    // visible canvas -> the empty/dark-world bug. The projector must return a
+    // viewBox whose frame encloses all projected entities.
+    const snap = baseSnap({
+      buildings: [
+        { id: "farm-1", type: "farm", position: { x: 25, y: 3, z: 35 }, health: 1, islandId: "meadow" },
+        { id: "farm-2", type: "farm", position: { x: 60, y: 4, z: 14 }, health: 1, islandId: "frost" },
+      ],
+      crops: [{ id: "crop-1", farmPlotId: "farm-1", cropType: "wheat", growthStage: 0.5 }],
+    });
+    const w = renderWorld(snap);
+    const m = w.viewBox.match(/^(-?[\d.]+) (-?[\d.]+) ([\d.]+) ([\d.]+)$/);
+    expect(m).not.toBeNull();
+    const [x, y, ww, hh] = [Number(m![1]), Number(m![2]), Number(m![3]), Number(m![4])];
+    for (const e of w.entities) {
+      expect(e.sx).toBeGreaterThanOrEqual(x - 1);
+      expect(e.sx).toBeLessThanOrEqual(x + ww + 1);
+      expect(e.sy).toBeGreaterThanOrEqual(y - 1);
+      expect(e.sy).toBeLessThanOrEqual(y + hh + 1);
+    }
+    expect(ww).toBeGreaterThan(0);
+    expect(hh).toBeGreaterThan(0);
+  });
+
+  it("renders the full world composition (water + all three islands + house)", () => {
+    const w = renderWorld(baseSnap());
+    expect(w.svg).toContain('fill="url(#wg)"'); // water gradient is present
+    for (const id of ["meadow", "frost", "dusk"]) {
+      expect(w.svg).toContain(`data-island="${id}"`);
+    }
+    expect(w.svg).toContain("house-001");
+  });
 });
 
 describe("replay engine / event preservation", () => {

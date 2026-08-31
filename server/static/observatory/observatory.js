@@ -1,8 +1,17 @@
+var __defProp = Object.defineProperty;
+var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
+
 // observatory/src/projector.ts
+function iso(x, z) {
+  const sx = (x - z) * 2;
+  const sy = (x + z) * 1;
+  return { sx, sy };
+}
 var ISLANDS = {
-  meadow: { c: { x: 24, z: 30 }, r: 16 },
-  frost: { c: { x: 50, z: 12 }, r: 13 },
-  dusk: { c: { x: 72, z: 34 }, r: 12 }
+  meadow: { c: { x: 24, z: 30 }, r: 15 },
+  frost: { c: { x: 50, z: 16 }, r: 12 },
+  dusk: { c: { x: 76, z: 34 }, r: 12 }
 };
 var CANONICAL_TREES = {
   meadow: [
@@ -10,93 +19,35 @@ var CANONICAL_TREES = {
     { x: 34, z: 20 },
     { x: 18, z: 40 },
     { x: 32, z: 42 },
-    { x: 12, z: 32 }
+    { x: 12, z: 33 }
   ],
-  frost: [{ x: 44, z: 8 }, { x: 57, z: 16 }],
-  dusk: [{ x: 66, z: 30 }, { x: 80, z: 40 }]
+  frost: [{ x: 44, z: 10 }, { x: 57, z: 20 }],
+  dusk: [{ x: 70, z: 28 }, { x: 84, z: 40 }]
 };
-var SEASON_BG = {
-  spring: "#d9e6ff",
-  summer: "#cfe5ff",
-  autumn: "#f4e3c8",
-  winter: "#dfe7f2"
+var WATER_A = {
+  spring: "#4aa6d6",
+  summer: "#3f9fd6",
+  autumn: "#4a9cc9",
+  winter: "#7fa7c9"
+};
+var WATER_B = {
+  spring: "#2e7fB8",
+  summer: "#2a79b5",
+  autumn: "#3379a8",
+  winter: "#5e8ab5"
 };
 var ISLAND_FILL = {
-  spring: "#7fbf5a",
-  summer: "#74b74f",
-  autumn: "#c9a35c",
-  winter: "#e7ecf2"
+  spring: "#8ecb63",
+  summer: "#83c457",
+  autumn: "#d3a860",
+  winter: "#eef2f6"
 };
 var ISLAND_EDGE = {
   spring: "#5d9a41",
   summer: "#55983b",
   autumn: "#9c7c40",
-  winter: "#c7ceda"
+  winter: "#c2ccd6"
 };
-function iso(x, z) {
-  return { sx: x * 3 - z * 3, sy: (60 - z) * 1.9 + x * 0.55 };
-}
-function escapeXml(s) {
-  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-function treeSvg(x, z, stage, scale = 1) {
-  if (stage === "removed") return "";
-  const { sx, sy } = iso(x, z);
-  return `<g transform="translate(${sx.toFixed(1)} ${sy.toFixed(1)}) scale(${scale})"><ellipse cx="0" cy="0" rx="1.5" ry="0.6" class="shadow"/><path d="M0 -11 L3.2 -5 Q3 -4.5 3 -4 L-3 -4 Q-3 -4.5 -3.2 -5 Z" class="trunk"/><path d="M0 -16 L4.5 -9 L2.6 -9 L5.5 -4 L-5.5 -4 L-2.6 -9 L-4.5 -9 Z" class="conifer"/></g>`;
-}
-function farmSvg(x, z, crops, season) {
-  const { sx, sy } = iso(x, z);
-  const plots = crops.map((stage, i) => {
-    const px = sx + (i - 1) * 3;
-    const py = sy;
-    return plotSvg(px, py, stage, season);
-  });
-  return `<g transform="translate(${sx.toFixed(1)} ${(sy + 1).toFixed(1)})"><g class="farm">${plots.join("")}</g></g>`;
-}
-function plotSvg(cx, cy, stage, season) {
-  const dark = season === "winter";
-  const soil = dark ? "#dcd7cf" : "#8a5a2b";
-  const cropColor = dark ? "#c9d4bf" : season === "autumn" ? "#e7cf7a" : "#7bc443";
-  let inner = "";
-  if (stage > 0) {
-    const h = 2.2 + stage * 3.4;
-    inner = `<rect x="${(cx - 0.9).toFixed(1)}" y="${(cy - h).toFixed(1)}" width="1.8" height="${h.toFixed(1)}" rx="0.5" class="crop" fill="${cropColor}"/>`;
-  } else {
-    inner = `<rect x="${(cx - 0.9).toFixed(1)}" y="${(cy - 0.5).toFixed(1)}" width="1.8" height="0.9" rx="0.4" class="furrow"/>`;
-  }
-  return `<g transform="translate(${cx.toFixed(1)} ${cy.toFixed(1)}) scale(1)"><rect x="-1.7" y="-1.2" width="3.4" height="2.4" rx="0.7" fill="${soil}" class="plot"/>${inner}</g>`;
-}
-function buildingSvg(x, z, label, season) {
-  const { sx, sy } = iso(x, z);
-  const roof = season === "winter" ? "#eef2f7" : "#d98a4e";
-  const wall = "#f3d9a8";
-  return `<g transform="translate(${sx.toFixed(1)} ${sy.toFixed(1)}) scale(1)"><ellipse cx="0" cy="0.6" rx="3" ry="1.2" class="shadow"/><rect x="-2.6" y="-2.6" width="5.2" height="3.4" fill="${wall}" rx="0.4" class="wall"/><path d="M-3.2 -2.2 L0 -5.2 L3.2 -2.2 Z" fill="${roof}" class="roof"/><rect x="-0.5" y="-1.6" width="1" height="2.4" fill="#7a4a21" class="door"/>` + (label ? `<title>${escapeXml(label)}</title>` : "") + `</g>`;
-}
-function bridgeSvg(x, z, season) {
-  const { sx, sy } = iso(x, z);
-  const plank = season === "winter" ? "#cfd6e0" : "#a9713a";
-  return `<g transform="translate(${sx.toFixed(1)} ${sy.toFixed(1)})"><rect x="-1.7" y="-0.35" width="3.4" height="1" rx="0.3" fill="${plank}" class="bridge"/><rect x="-1.7" y="-1.3" width="0.35" height="1.6" class="rail"/><rect x="1.35" y="-1.3" width="0.35" height="1.6" class="rail"/></g>`;
-}
-function waterBand() {
-  return `<g class="water"><path class="water-shape"  d="M0 120 L120 40 L240 120 L120 200 Z" fill="#5bb8d6" opacity="0.9"/><path class="water-ripple" d="M20 96 L40 114 L60 96 L80 114 L100 96" fill="none" stroke="#cdeef7" stroke-width="1.2" opacity="0.7"/><path class="water-ripple2" d="M35 118 L60 100 L85 118 L110 100" fill="none" stroke="#a8dff0" stroke-width="1.1" opacity="0.6"/></g>`;
-}
-function islandSvg(id, season, health) {
-  const { c, r } = ISLANDS[id];
-  const { sx, sy } = iso(c.x, c.z);
-  const pts = 6;
-  const verts = [];
-  for (let i = 0; i < pts; i++) {
-    const a = Math.PI / pts * 2 * i - Math.PI / 2 - Math.PI / 6;
-    const rx = r * 2.6;
-    const ry = r * 2;
-    const vx = sx + Math.cos(a) * rx;
-    const vy = sy + Math.sin(a) * ry;
-    verts.push(`${vx.toFixed(1)},${vy.toFixed(1)}`);
-  }
-  const fillScale = 0.55 + health * 0.45;
-  const f = shade(ISLAND_FILL[season], fillScale);
-  return `<g class="island island-${id}" data-island="${id}"><path d="M${verts.join("L")}Z" fill="${f}" stroke="${ISLAND_EDGE[season]}" stroke-width="1.4" class="terrain"/><text x="${sx.toFixed(1)}" y="${(sy + r * 1.9).toFixed(1)}" text-anchor="middle" class="island-label">${escapeXml(id.toUpperCase())}</text></g>`;
-}
 function shade(hex, k) {
   const n = parseInt(hex.slice(1), 16);
   const r = Math.min(255, Math.round((n >> 16 & 255) * k));
@@ -104,37 +55,127 @@ function shade(hex, k) {
   const b = Math.min(255, Math.round((n & 255) * k));
   return `#${(r << 16 | g << 8 | b).toString(16).padStart(6, "0")}`;
 }
+function esc(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+var Bounds = class {
+  constructor() {
+    __publicField(this, "minX", Infinity);
+    __publicField(this, "minY", Infinity);
+    __publicField(this, "maxX", -Infinity);
+    __publicField(this, "maxY", -Infinity);
+  }
+  add(x, y) {
+    if (x < this.minX) this.minX = x;
+    if (y < this.minY) this.minY = y;
+    if (x > this.maxX) this.maxX = x;
+    if (y > this.maxY) this.maxY = y;
+    return this;
+  }
+  grow(dx, dy) {
+    this.add(this.minX - dx, this.minY - dy);
+    this.add(this.maxX + dx, this.maxY + dy);
+    return this;
+  }
+};
+function treeSvg(x, z, stage, bounds, scale = 1) {
+  if (stage === "removed") return "";
+  const { sx, sy } = iso(x, z);
+  bounds.add(sx - 6 * scale, sy - 17 * scale).add(sx + 6 * scale, sy);
+  return `<g transform="translate(${sx.toFixed(1)} ${sy.toFixed(1)}) scale(${scale})" class="tree-group"><ellipse cx="0" cy="0" rx="2.6" ry="1.0" fill="rgba(20,40,25,0.30)" class="shadow"/><rect x="-0.9" y="-5" width="1.8" height="5" rx="0.6" fill="#79603a" class="trunk"/><path d="M0 -18 L5 -11 L3 -11 L5.8 -5 L-5.8 -5 L-3 -11 L-5 -11 Z" fill="#3f8f3f"/><path d="M0 -18 L4.6 -12 L-4.6 -12 Z" fill="#55a14e" class="conifer"/></g>`;
+}
+function buildingSvg(x, z, label, season, bounds) {
+  const { sx, sy } = iso(x, z);
+  const roof = season === "winter" ? "#eef2f7" : "#d9822e";
+  bounds.add(sx - 7, sy - 8).add(sx + 7, sy + 3);
+  return `<g transform="translate(${sx.toFixed(1)} ${sy.toFixed(1)})"><ellipse cx="0" cy="1.5" rx="5" ry="1.8" fill="rgba(20,30,25,0.28)"/><rect x="-4.4" y="-4.6" width="8.8" height="5.6" rx="0.6" fill="#f3d9a8" stroke="#c8a05e" stroke-width="1"/><path d="M-5.1 -4.4 L0 -8.5 L5.1 -4.4 Z" fill="${roof}" stroke="#b96a1f" stroke-width="1"/><rect x="-0.9" y="-2.9" width="1.8" height="3.9" rx="0.5" fill="#7a4a21"/><rect x="1.6" y="-3.6" width="1.4" height="1.4" rx="0.3" fill="#cfe4ff"/>` + (label ? `<title>${esc(label)}</title>` : "") + `</g>`;
+}
+function plotSvg(cx, cy, stage, season) {
+  const dark = season === "winter";
+  const soil = dark ? "#dcd7cf" : "#8a5a2b";
+  const cropColor = dark ? "#c9d4bf" : season === "autumn" ? "#e7cf7a" : "#6fbf3f";
+  let inner = "";
+  if (stage > 0) {
+    const h = 2.4 + stage * 3.2;
+    inner = `<rect x="${(cx - 0.9).toFixed(1)}" y="${(cy - h).toFixed(1)}" width="1.8" height="${h.toFixed(1)}" rx="0.5" fill="${cropColor}" class="crop"/>`;
+  } else {
+    inner = `<rect x="${(cx - 0.9).toFixed(1)}" y="${(cy - 0.6).toFixed(1)}" width="1.8" height="1" rx="0.5" fill="#6e4a24" class="furrow"/>`;
+  }
+  return `<g><rect x="${(cx - 1.9).toFixed(1)}" y="${(cy - 1.3).toFixed(1)}" width="3.8" height="2.6" rx="0.8" fill="${soil}" class="plot"/>${inner}</g>`;
+}
+function farmSvg(x, z, crops, season, bounds) {
+  const { sx, sy } = iso(x, z);
+  bounds.add(sx - 8, sy - 6).add(sx + 8, sy + 6);
+  const plots = crops.map((stage, i) => plotSvg(sx + (i - 1) * 4.4, sy, stage, season));
+  return `<g>${plots.join("")}</g>`;
+}
+function bridgeSvg(x, z, season, bounds) {
+  const { sx, sy } = iso(x, z);
+  const plank = season === "winter" ? "#cfd6e0" : "#a9713a";
+  bounds.add(sx - 10, sy - 3).add(sx + 10, sy + 3);
+  const angle = -30;
+  return `<g transform="translate(${sx.toFixed(1)} ${sy.toFixed(1)}) rotate(${angle})" class="bridge-g"><rect x="-9" y="-0.6" width="18" height="1.6" rx="0.8" fill="${plank}" stroke="#7a5226" stroke-width="0.7" class="bridge"/><rect x="-8" y="-1.9" width="0.5" height="3.2" fill="#6b4a22" class="rail"/><rect x="7.5" y="-1.9" width="0.5" height="3.2" fill="#6b4a22" class="rail"/></g>`;
+}
+function islandSvg(id, season, health) {
+  const { c, r } = ISLANDS[id];
+  const { sx, sy } = iso(c.x, c.z);
+  const rx = r * 1.35;
+  const ry = r * 0.95;
+  const n = 8;
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    const a = Math.PI * 2 * i / n + 0.4;
+    const rad = rx * (i % 2 === 0 ? 1 : 0.6);
+    const vx = sx + Math.cos(a) * rad;
+    const vy = sy + Math.sin(a) * rad * (ry / rx);
+    pts.push(`${vx.toFixed(1)},${vy.toFixed(1)}`);
+  }
+  const f = shade(ISLAND_FILL[season], 0.62 + health * 0.4);
+  const light = shade(ISLAND_FILL[season], Math.min(1, 0.7 + health * 0.5));
+  const xMin = sx - rx, yMin = sy - ry, xMax = sx + rx, yMax = sy + ry;
+  return {
+    svg: `<g class="island island-${id}" data-island="${id}"><path d="M${pts.join("L")}Z" fill="${f}" stroke="${ISLAND_EDGE[season]}" stroke-width="1.6"/><ellipse cx="${sx}" cy="${sy}" rx="${rx * 0.72}" ry="${ry * 0.55}" fill="${light}" opacity="0.5"/><text x="${sx.toFixed(1)}" y="${(sy - ry).toFixed(1)}" text-anchor="middle" class="island-label">${esc(id.toUpperCase())}</text></g>`,
+    minX: xMin,
+    minY: yMin,
+    maxX: xMax,
+    maxY: yMax
+  };
+}
 function renderWorld(snapshot, removedTrees) {
   const season = snapshot.season ?? "spring";
   const entities = [];
-  let trees = 0;
+  let trees = 0, farms = 0, bridges = 0;
+  const bounds = new Bounds();
   const parts = [];
-  parts.push(`<rect x="-30" y="-30" width="320" height="220" class="bg" fill="${SEASON_BG[season]}"/>`);
-  parts.push(waterBand());
+  const waterGrad = `<linearGradient id="wg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${WATER_A[season]}"/><stop offset="1" stop-color="${WATER_B[season]}"/></linearGradient>`;
+  parts.push(`<defs>${waterGrad}</defs>`);
+  parts.push(`<rect x="-220" y="-160" width="900" height="600" fill="url(#wg)"/>`);
+  parts.push(`<g class="waterfx" opacity="0.5"><path d="M-80 40 Q-40 30 -0 40 Q40 50 80 40" stroke="#d9f4ff" stroke-width="2" fill="none"/><path d="M-40 90 Q0 78 40 90 Q80 102 120 90" stroke="#d9f4ff" stroke-width="2" fill="none"/><path d="M-70 140 Q-30 130 10 140" stroke="#bfe9ff" stroke-width="2" fill="none"/></g>`);
+  parts.push(`<rect x="-220" y="-160" width="900" height="600" fill="#fff" opacity="${season === "winter" ? 0.22 : 0.06}" class="season-tint"/>`);
   for (const id of ["frost", "meadow", "dusk"]) {
     const island = snapshot.islands.find((i) => i.id === id);
-    parts.push(islandSvg(id, season, island?.health ?? 1));
+    const r = islandSvg(id, season, island?.health ?? 1);
+    parts.push(r.svg);
+    bounds.add(r.minX, r.minY).add(r.maxX, r.maxY);
   }
   for (const node of snapshot.resourceNodes ?? []) {
     if (node.type !== "wood") continue;
     if (removedTrees?.has(node.id)) continue;
     const { sx, sy } = iso(node.position.x, node.position.z);
     entities.push({ kind: "tree", id: node.id, sx, sy, label: `${node.id} (wood ${node.quantity})` });
-    parts.push(treeSvg(node.position.x, node.position.z, "alive"));
+    parts.push(treeSvg(node.position.x, node.position.z, "alive", bounds));
     trees++;
   }
   if ((snapshot.resourceNodes ?? []).filter((n) => n.type === "wood").length === 0) {
     for (const id of ["meadow", "frost", "dusk"]) {
-      for (const t of CANONICAL_TREES[id]) {
-        parts.push(treeSvg(t.x, t.z, "alive", 0.8));
-      }
+      for (const t of CANONICAL_TREES[id]) parts.push(treeSvg(t.x, t.z, "alive", bounds, 0.85));
     }
   }
-  let farms = 0;
   for (const b of snapshot.buildings ?? []) {
+    const { sx, sy } = iso(b.position.x, b.position.z);
     if (b.type === "house") {
-      entities.push({ kind: "building", id: b.id, sx: iso(b.position.x, b.position.z).sx, sy: iso(b.position.x, b.position.z).sy, label: b.id });
-      parts.push(buildingSvg(b.position.x, b.position.z, b.id, season));
+      entities.push({ kind: "building", id: b.id, sx, sy, label: b.id });
+      parts.push(buildingSvg(b.position.x, b.position.z, b.id, season, bounds));
     } else if (b.type === "farm") {
       farms++;
       const stages = new Array(3).fill(0);
@@ -143,29 +184,38 @@ function renderWorld(snapshot, removedTrees) {
         const slot = stages.findIndex((s) => s === 0);
         if (slot >= 0) stages[slot] = c.growthStage;
       }
-      entities.push({ kind: "farm", id: b.id, sx: iso(b.position.x, b.position.z).sx, sy: iso(b.position.x, b.position.z).sy, label: b.id });
-      parts.push(farmSvg(b.position.x, b.position.z, stages, season));
+      entities.push({ kind: "farm", id: b.id, sx, sy, label: b.id });
+      parts.push(farmSvg(b.position.x, b.position.z, stages, season, bounds));
     }
   }
-  let bridges = 0;
   const bridgeSpans = {
-    "meadow-frost": { x: 39, z: 22 },
-    "frost-meadow": { x: 39, z: 22 },
-    "meadow-dusk": { x: 50, z: 34 },
-    "dusk-meadow": { x: 50, z: 34 }
+    "frost-meadow": { x: 40, z: 24 },
+    "dusk-meadow": { x: 52, z: 34 }
   };
-  const seenPairs = /* @__PURE__ */ new Set();
+  const seen = /* @__PURE__ */ new Set();
   for (const br of snapshot.bridges ?? []) {
     const key = [br.islandA, br.islandB].sort().join("-");
-    if (seenPairs.has(key)) continue;
-    seenPairs.add(key);
-    const span = bridgeSpans[key];
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const span = bridgeSpans[["frost-meadow", "dusk-meadow"].includes(key) ? key : "frost-meadow"];
     if (!span) continue;
     bridges++;
-    entities.push({ kind: "bridge", id: br.id, sx: iso(span.x, span.z).sx, sy: iso(span.x, span.z).sy, label: `${br.islandA} \u2194 ${br.islandB}` });
-    parts.push(bridgeSvg(span.x, span.z, season));
+    const { sx, sy } = iso(span.x, span.z);
+    entities.push({ kind: "bridge", id: br.id, sx, sy, label: `${br.islandA} \u2194 ${br.islandB}` });
+    parts.push(bridgeSvg(span.x, span.z, season, bounds));
   }
-  return { svg: parts.join(""), entities, trees, farms, bridges };
+  bounds.grow(26, 26);
+  const w = Math.max(1, bounds.maxX - bounds.minX);
+  const h = Math.max(1, bounds.maxY - bounds.minY);
+  const viewBox = `${bounds.minX.toFixed(1)} ${bounds.minY.toFixed(1)} ${w.toFixed(1)} ${h.toFixed(1)}`;
+  return {
+    svg: parts.join("\n"),
+    viewBox,
+    entities,
+    trees,
+    farms,
+    bridges
+  };
 }
 function hudLine(s) {
   return [
@@ -285,6 +335,8 @@ function paint(snapshot, removedTrees) {
   );
   const root = doc.documentElement;
   svg.replaceChildren(...Array.from(root.childNodes));
+  svg.setAttribute("viewBox", world.viewBox);
+  svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
   const parts = hudLine(snapshot).split(/\s{3,}/);
   $("#hud-values").innerHTML = parts.map((p) => `<span>${p}</span>`).join("");
   const pct = snapshot.daysOfFoodRemaining >= 10 ? 100 : Math.max(2, Math.min(100, snapshot.daysOfFoodRemaining / 10 * 100));
