@@ -243,4 +243,50 @@ describe("replay engine / event preservation", () => {
   it("expansion labels special seasons", () => {
     expect(emphasisFor({ type: "SEASON_CHANGED", turn: 0, at: 1, data: { season: "winter" } })).toBeLessThan(1);
   });
+
+  it("harvest successes are slowed (consequential moment)", () => {
+    const slow = emphasisFor({ type: "ACTION_SUCCEEDED", turn: 1, at: 1, data: { tool: "harvest" } });
+    expect(slow).toBeLessThan(1);
+    expect(slow).toBeGreaterThan(0);
+    // ordinary work (plant) stays brisk
+    expect(emphasisFor({ type: "ACTION_SUCCEEDED", turn: 1, at: 1, data: { tool: "plant" } })).toBe(1);
+    // approval remains a full pause
+    expect(emphasisFor({ type: "APPROVAL_REQUIRED", turn: 1, at: 1, data: {} })).toBe(0);
+  });
+
+  it("starvation is derived from an authoritative population drop across frames", () => {
+    const b = bundle();
+    b.frames = [
+      { ts: 1000, day: 1, snapshot: baseSnap({ day: 1, population: 4 }) },
+      { ts: 2000, day: 2, snapshot: baseSnap({ day: 2, population: 3 }) },
+      { ts: 2500, day: 2, snapshot: baseSnap({ day: 2, population: 3 }) },
+    ];
+    b.events = [
+      { type: "TURN_STARTED", turn: 1, at: 1000, data: {} },
+      { type: "WORLD_OBSERVED", turn: 1, at: 1000, data: { day: 1 } },
+      { type: "WORLD_OBSERVED", turn: 2, at: 2000, data: { day: 2 } },
+    ];
+    const steps = buildSteps(b);
+    const dropped = steps.find((s) => s.starvation);
+    expect(dropped).toBeTruthy();
+    expect(dropped!.starvation).toBe(1);
+    expect(dropped!.emphasis).toBeLessThanOrEqual(0.3); // lingers so the loss registers
+  });
+
+  it("no starvation is reported when population is steady or rising", () => {
+    const b = bundle();
+    b.frames = [
+      { ts: 1000, day: 1, snapshot: baseSnap({ day: 1, population: 4 }) },
+      { ts: 2000, day: 2, snapshot: baseSnap({ day: 2, population: 4 }) },
+      { ts: 2500, day: 3, snapshot: baseSnap({ day: 3, population: 5 }) },
+    ];
+    b.events = [
+      { type: "TURN_STARTED", turn: 1, at: 1000, data: {} },
+      { type: "WORLD_OBSERVED", turn: 1, at: 1000, data: { day: 1 } },
+      { type: "WORLD_OBSERVED", turn: 2, at: 2000, data: { day: 2 } },
+      { type: "WORLD_OBSERVED", turn: 3, at: 2500, data: { day: 3 } },
+    ];
+    const steps = buildSteps(b);
+    expect(steps.every((s) => !s.starvation)).toBe(true);
+  });
 });

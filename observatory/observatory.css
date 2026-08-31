@@ -105,6 +105,17 @@ body {
   100%{ transform: translateY(70px) translateX(-6px); opacity: 0.2; }
 }
 
+/* camera leans-in and settles on consequential moments (season change) */
+@keyframes camera-focus {
+  0%   { transform: scale(0.9); opacity: 0.92; }
+  35%  { transform: scale(1.12); }
+  100% { transform: scale(1); opacity: 1; }
+}
+.world-focus { animation: camera-focus 1.2s ease-out; transform-origin: 50% 50%; }
+
+/* starvation overlay tint */
+#world-overlay.warn { background: var(--danger); color: #1c2230; }
+
 /* ---- HUD ---- */
 .hud {
   position: absolute; top: 0; left: 0; right: 0; padding: 10px 14px;

@@ -262,6 +262,8 @@ function playStep(): void {
   updateReplayActivityText(step.event);
   if (step.event.type === "APPROVAL_REQUIRED") onReplayApproval(step.event);
   if (step.event.type === "SEASON_CHANGED") setSeasonFlash(String(step.event.data?.season ?? ""));
+  if (step.starvation && step.starvation > 0) flash(`FOOD SHORTAGE — ${step.starvation} villager${step.starvation > 1 ? "s" : ""} starved`, true);
+  if (isHarvestSuccess(step.event)) harvestFlash();
   stepIndex += 1;
   if (stepIndex >= steps.length) {
     playbackActive = false;
@@ -308,11 +310,36 @@ function updateReplayActivityText(ev: AgentEvent): void {
   box.prepend(line);
   while (box.children.length > 8) box.lastChild?.remove();
 }
-function setSeasonFlash(season: string): void {
+let flashSeq = 0;
+function flash(msg: string, warn = false): void {
   const overlay = $("#world-overlay");
-  overlay.textContent = `${season.toUpperCase()} BEGINS`;
+  overlay.textContent = msg;
+  overlay.classList.toggle("warn", warn);
   overlay.classList.remove("hidden");
-  setTimeout(() => overlay.classList.add("hidden"), 1800);
+  const seq = ++flashSeq;
+  setTimeout(() => { if (seq === flashSeq) overlay.classList.add("hidden"); }, 2000);
+}
+function setSeasonFlash(season: string): void {
+  flash(`${season.toUpperCase()} BEGINS`);
+  focusWorld(); // camera leans in so the season change lands visibly
+}
+// Camera focus: a gentle zoom-settle on the world. Presentation only.
+function focusWorld(): void {
+  svg.classList.remove("world-focus");
+  void svg.getBoundingClientRect(); // restart the transition
+  svg.classList.add("world-focus");
+}
+// Starvation + harvest flashes are derived from authoritative recorded data
+// (population drop between snapshots; harvest action milestones).
+function isHarvestSuccess(ev: AgentEvent): boolean {
+  return (ev.type === "ACTION_SUCCEEDED" || ev.type === "VERIFICATION_SUCCEEDED") && (ev.data as any)?.tool === "harvest";
+}
+let lastHarvestDay = -1;
+function harvestFlash(): void {
+  const day = currentSnapshot?.day ?? -1;
+  if (day === lastHarvestDay) return; // one clear moment per day, not spam
+  lastHarvestDay = day;
+  flash(`HARVEST COMPLETE — ${currentSnapshot?.food ?? "?"} food`);
 }
 
 // Replay approval: in replay, the human decides which recorded outcome to

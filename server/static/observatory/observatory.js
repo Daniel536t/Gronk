@@ -318,20 +318,44 @@ function eventLabel(ev) {
 var EMPHATIC = {
   APPROVAL_REQUIRED: 0,
   // pause until human
-  SEASON_CHANGED: 0.4,
-  ACTION_FAILED: 0.7,
-  TURN_FAILED: 0.7
+  SEASON_CHANGED: 0.35,
+  // slow so a season (esp. winter) lands visibly
+  ACTION_FAILED: 0.6,
+  TURN_FAILED: 0.6,
+  APPROVAL_GRANTED: 0.55,
+  APPROVAL_REJECTED: 0.55
 };
+function consequential(ev) {
+  const tool = ev.data?.tool;
+  if (tool === "harvest" && (ev.type === "ACTION_SUCCEEDED" || ev.type === "VERIFICATION_SUCCEEDED" || ev.type === "ACTION_EXECUTING")) {
+    return 0.45;
+  }
+  return void 0;
+}
 function emphasisFor(ev) {
   if (ev.type === "APPROVAL_REQUIRED") return 0;
+  const conc = consequential(ev);
+  if (conc !== void 0) return conc;
   const mult = EMPHATIC[ev.type];
   return mult ?? 1;
 }
 function buildSteps(b) {
   const steps2 = [];
+  let lastPop = null;
   for (const event of b.events) {
     const frame = b.frames.find((f) => f.ts >= event.at) ?? b.frames[b.frames.length - 1] ?? null;
-    steps2.push({ event, emphasis: emphasisFor(event), snapshot: frame ? frame.snapshot : null });
+    const snapshot = frame ? frame.snapshot : null;
+    let emphasis = emphasisFor(event);
+    let starvation;
+    if (snapshot) {
+      const pop = Number(snapshot.population ?? 0);
+      if (lastPop !== null && pop < lastPop && pop >= 0) {
+        starvation = lastPop - pop;
+        emphasis = Math.min(emphasis, 0.3);
+      }
+      lastPop = pop;
+    }
+    steps2.push({ event, emphasis, snapshot, starvation });
   }
   return steps2;
 }
@@ -532,6 +556,8 @@ function playStep() {
   updateReplayActivityText(step.event);
   if (step.event.type === "APPROVAL_REQUIRED") onReplayApproval(step.event);
   if (step.event.type === "SEASON_CHANGED") setSeasonFlash(String(step.event.data?.season ?? ""));
+  if (step.starvation && step.starvation > 0) flash(`FOOD SHORTAGE \u2014 ${step.starvation} villager${step.starvation > 1 ? "s" : ""} starved`, true);
+  if (isHarvestSuccess(step.event)) harvestFlash();
   stepIndex += 1;
   if (stepIndex >= steps.length) {
     playbackActive = false;
@@ -576,11 +602,35 @@ function updateReplayActivityText(ev) {
   box.prepend(line);
   while (box.children.length > 8) box.lastChild?.remove();
 }
-function setSeasonFlash(season) {
+var flashSeq = 0;
+function flash(msg, warn = false) {
   const overlay = $("#world-overlay");
-  overlay.textContent = `${season.toUpperCase()} BEGINS`;
+  overlay.textContent = msg;
+  overlay.classList.toggle("warn", warn);
   overlay.classList.remove("hidden");
-  setTimeout(() => overlay.classList.add("hidden"), 1800);
+  const seq = ++flashSeq;
+  setTimeout(() => {
+    if (seq === flashSeq) overlay.classList.add("hidden");
+  }, 2e3);
+}
+function setSeasonFlash(season) {
+  flash(`${season.toUpperCase()} BEGINS`);
+  focusWorld();
+}
+function focusWorld() {
+  svg.classList.remove("world-focus");
+  void svg.getBoundingClientRect();
+  svg.classList.add("world-focus");
+}
+function isHarvestSuccess(ev) {
+  return (ev.type === "ACTION_SUCCEEDED" || ev.type === "VERIFICATION_SUCCEEDED") && ev.data?.tool === "harvest";
+}
+var lastHarvestDay = -1;
+function harvestFlash() {
+  const day = currentSnapshot?.day ?? -1;
+  if (day === lastHarvestDay) return;
+  lastHarvestDay = day;
+  flash(`HARVEST COMPLETE \u2014 ${currentSnapshot?.food ?? "?"} food`);
 }
 function onReplayApproval(ev) {
   const d = ev.data ?? {};
