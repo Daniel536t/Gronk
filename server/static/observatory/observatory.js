@@ -82,13 +82,14 @@ function treeSvg(x, z, stage, bounds, scale = 1) {
   if (stage === "removed") return "";
   const { sx, sy } = iso(x, z);
   bounds.add(sx - 6 * scale, sy - 17 * scale).add(sx + 6 * scale, sy);
-  return `<g transform="translate(${sx.toFixed(1)} ${sy.toFixed(1)}) scale(${scale})" class="tree-group"><ellipse cx="0" cy="0" rx="2.6" ry="1.0" fill="rgba(20,40,25,0.30)" class="shadow"/><rect x="-0.9" y="-5" width="1.8" height="5" rx="0.6" fill="#79603a" class="trunk"/><path d="M0 -18 L5 -11 L3 -11 L5.8 -5 L-5.8 -5 L-3 -11 L-5 -11 Z" fill="#3f8f3f"/><path d="M0 -18 L4.6 -12 L-4.6 -12 Z" fill="#55a14e" class="conifer"/></g>`;
+  return `<g transform="translate(${sx.toFixed(1)} ${sy.toFixed(1)}) scale(${scale})" class="tree-group"><g class="tree-sway" style="animation-delay:${((sx * 0.1 + sy * 0.05) % 1).toFixed(2)}s"><ellipse cx="0" cy="0" rx="2.6" ry="1.0" fill="rgba(20,40,25,0.30)" class="shadow"/><rect x="-0.9" y="-5" width="1.8" height="5" rx="0.6" fill="#79603a" class="trunk"/><path d="M0 -18 L5 -11 L3 -11 L5.8 -5 L-5.8 -5 L-3 -11 L-5 -11 Z" fill="#3f8f3f"/><path d="M0 -18 L4.6 -12 L-4.6 -12 Z" fill="#55a14e" class="conifer"/></g></g>`;
 }
-function buildingSvg(x, z, label, season, bounds) {
+function buildingSvg(x, z, label, season, bounds, hasSmoke = false) {
   const { sx, sy } = iso(x, z);
   const roof = season === "winter" ? "#eef2f7" : "#d9822e";
   bounds.add(sx - 7, sy - 8).add(sx + 7, sy + 3);
-  return `<g transform="translate(${sx.toFixed(1)} ${sy.toFixed(1)})"><ellipse cx="0" cy="1.5" rx="5" ry="1.8" fill="rgba(20,30,25,0.28)"/><rect x="-4.4" y="-4.6" width="8.8" height="5.6" rx="0.6" fill="#f3d9a8" stroke="#c8a05e" stroke-width="1"/><path d="M-5.1 -4.4 L0 -8.5 L5.1 -4.4 Z" fill="${roof}" stroke="#b96a1f" stroke-width="1"/><rect x="-0.9" y="-2.9" width="1.8" height="3.9" rx="0.5" fill="#7a4a21"/><rect x="1.6" y="-3.6" width="1.4" height="1.4" rx="0.3" fill="#cfe4ff"/>` + (label ? `<title>${esc(label)}</title>` : "") + `</g>`;
+  const smoke = hasSmoke ? `<g class="smoke" transform="translate(0 -5.5)"><g class="smoke-p1" style="animation-delay:0s"><circle r="1.1" fill="rgba(240,240,245,0.5)"/></g><g class="smoke-p2" style="animation-delay:1.3s"><circle r="1.25" fill="rgba(240,240,245,0.42)"/></g><g class="smoke-p3" style="animation-delay:2.6s"><circle r="1.4" fill="rgba(240,240,245,0.34)"/></g></g>` : "";
+  return `<g transform="translate(${sx.toFixed(1)} ${sy.toFixed(1)})" class="building"><ellipse cx="0" cy="1.5" rx="5" ry="1.8" fill="rgba(20,30,25,0.28)"/><rect x="-4.4" y="-4.6" width="8.8" height="5.6" rx="0.6" fill="#f3d9a8" stroke="#c8a05e" stroke-width="1" class="wall"/><path d="M-5.1 -4.4 L0 -8.5 L5.1 -4.4 Z" fill="${roof}" stroke="#b96a1f" stroke-width="1" class="roof"/><rect x="-0.9" y="-2.9" width="1.8" height="3.9" rx="0.5" fill="#7a4a21"/><rect x="1.6" y="-3.6" width="1.4" height="1.4" rx="0.3" fill="#cfe4ff"/>` + (label ? `<title>${esc(label)}</title>` : "") + smoke + `</g>`;
 }
 function plotSvg(cx, cy, stage, season) {
   const dark = season === "winter";
@@ -98,10 +99,14 @@ function plotSvg(cx, cy, stage, season) {
   if (stage > 0) {
     const h = 2.4 + stage * 3.2;
     inner = `<rect x="${(cx - 0.9).toFixed(1)}" y="${(cy - h).toFixed(1)}" width="1.8" height="${h.toFixed(1)}" rx="0.5" fill="${cropColor}" class="crop"/>`;
+    if (stage >= 0.8) {
+      inner += `<circle cx="${cx.toFixed(1)}" cy="${(cy - h - 0.4).toFixed(1)}" r="0.55" fill="#ffd98a" class="crop-gold" opacity="0.9"/>`;
+    }
   } else {
     inner = `<rect x="${(cx - 0.9).toFixed(1)}" y="${(cy - 0.6).toFixed(1)}" width="1.8" height="1" rx="0.5" fill="#6e4a24" class="furrow"/>`;
   }
-  return `<g><rect x="${(cx - 1.9).toFixed(1)}" y="${(cy - 1.3).toFixed(1)}" width="3.8" height="2.6" rx="0.8" fill="${soil}" class="plot"/>${inner}</g>`;
+  const swayDelay = (cx * 0.7 % 1).toFixed(2);
+  return `<g class="crop-clump" style="animation-delay:${swayDelay}s"><rect x="${(cx - 1.9).toFixed(1)}" y="${(cy - 1.3).toFixed(1)}" width="3.8" height="2.6" rx="0.8" fill="${soil}" class="plot"/>${inner}</g>`;
 }
 function farmSvg(x, z, crops, season, bounds) {
   const { sx, sy } = iso(x, z);
@@ -115,6 +120,24 @@ function bridgeSvg(x, z, season, bounds) {
   bounds.add(sx - 10, sy - 3).add(sx + 10, sy + 3);
   const angle = -30;
   return `<g transform="translate(${sx.toFixed(1)} ${sy.toFixed(1)}) rotate(${angle})" class="bridge-g"><rect x="-9" y="-0.6" width="18" height="1.6" rx="0.8" fill="${plank}" stroke="#7a5226" stroke-width="0.7" class="bridge"/><rect x="-8" y="-1.9" width="0.5" height="3.2" fill="#6b4a22" class="rail"/><rect x="7.5" y="-1.9" width="0.5" height="3.2" fill="#6b4a22" class="rail"/></g>`;
+}
+function villagerSvg(x, z, i, islandId, bounds) {
+  const { sx, sy } = iso(x, z);
+  bounds.add(sx - 2, sy - 4).add(sx + 2, sy + 0.5);
+  const tone = islandId === "frost" ? "#aebfe0" : islandId === "dusk" ? "#b9a0e0" : "#5fb8a8";
+  const head = islandId === "frost" ? "#e8ecf4" : islandId === "dusk" ? "#ece0f2" : "#f2d3c0";
+  const delay = (i * 1.7 % 3).toFixed(2);
+  return `<g transform="translate(${sx.toFixed(1)} ${sy.toFixed(1)})" class="villager" data-villager="${i}"><g class="villager-bob" style="animation-delay:${delay}s"><ellipse cx="0" cy="0" rx="1.5" ry="0.5" fill="rgba(20,30,25,0.3)"/><rect x="-0.8" y="-2.6" width="1.6" height="2.6" rx="0.8" fill="${tone}"/><circle cx="0" cy="-3.4" r="1.0" fill="${head}"/><circle cx="-0.3" cy="-3.4" r="0.14" fill="#3a3f4a"/><circle cx="0.35" cy="-3.4" r="0.14" fill="#3a3f4a"/></g></g>`;
+}
+function snowSvg(bounds, over) {
+  const flakes = [];
+  for (let i = 0; i < 34; i++) {
+    const xf = -140 + i * 47 % 400 - 40;
+    const yf = -90 + i * 31 % 340 - 60;
+    const r = 0.9 + i % 3 * 0.5;
+    flakes.push(`<circle cx="${xf}" cy="${yf}" r="${r}" fill="#f6faff" opacity="0.75" class="flake" style="animation-delay:${(i % 8 * 0.6).toFixed(2)}s"/>`);
+  }
+  return `<g class="snow-layer" opacity="0.9">${flakes.join("")}</g>`;
 }
 function islandSvg(id, season, health) {
   const { c, r } = ISLANDS[id];
@@ -171,11 +194,15 @@ function renderWorld(snapshot, removedTrees) {
       for (const t of CANONICAL_TREES[id]) parts.push(treeSvg(t.x, t.z, "alive", bounds, 0.85));
     }
   }
+  let villageAnchor = null;
   for (const b of snapshot.buildings ?? []) {
     const { sx, sy } = iso(b.position.x, b.position.z);
     if (b.type === "house") {
+      if (villageAnchor === null) {
+        villageAnchor = { x: b.position.x, z: b.position.z, island: b.islandId ?? "meadow" };
+      }
       entities.push({ kind: "building", id: b.id, sx, sy, label: b.id });
-      parts.push(buildingSvg(b.position.x, b.position.z, b.id, season, bounds));
+      parts.push(buildingSvg(b.position.x, b.position.z, b.id, season, bounds, true));
     } else if (b.type === "farm") {
       farms++;
       const stages = new Array(3).fill(0);
@@ -188,6 +215,14 @@ function renderWorld(snapshot, removedTrees) {
       parts.push(farmSvg(b.position.x, b.position.z, stages, season, bounds));
     }
   }
+  const pop = Math.max(0, Math.min(12, Number(snapshot.population ?? 0)));
+  const anchor = villageAnchor ?? { x: 22, z: 30, island: "meadow" };
+  for (let i = 0; i < pop; i++) {
+    const ang = i / Math.max(1, pop) * Math.PI * 2;
+    const rad = 4.2 + i % 3 * 1.4;
+    parts.push(villagerSvg(anchor.x + Math.cos(ang) * rad, anchor.z + Math.sin(ang) * rad * 0.7, i, anchor.island, bounds));
+  }
+  if (season === "winter") parts.push(snowSvg(bounds));
   const bridgeSpans = {
     "frost-meadow": { x: 40, z: 24 },
     "dusk-meadow": { x: 52, z: 34 }
@@ -214,7 +249,8 @@ function renderWorld(snapshot, removedTrees) {
     entities,
     trees,
     farms,
-    bridges
+    bridges,
+    villagers: pop
   };
 }
 function hudLine(s) {

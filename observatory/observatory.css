@@ -74,6 +74,37 @@ body {
 @keyframes ripple-drift { 0%,100% { transform: translateX(-6px); opacity: 0.35; } 50% { transform: translateX(8px); opacity: 0.7; } }
 @keyframes water-sway { 0%,100% { opacity: 0.85; } 50% { opacity: 1; } }
 
+/* ---- living world (Experience layer) ---- */
+.tree-group { }
+.tree-sway { display: inline-block; transform-box: fill-box; transform-origin: bottom center; animation: tree-sway 5s ease-in-out infinite; }
+@keyframes tree-sway { 0%,100% { transform: rotate(-1.4deg); } 50% { transform: rotate(1.4deg); } }
+
+.crop-clump { display: inline-block; transform-box: fill-box; transform-origin: bottom center; animation: crop-sway 4.2s ease-in-out infinite; }
+@keyframes crop-sway { 0%,100% { transform: rotate(-1deg); } 50% { transform: rotate(1deg); } }
+.crop-gold { animation: crop-gold 2.6s ease-in-out infinite; }
+@keyframes crop-gold { 0%,100% { opacity: 0.55; } 50% { opacity: 1; } }
+
+.smoke { pointer-events: none; }
+.smoke-p1, .smoke-p2, .smoke-p3 { display: inline-block; animation: smoke-rise 3.2s linear infinite; }
+.smoke-p2 { animation-delay: 1.1s !important; }
+.smoke-p3 { animation-delay: 2.2s !important; }
+@keyframes smoke-rise {
+  0%  { transform: translateY(0) scale(0.7); opacity: 0; }
+  22% { opacity: 0.75; }
+  100%{ transform: translateY(-9px) scale(1.6); opacity: 0; }
+}
+
+.villager-bob { display: inline-block; animation: villager-bob 2.2s ease-in-out infinite; }
+@keyframes villager-bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-1.1px); } }
+
+.snow-layer { pointer-events: none; }
+.flake { display: inline-block; animation: snow-fall 6s linear infinite; }
+@keyframes snow-fall {
+  0%  { transform: translateY(0) translateX(0); }
+  50% { transform: translateY(34px) translateX(12px); }
+  100%{ transform: translateY(70px) translateX(-6px); opacity: 0.2; }
+}
+
 /* ---- HUD ---- */
 .hud {
   position: absolute; top: 0; left: 0; right: 0; padding: 10px 14px;

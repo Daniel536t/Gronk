@@ -127,6 +127,62 @@ describe("projector / state mapping", () => {
     }
     expect(w.svg).toContain("house-001");
   });
+
+  // ---- living Experience layer: pure projection of authoritative state ----
+  it("projects one living villager per authoritative population (clamped ≤ 12)", () => {
+    expect(renderWorld(baseSnap({ population: 4 })).villagers).toBe(4);
+    expect(renderWorld(baseSnap({ population: 0 })).villagers).toBe(0);
+    expect(renderWorld(baseSnap({ population: 99 })).villagers).toBe(12); // clamped so the world isn't overcrowded
+    const big = renderWorld(baseSnap({ population: 20 }));
+    expect(big.villagers).toBe(12);
+    expect(renderWorld(baseSnap({ population: -3 })).villagers).toBe(0);
+    // every projected villager emits an animated bob group (living figure)
+    const w = renderWorld(baseSnap({ population: 4 }));
+    const bobCount = (w.svg.match(/class="villager-bob"/g) ?? []).length;
+    expect(bobCount).toBe(4);
+  });
+
+  it("villagers are placed on-canvas inside the computed viewBox", () => {
+    const w = renderWorld(baseSnap({ population: 4 }));
+    const m = w.viewBox.match(/^(-?[\d.]+) (-?[\d.]+) ([\d.]+) ([\d.]+)$/);
+    expect(m).not.toBeNull();
+    const [x, y, ww, hh] = [Number(m![1]), Number(m![2]), Number(m![3]), Number(m![4])];
+    // the village anchor (house at 20,30) must be within the frame
+    const hx = (20 - 30) * 2; // iso.sx
+    const hy = (20 + 30) * 1; // iso.sy
+    expect(hx).toBeGreaterThanOrEqual(x - 1);
+    expect(hx).toBeLessThanOrEqual(x + ww + 1);
+    expect(hy).toBeGreaterThanOrEqual(y - 1);
+    expect(hy).toBeLessThanOrEqual(y + hh + 1);
+  });
+
+  it("the house emits rising smoke (living village)", () => {
+    const w = renderWorld(baseSnap());
+    expect(w.svg).toContain('class="smoke"');
+    expect((w.svg.match(/class="smoke-p1"/g) ?? []).length).toBe(1);
+  });
+
+  it("mature crops get a golden harvest tip; young crops do not", () => {
+    const mature = baseSnap({ buildings: [{ id: "farm-1", type: "farm", position: { x: 25, y: 3, z: 35 }, health: 1, islandId: "meadow" }] });
+    mature.crops = [{ id: "c1", farmPlotId: "farm-1", cropType: "wheat", growthStage: 1.0 }];
+    expect(renderWorld(mature).svg).toContain('class="crop-gold"');
+
+    const young = baseSnap({ buildings: [{ id: "farm-1", type: "farm", position: { x: 25, y: 3, z: 35 }, health: 1, islandId: "meadow" }] });
+    young.crops = [{ id: "c2", farmPlotId: "farm-1", cropType: "wheat", growthStage: 0.4 }];
+    expect(renderWorld(young).svg).not.toContain('class="crop-gold"');
+  });
+
+  it("winter adds a falling snow layer driven by season", () => {
+    expect(renderWorld(baseSnap({ season: "winter" })).svg).toContain('class="snow-layer"');
+    expect(renderWorld(baseSnap({ season: "spring" })).svg).not.toContain('class="snow-layer"');
+  });
+
+  it("living elements carry phased animation hooks (no independent simulation)", () => {
+    const w = renderWorld(baseSnap({ population: 3 }));
+    expect(w.svg).toContain('class="tree-sway"');   // trees sway
+    expect(w.svg).toContain('animation-delay:');      // phased offsets
+    expect(w.svg).toContain('class="waterfx"');      // water ripple
+  });
 });
 
 describe("replay engine / event preservation", () => {
