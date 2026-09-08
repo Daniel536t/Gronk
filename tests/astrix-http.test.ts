@@ -102,11 +102,25 @@ describe("ASTrix HTTP API", () => {
     assert.equal(state.resources.wood, 30);
   });
 
-  it("allows ASTrix mutation tools on legacy /mcp without a bearer token", async () => {
-    // TrueForge connects here from the same host and sends no Authorization
-    // header; /mcp must be fully open for the steward to act on the world.
+  // R1: POST /mcp is no longer unconditionally open. With a token configured it
+  // requires the bearer; with no token it is loopback-only. These three tests
+  // pin the new policy (they previously asserted the open behaviour).
+  it("R1: ASTrix mutation tools on /mcp REQUIRE the bearer when a token is configured", async () => {
     const { base } = await startTestServer({ authToken: "sekret" });
-    await withClient(base, {}, async (client) => {
+    await assert.rejects(
+      () => withClient(base, {}, async (client) => {
+        await client.callTool({ name: "gather", arguments: { resource_type: "wood" } });
+      }),
+      /unauthorized/,
+    );
+    // The world was not mutated by the refused call.
+    const state = (await (await fetch(`${base}/astrix/state`)).json()) as any;
+    assert.equal(state.resources.wood, 30);
+  });
+
+  it("R1: ASTrix mutation tools on /mcp succeed WITH the bearer", async () => {
+    const { base } = await startTestServer({ authToken: "sekret" });
+    await withClient(base, { Authorization: "Bearer sekret" }, async (client) => {
       const result = await client.callTool({ name: "gather", arguments: { resource_type: "wood" } });
       const parsed = jsonOf(result);
       assert.equal(parsed.success, true);
@@ -114,19 +128,13 @@ describe("ASTrix HTTP API", () => {
     });
   });
 
-  it("keeps read-only ASTrix tools open on legacy /mcp without the token", async () => {
-    const { base } = await startTestServer({ authToken: "sekret" });
+  it("R1: /mcp stays usable on loopback with NO token (local dev + same-host TrueForge)", async () => {
+    const { base } = await startTestServer();
     await withClient(base, {}, async (client) => {
-      const result = await client.callTool({ name: "inspect_world", arguments: {} });
-      assert.ok(jsonOf(result).day >= 1);
-    });
-  });
-
-  it("leaves legacy game tools open on /mcp even when an ASTrix token is set", async () => {
-    const { base } = await startTestServer({ authToken: "sekret" });
-    await withClient(base, {}, async (client) => {
-      const result = await client.callTool({ name: "create_lobby", arguments: { mode: "multi" } });
-      const created = jsonOf(result);
+      const world = await client.callTool({ name: "inspect_world", arguments: {} });
+      assert.ok(jsonOf(world).day >= 1);
+      // Legacy game tools remain reachable on the same channel.
+      const created = jsonOf(await client.callTool({ name: "create_lobby", arguments: { mode: "multi" } }));
       assert.match(created.roomCode, /^[A-Z]{4}-\d{2}$/);
     });
   });
@@ -139,17 +147,20 @@ describe("ASTrix HTTP API", () => {
     expect(log.events).toEqual([]);
   });
 
-  it("start without a provider is rejected with 400", async () => {
+  it("start with NO external provider runs on the built-in local runtime (Core needs no TrueForge)", async () => {
     const { base } = await startTestServer();
     const res = await fetch(`${base}/astrix/agent/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ objective: "survive" }),
     });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
     const body = (await res.json()) as any;
-    expect(body.ok).toBe(false);
-    expect(body.error).toContain("no steward provider");
+    expect(body.ok).toBe(true);
+
+    // The loop reasons with the local provider — not a mock, not TrueForge.
+    const status = (await (await fetch(`${base}/astrix/agent/status`)).json()) as any;
+    expect(status.provider).toBe("local-astrix-steward");
   });
 
   it("agent start runs a bounded loop that executes safe actions and records events", async () => {

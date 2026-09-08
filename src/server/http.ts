@@ -15,15 +15,23 @@ import { extname, join, normalize } from "node:path";
 import { LobbyManager } from "./lobby";
 import type { McpHttpHandler } from "./mcpHttp";
 import type { AstrixService } from "../astrix/server";
-import { readAstrixBody } from "../astrix/server";
+import { readAstrixBody, authorizeWrite } from "../astrix/server";
 
-// NOTE ON AUTH: the legacy POST /mcp channel is deliberately left open to
-// TrueForge. TrueForge and this server run on the same host (localhost), so
-// network isolation is the security boundary for agent tool calls — TrueForge
-// does not send an Authorization header, and gating mutating tools here would
-// hang every steward turn. The public-facing mutation surface is the /astrix/*
-// routes (browser client -> server), which remain gated by ASTRIX_API_KEY in
-// src/astrix/server.ts.
+// AUTH POLICY (R1): the legacy POST /mcp channel exposes 22 tools, including the
+// ASTrix mutation set (gather/build/plant/harvest/clear_terrain/build_bridge) and
+// the legacy game tools. It is now gated by the SAME rule as the /astrix/* write
+// routes — `authorizeWrite` in src/astrix/server.ts:
+//   token configured -> require `Authorization: Bearer <ASTRIX_API_KEY>`
+//   no token         -> allow direct loopback only (proxied requests are remote)
+//
+// The historical rationale for leaving this open ("TrueForge is on the same host
+// and sends no Authorization header") still works: TrueForge connects over
+// loopback, which the policy permits when no token is set. What changed is that
+// ASTrix Core now reasons in-process by default (LocalStewardProvider), so the
+// server needs no inbound agent access at all — and a PUBLIC caller through the
+// Caddy proxy is refused because X-Forwarded-For marks it remote.
+//
+// GET /mcp (SSE) stays open: it carries no tool invocation.
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -128,8 +136,13 @@ export function createHttpServer(
     }
 
     // ---- POST /mcp (Streamable HTTP MCP — where TrueForge agents connect) --
-    // Fully open to TrueForge (same-host deployment; see note at top of file).
+    // R1: gated by the shared write policy (see the note at the top of this file).
     if (req.method === "POST" && url.pathname === "/mcp" && opts.mcp) {
+      const auth = authorizeWrite(req, opts.astrix?.authToken);
+      if (!auth.ok) {
+        sendJson(res, auth.status, { error: auth.error });
+        return;
+      }
       let body: unknown;
       try {
         body = await readBody(req);

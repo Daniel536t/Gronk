@@ -85,6 +85,12 @@ func _dispatch(command_name: String, params: Dictionary) -> Dictionary:
 func _can_afford(cost: Dictionary) -> bool:
     if not world_state:
         return false
+    # Before Core's first snapshot the client knows nothing about resources.
+    # Do NOT guess: let the request through and let the authoritative
+    # CommandBus decide (it is the only affordability authority anyway). This
+    # local check exists purely to avoid obviously-doomed round trips.
+    if not world_state.is_ready():
+        return true
     for resource_id in cost:
         if int(world_state.resources.get(resource_id, 0)) < int(cost[resource_id]):
             return false

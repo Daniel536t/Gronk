@@ -1,6 +1,34 @@
 extends Node
 ## Thin Godot client for the existing legacy API plus the parallel ASTrix API.
 ## ASTrix world mutations are server-authoritative and never committed locally.
+##
+## R2 — CREDENTIALS AND THE PUBLIC-CLIENT LIMITATION
+##
+## The web export (index.pck) is publicly downloadable. ANY secret compiled into
+## it is extractable by anyone, so baking ASTRIX_API_KEY into the client would
+## create the ILLUSION of authentication while handing the key to every visitor.
+## We therefore do NOT ship a credential. Instead:
+##
+##   READ-ONLY ACCESS (no credential needed)
+##     GET /astrix/state, /astrix/agent/status — the world and the agent are
+##     public observability surfaces. Every visitor can watch ASTrix.
+##
+##   HUMAN APPROVAL AUTHORITY (credential required)
+##     POST /astrix/approval/respond, /astrix/command, /astrix/agent/{start,stop}
+##     The operator supplies the key AT RUNTIME, in their own browser session:
+##       web    -> localStorage["astrix_api_key"]  (or #astrix_key=... in the URL,
+##                 which is consumed into localStorage and stripped from the bar)
+##       native -> OS environment variable ASTRIX_API_KEY
+##     Nothing is committed and nothing is embedded in the export.
+##
+## When no credential is present the client runs in OBSERVER mode: reads work,
+## writes are refused locally with an explicit reason instead of firing a request
+## that the server would 401. `has_write_authority()` lets the UI disable the
+## approval buttons rather than presenting a control that cannot work.
+##
+## The server-side gate (src/astrix/server.ts authorizeWrite) remains the actual
+## authority — this class never decides whether an action is permitted, it only
+## avoids lying to the human about what they can do.
 
 signal state_received(state: Dictionary)
 signal request_failed(message: String)
@@ -14,7 +42,11 @@ signal astrix_agent_status_received(status: Dictionary)
 
 @export var api_origin: String = ""  # empty -> auto (web: same origin as the page; native: localhost)
 @export var poll_interval_seconds: float = 0.5
-@export var astrix_api_key: String = ""
+## Resolved at runtime from the operator's own session — NEVER committed and
+## never baked into the export. See the R2 note at the top of this file.
+var astrix_api_key: String = ""
+
+signal write_authority_changed(has_authority: bool)
 
 var session: Dictionary = {}
 var latest_state: Dictionary = {}
@@ -34,11 +66,59 @@ func _ready() -> void:
             api_origin = str(JavaScriptBridge.eval("window.location.origin", true))
         else:
             api_origin = "http://127.0.0.1:8787"
+    _resolve_credential()
     _poll_timer = Timer.new()
     _poll_timer.wait_time = poll_interval_seconds
     _poll_timer.timeout.connect(_poll_state)
     add_child(_poll_timer)
     _start_astrix_polling()
+
+## R2: resolve the operator credential from the RUNTIME session only.
+##   web    -> localStorage["astrix_api_key"], seedable once via #astrix_key=...
+##   native -> environment variable ASTRIX_API_KEY
+## Absent credential is a supported state (observer mode), not an error.
+func _resolve_credential() -> void:
+    var key := ""
+    if OS.has_feature("web"):
+        # A one-shot URL fragment lets an operator hand themselves the key on a
+        # tablet without a devtools console; it is moved into localStorage and
+        # removed from the address bar so it is not left in history/screenshots.
+        var seeded: Variant = JavaScriptBridge.eval("""
+            (function () {
+              try {
+                var m = (window.location.hash || '').match(/astrix_key=([^&]+)/);
+                if (m) {
+                  window.localStorage.setItem('astrix_api_key', decodeURIComponent(m[1]));
+                  history.replaceState(null, '', window.location.pathname + window.location.search);
+                }
+                return window.localStorage.getItem('astrix_api_key') || '';
+              } catch (e) { return ''; }
+            })()
+        """, true)
+        key = str(seeded) if seeded != null else ""
+    else:
+        key = OS.get_environment("ASTRIX_API_KEY")
+    astrix_api_key = key.strip_edges()
+    if astrix_api_key.is_empty():
+        print("[astrix] observer mode: no credential — reads only, approval controls disabled")
+    else:
+        print("[astrix] operator mode: credential present — approval controls enabled")
+    write_authority_changed.emit(has_write_authority())
+
+## True when this client holds a credential for consequential operations. The
+## SERVER is still the authority; this only drives UI affordances so a human is
+## never shown an approval button that cannot work.
+func has_write_authority() -> bool:
+    return not astrix_api_key.is_empty()
+
+## Set the credential at runtime (e.g. from an operator settings field). Web
+## builds persist it to localStorage for the session.
+func set_credential(key: String) -> void:
+    astrix_api_key = key.strip_edges()
+    if OS.has_feature("web"):
+        var escaped := astrix_api_key.replace("\\", "\\\\").replace("'", "\\'")
+        JavaScriptBridge.eval("try { window.localStorage.setItem('astrix_api_key', '%s'); } catch (e) {}" % escaped, true)
+    write_authority_changed.emit(has_write_authority())
 
 func create_room(mode: String = "solo", player_name: String = "Wizard") -> void:
     _post_json("/api/create", {"mode": mode, "name": player_name}, func(data: Dictionary) -> void:
@@ -150,10 +230,24 @@ func _has_session() -> bool:
 func _parse_game_state(raw: Dictionary) -> Dictionary:
     return {"matchId": str(raw.get("matchId", "")), "status": str(raw.get("status", "lobby")), "tick": int(raw.get("tick", 0)), "elapsed": float(raw.get("elapsed", 0.0)), "matchDuration": float(raw.get("matchDuration", 300.0)), "winnerTeam": raw.get("winnerTeam", null), "winReason": raw.get("winReason", null), "suddenDeath": bool(raw.get("suddenDeath", false)), "enraged": bool(raw.get("enraged", false)), "riddleSet": int(raw.get("riddleSet", 0)), "visibleRiddleLines": _array_of_strings(raw.get("visibleRiddleLines", [])), "players": _array_of_dictionaries(raw.get("players", [])), "furniture": _array_of_dictionaries(raw.get("furniture", [])), "gronk": _dictionary(raw.get("gronk", {})), "pedestals": _array_of_dictionaries(raw.get("pedestals", [])), "closetSpots": _array_of_dictionaries(raw.get("closetSpots", [])), "groundTreasure": raw.get("groundTreasure", null), "treasurePings": _array_of_dictionaries(raw.get("treasurePings", [])), "pendingBank": raw.get("pendingBank", null), "bankCooldownUntilTick": raw.get("bankCooldownUntilTick", [0, 0]), "latestNoise": raw.get("latestNoise", null)}
 
+## R2 FIX: the previous implementation interpolated the key into a header string
+## that contained no format placeholder, so the credential was never transmitted.
+## The bug was invisible only because the server's auth gate failed open.
+##
+## Consequential requests now refuse LOCALLY when no credential is held, rather
+## than firing a request the server will 401. The server gate remains the real
+## authority; this is an honesty measure, not an authorization decision.
 func _post_json_astrix(path: String, body: Dictionary, on_success: Callable) -> void:
-    var headers: Array = ["Content-Type: application/json"]
-    if not astrix_api_key.is_empty():
-        headers.append("Authorization: Bearer %s" % astrix_api_key)
+    if not has_write_authority():
+        var reason := "observer mode: no ASTrix credential — consequential actions require an operator key"
+        push_warning("[astrix] refused %s (%s)" % [path, reason])
+        request_failed.emit(reason)
+        astrix_command_failed.emit(reason)
+        return
+    var headers: Array = [
+        "Content-Type: application/json",
+        "Authorization: Bearer %s" % astrix_api_key,
+    ]
     _post_json(path, body, on_success, headers)
 
 func _post_json(path: String, body: Dictionary, on_success: Callable, headers_override: Array = []) -> void:

@@ -21,6 +21,7 @@
     "provision:astrix": "tsx scripts/provision-astrix-agents.ts",
     "astrix:demo": "tsx scripts/astrix-demo.ts",
     "astrix:eval": "tsx scripts/astrix-demo.ts",
+    "astrix:canonical": "tsx scripts/astrix-canonical-run.ts",
     "observatory:build": "tsx scripts/build-observatory.ts",
     "observatory:replay": "tsx scripts/build-observatory-replay.ts",
     "observatory": "npm run observatory:replay && npm run observatory:build",

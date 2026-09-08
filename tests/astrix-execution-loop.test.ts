@@ -384,3 +384,68 @@ describe("ASTrix steward execution loop", () => {
     expect(loop.state).toBe("STOPPED");
   });
 });
+
+describe("approval observability (P1): the human can see what they are authorizing", () => {
+  it("status() exposes command, islands, cost, risk, permanence, topology, action and turn", async () => {
+    const { state, loop } = setup({
+      decisions: [
+        {
+          decision: "connect frost",
+          toolCalls: [
+            // The agent also tries to authorize itself -- the id must never reach
+            // a human as if it were the server's approval.
+            { tool: "build_bridge", args: { island_a: "meadow", island_b: "frost", approval_id: "self-granted" } },
+          ],
+        },
+      ],
+    });
+    loop.start();
+    await waitFor(() => loop.state === "AWAITING_APPROVAL");
+
+    const status = loop.status();
+    const pending = status.pendingApproval as Record<string, unknown>;
+    expect(pending).toBeTruthy();
+
+    // Every field the approval view must show, straight from the loop.
+    expect(pending.approvalId).toBe(state.pendingApprovals[0].id);
+    expect(pending.command).toBe("BUILD_BRIDGE");
+    expect(pending.tool).toBe("build_bridge");
+    expect(pending.sourceIsland).toBe("meadow");
+    expect(pending.destinationIsland).toBe("frost");
+    expect(pending.cost).toEqual({ wood: 3, stone: 1 });
+    expect(pending.riskLevel).toBe("high");
+    expect(pending.irreversible).toBe(true);
+    expect(pending.permanent).toBe(true);
+    expect(pending.resultingTopology).toBe("meadow <-> frost");
+    expect(pending.position).toEqual({ x: 32.5, y: 4, z: 16 });
+    expect(pending.actionId).toBe(loop.actions[0].id);
+    expect(pending.turn).toBe(1);
+    expect(pending.agent).toBe("steward");
+    expect(String(pending.reason)).toContain("connectivity");
+
+    // The gate is unchanged: the approval id is the SERVER's, not the agent's.
+    expect(pending.approvalId).not.toBe("self-granted");
+    expect(JSON.stringify(pending)).not.toContain("self-granted");
+    for (const key of ["approval_id", "approvalId"]) {
+      expect(Object.keys(pending.args as Record<string, unknown>)).not.toContain(key);
+    }
+    expect(pending.args).toEqual({ island_a: "meadow", island_b: "frost" });
+  });
+
+  it("action records carry their sanitized args, so an action is never just a bare tool name", async () => {
+    const { loop } = setup({
+      decisions: [
+        { decision: "gather", toolCalls: [{ tool: "gather", args: { resource_type: "wood", approvalId: "nope" } }] },
+      ],
+    });
+    loop.start();
+    await waitTerminal(loop);
+
+    const actions = loop.status().actions as Array<Record<string, unknown>>;
+    const gather = actions.find((action) => action.tool === "gather")!;
+    // The defect this fixes: status() reported `tool: gather` with no args at all,
+    // so the poller printed "gather null" and no reader could tell what happened.
+    expect(gather.args).toEqual({ resource_type: "wood" });
+    expect(JSON.stringify(actions)).not.toContain("nope");
+  });
+});

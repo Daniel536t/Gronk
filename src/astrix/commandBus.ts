@@ -1,4 +1,4 @@
-import { CROP_TYPES, FARM_CROP_CAPACITY } from "./state";
+import { bridgeAnchorFor, CROP_TYPES, FARM_CROP_CAPACITY } from "./state";
 import type { AstrixApproval, AstrixPosition, AstrixResourceNode, AstrixWorldState, BiomeId, ResourceType } from "./state";
 
 export type AstrixCommandName =
@@ -101,11 +101,32 @@ export class AstrixGameCommandBus {
       if (!approvalMatchesCommand(approval, command)) return { success: false, command: command.command, irreversible, error: "approval does not match command" };
     }
     if (irreversible && command.approvalId === undefined) {
+      // The impact block is what a HUMAN reads before authorizing an
+      // irreversible mutation, and what resolveApproval later replays. The
+      // match-critical keys (position/radius/islandA/islandB) are recorded
+      // EXACTLY as the command gave them -- a derived position is reported
+      // separately as `bridgePosition` so approval matching keeps its meaning.
+      const bridge = command.command === "BUILD_BRIDGE" && command.islandA && command.islandB;
       const approval: AstrixApproval = {
         id: this.state.nextEntityId("approval"),
         command: command.command,
         reason: command.command === "CLEAR_TERRAIN" ? "Terrain will be permanently cleared" : "Bridge construction changes island connectivity",
-        impact: { position: command.position, radius: command.radius, islandA: command.islandA, islandB: command.islandB },
+        impact: {
+          position: command.position,
+          radius: command.radius,
+          islandA: command.islandA,
+          islandB: command.islandB,
+          cost: { ...(command.command === "BUILD_BRIDGE" ? COSTS.bridge_segment : {}) },
+          irreversible: true,
+          permanent: true,
+          ...(bridge
+            ? {
+                bridgePosition: command.position ?? bridgeAnchorFor(command.islandA!, command.islandB!),
+                resultingTopology: `${command.islandA} <-> ${command.islandB}`,
+                unlocks: `building and gathering on ${command.islandB}`,
+              }
+            : {}),
+        },
         createdAt: Date.now(),
       };
       this.state.pendingApprovals.push(approval);
@@ -243,10 +264,15 @@ export class AstrixGameCommandBus {
       if (this.state.resources[resource as ResourceType] < amount) return { success: false, command: command.command, irreversible, error: `insufficient ${resource}` };
     }
     for (const [resource, amount] of Object.entries(cost)) this.state.resources[resource as ResourceType] -= amount;
-    const building = { id: this.state.nextEntityId("bridge"), type: "bridge_segment" as const, position: command.position ?? { x: 0, y: 0, z: 0 }, health: 1, islandId: command.islandA! };
+    // A bridge is named by its island PAIR, so its position is DERIVED from the
+    // authoritative anchors of those islands rather than defaulted to the world
+    // origin. { 0, 0, 0 } put a real structure nowhere near the water it was
+    // supposed to cross, so Core's own geometry contradicted its own topology.
+    const position = command.position ?? bridgeAnchorFor(command.islandA!, command.islandB!);
+    const building = { id: this.state.nextEntityId("bridge"), type: "bridge_segment" as const, position, health: 1, islandId: command.islandA! };
     this.state.buildings.push(building);
     this.state.bridges.push({ id: building.id, islandA: command.islandA!, islandB: command.islandB! });
-    return { success: true, command: command.command, irreversible, bridgeId: building.id, costDeducted: cost, length: 8, permanent: true };
+    return { success: true, command: command.command, irreversible, bridgeId: building.id, position: { ...position }, costDeducted: cost, length: 8, permanent: true };
   }
 
   private islandReachableFromMeadow(island: BiomeId): boolean {

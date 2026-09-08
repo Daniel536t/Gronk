@@ -3,7 +3,10 @@
 // independent simulation) and the replay engine preserves the recorded event
 // timeline exactly. These run in jsdom-free node because the projector and
 // replay modules are DOM-independent (string assembly only).
+import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
+import { AstrixWorldState, bridgeAnchorFor, ISLAND_ANCHORS } from "../src/astrix/state";
+import { AstrixGameCommandBus } from "../src/astrix/commandBus";
 import { renderWorld, hudLine } from "../observatory/src/projector";
 import { buildSteps, eventLabel, emphasisFor } from "../observatory/src/replay";
 import type { DerivedReplayBundle } from "../observatory/src/replay";
@@ -22,7 +25,8 @@ function baseSnap(over: Partial<WorldSnapshot> = {}): WorldSnapshot {
     harvestableFood: 0,
     growingFood: 0,
     projectedFoodAtWinter: -56,
-    foodPressureLevel: "ok",
+    daysUntilNextHarvest: 8,
+    foodPressureLevel: "high",
     resources: { wood: 30, stone: 15, food: 40, water: 0, crystal: 5 },
     biomeHealth: { meadow: 0.8, frost: 0.6, dusk: 0.4 },
     crops: [],
@@ -288,5 +292,52 @@ describe("replay engine / event preservation", () => {
     ];
     const steps = buildSteps(b);
     expect(steps.every((s) => !s.starvation)).toBe(true);
+  });
+});
+describe("Godot Observatory mirrors Core topology (P0 bridge rendering)", () => {
+  const world3d = readFileSync("godot/scripts/World3D.gd", "utf8");
+
+  /** The `core_center` the Godot ISLANDS table uses to place an island's Core space. */
+  function godotCoreCenter(island: string): { x: number; z: number } {
+    const block = world3d.slice(world3d.indexOf(`"${island}": {`));
+    const match = /"core_center":\s*Vector2\(([-\d.]+),\s*([-\d.]+)\)/.exec(block);
+    expect(match, `no core_center for ${island} in World3D.gd`).not.toBeNull();
+    return { x: Number(match![1]), z: Number(match![2]) };
+  }
+
+  it("Core island anchors ARE the coordinates Godot mirrors (one source of truth)", () => {
+    // Core owns the numbers; the Observatory maps them. If either side is edited
+    // alone, the world and the simulation stop telling the same story -- so this
+    // test fails rather than letting the drift ship.
+    for (const island of ["meadow", "frost", "dusk"] as const) {
+      const godot = godotCoreCenter(island);
+      expect({ x: ISLAND_ANCHORS[island].x, z: ISLAND_ANCHORS[island].z }).toEqual(godot);
+    }
+  });
+
+  it("the bridge visual is driven by authoritative topology, not by a client guess", () => {
+    // _materialize_bridges spans the two island RIMS derived from bridges[]...
+    expect(world3d).toMatch(/func _materialize_bridges/);
+    expect(world3d).toMatch(/for bridge in world_state\.bridges/);
+    expect(world3d).toMatch(/func _bridge_endpoints[\s\S]*?_rim_point\(a, b\), _rim_point\(b, a\)/);
+    // ...and the bridge BUILDING record is skipped, so it can never also render
+    // as a house through _build_structure's fallback branch.
+    const buildings = world3d.slice(world3d.indexOf("func _materialize_buildings"), world3d.indexOf("func _clear_footprint"));
+    expect(buildings).toMatch(/if type_name == "bridge_segment":\s*\n\s*continue/);
+  });
+
+  it("a Core bridge produces exactly one renderable segment plus one topology edge", () => {
+    const state = new AstrixWorldState();
+    const bus = new AstrixGameCommandBus(state);
+    const request = bus.execute({ command: "BUILD_BRIDGE", islandA: "meadow", islandB: "frost" });
+    bus.resolveApproval(request.pendingApproval!.id, "approve");
+    const snap = state.snapshot();
+
+    expect(snap.bridges).toHaveLength(1);
+    const segments = snap.buildings.filter((building) => building.type === "bridge_segment");
+    expect(segments).toHaveLength(1);
+    expect(segments[0].position).toEqual(bridgeAnchorFor("meadow", "frost"));
+    // No phantom structure: the bridge did not add a house/farm/storage anywhere.
+    expect(snap.buildings.filter((b) => b.type === "house")).toHaveLength(1); // the genesis house only
   });
 });

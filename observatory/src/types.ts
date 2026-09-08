@@ -63,6 +63,8 @@ export interface WorldSnapshot {
   daysOfFoodRemaining: number;
   harvestableFood: number;
   growingFood: number;
+  /** Days until the soonest possible harvest; null when nothing can mature (Winter). */
+  daysUntilNextHarvest?: number | null;
   projectedFoodAtWinter: number;
   foodPressureLevel: "critical" | "high" | "ok";
   resources: Record<string, number>;

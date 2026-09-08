@@ -22,7 +22,7 @@
 import type { AstrixGameCommandBus, AstrixCommandResult } from "./commandBus";
 import { AstrixEventLog, type AstrixAgentEventType } from "./events";
 import { ASTRIX_TOOL_NAMES, type AstrixToolRegistry } from "./mcpTools";
-import type { AstrixPosition, AstrixWorldState } from "./state";
+import type { AstrixApproval, AstrixPosition, AstrixWorldState } from "./state";
 
 export type LoopState =
   | "IDLE"
@@ -138,7 +138,7 @@ export class AstrixStewardLoop {
   private _turn = 0;
   private _objective?: string;
   private _actions: AstrixActionRecord[] = [];
-  private _pendingApproval: { approvalId: string; action: AstrixActionRecord } | null = null;
+  private _pendingApproval: PendingApproval | null = null;
   private _stopped = false;
   private _startedAt: number | null = null;
   private _lastOutcome?: string;
@@ -173,7 +173,7 @@ export class AstrixStewardLoop {
     return this._actions;
   }
 
-  get pendingApproval(): { approvalId: string; action: AstrixActionRecord } | null {
+  get pendingApproval(): PendingApproval | null {
     return this._pendingApproval;
   }
 
@@ -263,10 +263,7 @@ export class AstrixStewardLoop {
   /** Structured status for GET /astrix/agent/status. */
   status(): Record<string, unknown> {
     const pending = this._pendingApproval
-      ? {
-          approvalId: this._pendingApproval.approvalId,
-          action: summarizeAction(this._pendingApproval.action),
-        }
+      ? summarizePendingApproval(this._pendingApproval)
       : null;
     return {
       state: this._state,
@@ -305,6 +302,7 @@ export class AstrixStewardLoop {
           daysOfFoodRemaining: snapshot.daysOfFoodRemaining,
           harvestableFood: snapshot.harvestableFood,
           growingFood: snapshot.growingFood,
+          daysUntilNextHarvest: snapshot.daysUntilNextHarvest,
           projectedFoodAtWinter: snapshot.projectedFoodAtWinter,
           foodPressureLevel: snapshot.foodPressureLevel,
           resources: snapshot.resources,
@@ -597,7 +595,9 @@ export class AstrixStewardLoop {
     record.approvalState = "pending";
     record.approvalId = pending.id;
     record.executionState = "AWAITING_APPROVAL";
-    this._pendingApproval = { approvalId: pending.id, action: record };
+    // Keep the bus's own approval record: status() renders the human-facing
+    // proposal from it, so the approver reads the SAME data the bus will replay.
+    this._pendingApproval = { approvalId: pending.id, action: record, approval: pending as unknown as AstrixApproval };
     this._state = "AWAITING_APPROVAL";
     this.emit("APPROVAL_REQUIRED", {
       actionId: record.id,
@@ -737,12 +737,70 @@ function sanitizeArgs(args: Record<string, unknown>): Record<string, unknown> {
   return out;
 }
 
+/** What the loop is blocked on: the action, plus the bus's approval record. */
+export interface PendingApproval {
+  approvalId: string;
+  action: AstrixActionRecord;
+  /** The command bus's own approval record (null only for legacy callers). */
+  approval: AstrixApproval | null;
+}
+
+/**
+ * Everything a human needs in order to authorize an irreversible mutation,
+ * flattened so no reader has to dig through nested impact blocks: what the
+ * command is, which islands it joins, what it costs, whether it can be undone,
+ * what topology results, and which action/turn is blocked on the answer.
+ *
+ * The `approvalId` here is the SERVER's id, surfaced for the human to quote
+ * back. It is never sourced from agent args -- sanitizeArgs strips
+ * approval_id/approvalId before they are shown or replayed.
+ */
+function summarizePendingApproval(pending: PendingApproval): Record<string, unknown> {
+  const action = pending.action;
+  const impact = pending.approval?.impact ?? {};
+  const args = sanitizeArgs(action.args);
+  const pick = (...keys: string[]): unknown => {
+    for (const key of keys) {
+      if (impact[key] !== undefined) return impact[key];
+      if (args[key] !== undefined) return args[key];
+    }
+    return null;
+  };
+  return {
+    approvalId: pending.approvalId,
+    actionId: action.id,
+    turn: action.turn,
+    agent: action.agent,
+    tool: action.tool,
+    command: pending.approval?.command ?? null,
+    reason: pending.approval?.reason ?? null,
+    riskLevel: action.riskLevel,
+    approvalRequired: action.approvalRequired,
+    sourceIsland: pick("islandA", "island_a", "from"),
+    destinationIsland: pick("islandB", "island_b", "to"),
+    position: pick("bridgePosition", "position"),
+    cost: impact.cost ?? null,
+    irreversible: impact.irreversible ?? true,
+    permanent: impact.permanent ?? true,
+    resultingTopology: impact.resultingTopology ?? null,
+    unlocks: impact.unlocks ?? null,
+    impact,
+    args,
+    requestedAt: pending.approval?.createdAt ?? action.createdAt,
+    action: summarizeAction(action),
+  };
+}
+
 function summarizeAction(action: AstrixActionRecord): Record<string, unknown> {
   return {
     id: action.id,
     turn: action.turn,
     agent: action.agent,
     tool: action.tool,
+    // The args are WHY an action exists; without them a build_bridge record
+    // reads as "build_bridge null". Sanitized so an agent-supplied approval id
+    // can never travel to a human as if it were the server's authorization.
+    args: sanitizeArgs(action.args),
     riskLevel: action.riskLevel,
     approvalRequired: action.approvalRequired,
     approvalId: action.approvalId ?? null,

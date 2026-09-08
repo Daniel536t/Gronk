@@ -1,1288 +1,1646 @@
 extends Node3D
-## ASTrix playable world. The world is procedural and modular so authored voxel
-## assets can replace individual categories later. Terrain is assembled to a
-## consistent "surface" height per biome so ground props, paths and bridges sit
-## flush instead of floating; playable objects get simple StaticBody3D collision.
+## ASTrix world renderer — the AI Steward's visible laboratory.
+##
+## AUTHORITY: none. Every entity that represents simulation state (buildings,
+## crops, bridges, villagers, season, time of day) is materialized from Core's
+## authoritative snapshot arriving via GameClient -> _on_astrix_state_received.
+## This script never invents world state and never decides anything. Terrain,
+## vegetation and settlement dressing are static set decoration.
+##
+## ART DIRECTION (see AstrixPalette): saturated low-poly settlement diorama.
+## Green land / terracotta roofs / ocean-blue water triad, cream + grey
+## neutrals, flat Lambert materials, one warm key light with real shadows.
+##
+## COORDINATE MAPPING: Core works in an abstract coordinate space (farms at
+## meadow x10-22, frost x44-56, dusk x72-84). The renderer places islands where
+## they compose well and maps authoritative positions onto them through
+## `_map_core_pos`, preserving relative layout while guaranteeing that an
+## authoritative farm always lands ON its own island. Composition is a
+## presentation decision; the simulation's coordinates stay untouched.
 
-const WORLD_SIZE := Vector2(100.0, 60.0)
 
-# Biome definitions. `top` is the grass-slab center height; the walkable surface
-# is always `top + 0.3` (half-thickness 0.5 of the 1.0 GrassTop slab).
-# Reference-driven palette: the world is a pale parchment-lavender miniature
-# (video pale intro ~#c0c0a0) with warm orange/tan built accents and a violet
-# signature (water + dusk). Biomes stay distinct but share the same world ramp.
+# ---------------------------------------------------------------------------
+# WORLD LAYOUT
+#
+# Islands are deliberately packed so ONE camera frame can contain land, shore,
+# water, a bridge and legible people. `core_center` is the centroid of the Core
+# coordinate region that island owns; `top` is the walkable grass surface.
+# ---------------------------------------------------------------------------
+const WATER_LEVEL := 0.0
+
+## Island layout + the mapping from Core's abstract coordinates.
+##
+## `core_center` is the centre of the Core region this island owns, `core_scale`
+## is world units per Core unit, and `core_flip` mirrors an axis. The meadow
+## flips Z on purpose: Core clusters its farmland at LOW z and its houses at HIGH
+## z, and the farm belt is the story this demo has to show, so flipping puts the
+## fields in the camera-facing foreground and the houses behind them.
 const ISLANDS := {
-    "meadow": {"center": Vector3(22.0, 0.0, 30.0), "radius": Vector2(19.0, 17.0), "top": 3.0, "color": Color("c8bfa6"), "accent": Color("d8a8c8")},
-    "frost": {"center": Vector3(50.0, 0.0, 14.0), "radius": Vector2(18.0, 12.0), "top": 4.0, "color": Color("c2c8d4"), "accent": Color("b8c4e8")},
-    "dusk": {"center": Vector3(76.0, 0.0, 39.0), "radius": Vector2(19.0, 16.0), "top": 2.5, "color": Color("c9ad92"), "accent": Color("a979df")},
+    "meadow": {
+        "center": Vector3(0.0, 0.0, 0.0), "radius": Vector2(14.5, 13.0), "top": 3.0,
+        # flip BOTH axes: this puts Core's farmland cluster in the screen-bottom
+        # foreground (the food story, unobstructed by the HUD) and Core's houses
+        # up-screen behind them.
+        "core_center": Vector2(17.0, 20.0), "core_scale": Vector2(1.3, 0.55),
+        "core_flip": Vector2(-1.0, -1.0),
+        "grass": "grass", "rock": AstrixPalette.ROCK, "beach": true,
+    },
+    "frost": {
+        # Far enough out for a REAL bridge span: centre distance 29.5 minus the
+        # two rim radii leaves an ~8-unit water gap. At the previous 21,-9 the
+        # gap was 1.8 units and the bridge rendered as a stub jetty.
+        "center": Vector3(26.0, 0.0, -14.0), "radius": Vector2(8.0, 7.0), "top": 4.2,
+        "core_center": Vector2(48.0, 12.0), "core_scale": Vector2(0.8, 0.8),
+        "core_flip": Vector2(-1.0, -1.0),
+        "grass": "frost", "rock": AstrixPalette.FROST_ROCK, "beach": false,
+    },
+    "dusk": {
+        # Third island. Placed so ARCHIPELAGO framing contains all three without
+        # wasted ocean, and deliberately OUTSIDE the observatory frame so it can
+        # never appear as a cropped sliver in the settlement shot.
+        "center": Vector3(-16.0, 0.0, -30.0), "radius": Vector2(9.0, 8.5), "top": 2.4,
+        "core_center": Vector2(76.0, 32.0), "core_scale": Vector2(1.0, 1.0),
+        "core_flip": Vector2(-1.0, -1.0),
+        "grass": "dusk", "rock": AstrixPalette.DUSK_ROCK, "beach": true,
+    },
 }
 
-# Walkable ground surfaces (grass-top top face per biome).
-const MEADOW_SURFACE := 3.3
-const FROST_SURFACE := 4.3
-const DUSK_SURFACE := 2.8
+const MEADOW_SURFACE := 3.0
+const FROST_SURFACE := 4.2
+const DUSK_SURFACE := 2.4
 
-# Isometric gameplay camera. A deliberate lower pitch (~24deg from horizontal)
-# reveals object sides (tree trunks, cliff faces, bridge elevation, hut walls) and
-# keeps the horizon/sky out of frame, so the world reads as a 2.5D miniature
-# instead of a top-down bird's-eye view. Pulled in closer than the map so the
-# starting clearing (not the whole 100x60 world) is the composition.
-const CAMERA_OFFSET := Vector3(11.0, 12.2, 11.0)
-const CAMERA_LOOK_HEIGHT := 0.9
-# Look slightly ahead along the southern path so the player stays prominent
-# while the shoreline, bridge and magic islet remain in frame.
-const CAMERA_LOOK_AHEAD := 4.0
-const CAMERA_SMOOTH := 6.0
+## Full world extent including water margin — drives seabed size and camera fit.
+const WORLD_MIN := Vector2(-40.0, -50.0)
+const WORLD_MAX := Vector2(46.0, 30.0)
+
+# ---------------------------------------------------------------------------
+# CAMERA
+#
+# OBSERVATORY (default) frames the settlement, the channel and the bridge to
+# Frost: this is the composition where water, two islands, farms and PEOPLE are
+# all legible at once. ARCHIPELAGO pulls back to all three islands for the
+# "island world" read. FOLLOW is the walking Overseer camera.
+#
+# One fixed light direction, no roll, controlled tilt, and vegetation is placed
+# so nothing tall sits in the near corridor between camera and settlement.
+# ---------------------------------------------------------------------------
+## Boats: proof the water is navigable, and a sense of scale out at sea — a boat
+## is the single strongest cue that the blue is water. Anchors are part of the
+## OVERVIEW solve (see _world_frame_points), so none of them can be cropped.
+##
+## `heading` is a FIXED yaw, not a random one. The old code used
+## `rotation.y = randf() * TAU`, which regularly presented a sail edge-on: a
+## 0.07-unit-thin sail seen edge-on is ~2 screen px and the boat collapses into an
+## unreadable crate. -0.785 rad is exactly broadside to the 45deg camera axis, and
+## each boat sits within +-0.25 rad of it, which costs at most 3% of sail area.
+const BOAT_ANCHORS := [
+    {"pos": Vector3(14.0, 0.0, 8.0), "seed": 11, "heading": -0.62},
+    {"pos": Vector3(21.5, 0.0, 3.0), "seed": 12, "heading": -0.95},
+    {"pos": Vector3(-8.0, 0.0, 13.0), "seed": 13, "heading": -0.55},
+    # Mid-channel between meadow and frost: reads as TRAFFIC between them, which
+    # is what makes the pair one settlement rather than two unrelated sites.
+    {"pos": Vector3(18.0, 0.0, -3.0), "seed": 14, "heading": -1.02},
+    # The meadow->dusk channel only entered the frame when OVERVIEW became the
+    # default, so it had no traffic at all before this pass.
+    {"pos": Vector3(-11.0, 0.0, -15.0), "seed": 15, "heading": -0.70},
+]
+
+## APPENDED, never renumbered: OVERVIEW stays 0 and FOLLOW stays 3, which is what
+## tools/probe_controls.gd asserts and what screenshot_harness.gd addresses by
+## name. ISLAND and STEWARD are the two questions the overview cannot answer --
+## "what is happening HERE" and "what is the agent actually doing".
+enum CameraMode { OVERVIEW, OBSERVATORY, ARCHIPELAGO, FOLLOW, ISLAND, STEWARD }
+## DEFAULT = OVERVIEW. The first thing a visitor must understand is that ASTrix
+## is a WORLD, so the opening frame contains every island Core defines. The
+## tighter OBSERVATORY composition is one zoom step away, not the entry point.
+var camera_mode: int = CameraMode.OVERVIEW
+
+## OBSERVATORY framing — derived, not guessed.
+##
+## The camera is ORTHOGONAL at 45° yaw / ~38° pitch. Work in the camera's own
+## ground axes: u = (x - z)/√2 runs screen-right, v = (x + z)/√2 runs
+## screen-down (toward the camera). `camera.size` is the visible height, so the
+## visible ground patch is  size*aspect  along u and  size/sin(38°)  along v.
+##
+## Meadow (r 14.5 at origin) spans u,v ∈ [-14, 14]. Frost (r 8 at 26,-14) sits at
+## u = 28.3, v = 8.5, spanning u ∈ [20.3, 36.3], v ∈ [0.5, 16.5]. So the pair
+## needs 50.3 along u and 30.5 along v. At size 32 / 16:9 the frame provides 56.9
+## along u and 52.1 along v — both islands fit whole, with a 2.15-unit villager
+## at ~52px on a 768px viewport.
+##
+## Centre of that bounding box: u = 11.2, v = 1.25  ->  world (8.8, ·, -7.0).
+const OBS_TARGET := Vector3(8.8, 1.4, -7.0)
+const OBS_OFFSET := Vector3(20.0, 22.0, 20.0)
+const OBS_SIZE_LANDSCAPE := 32.0
+const OBS_SIZE_PORTRAIT := 46.0
+
+const ARCH_TARGET := Vector3(4.0, 1.0, -14.0)
+const ARCH_OFFSET := Vector3(30.0, 34.0, 30.0)
+## Pulled back only as far as the three islands need. At 74 the archipelago
+## occupied ~13% of the frame; 56 lifts it toward ~30% while still containing
+## Dusk (centre -27,-35, r 9) whole.
+const ARCH_SIZE_LANDSCAPE := 56.0
+const ARCH_SIZE_PORTRAIT := 72.0
+
+## PORTRAIT is a re-composed shot, not a squeezed desktop view.
+##
+## In landscape the meadow->frost axis runs screen-horizontally, which is exactly
+## wrong for a tall frame (both shorelines clip). Portrait therefore ORBITS the
+## camera so that axis runs screen-VERTICALLY: the offset is aligned with
+## a = (26,0,-14).normalized(), so Frost sits nearer the camera (lower on screen)
+## and the Meadow settlement sits above it. Pitch and roll are unchanged, so the
+## diorama read and the light direction are identical.
+##
+## Sizing: the pair spans 26.7 units across the perpendicular axis and 51.5 along
+## the view axis (31.6 after the sin(38°) foreshortening). At 800x1280 (aspect
+## 0.625) size 46 gives 28.75 horizontal — the pair fits with margin — and the
+## islands occupy ~880 of 1280px, inside the band the HUD leaves free.
+const OBS_TARGET_PORTRAIT := Vector3(14.0, 1.4, -4.0)
+const OBS_OFFSET_PORTRAIT := Vector3(24.9, 22.0, -13.4)
+const ARCH_OFFSET_PORTRAIT := Vector3(30.0, 34.0, -16.0)
+
+## ISLAND and STEWARD reuse the OBSERVATORY composition (its offset, and its
+## ortho heights for ISLAND) because that framing is the one visual review signed
+## off on -- they change only WHAT is centred, never the angle. Holding one ortho
+## height for every island also makes the islands' relative sizes readable, and
+## makes cycling between them a pure pan with no scale cut.
+const ISLAND_ORDER := ["meadow", "frost", "dusk"]
+var _island_index := 0
+## Islands Core actually reports, in ISLAND_ORDER. ISLAND mode cycles only these,
+## so the camera can never tour an island the authoritative world does not have.
+var _core_islands: PackedStringArray = PackedStringArray()
+## Tighter than ISLAND so the object under discussion is identifiable, wide enough
+## that its surroundings still say WHERE it is.
+const STEWARD_SIZE_LANDSCAPE := 24.0
+const STEWARD_SIZE_PORTRAIT := 34.0
+const STEWARD_LOOK_HEIGHT := 1.2
+
+const FOLLOW_OFFSET := Vector3(10.0, 11.5, 10.0)
+const FOLLOW_LOOK_HEIGHT := 0.8
+const FOLLOW_SMOOTH := 6.0
+
+## OVERVIEW framing — SOLVED at runtime, not tuned by hand.
+##
+## OBSERVATORY's constants were hand-fitted to meadow + frost and deliberately
+## crop Dusk (see ASTRIX_VISUAL_BUILD.md §15). Rather than hand-fit a second set
+## that would silently rot the next time an island moves, OVERVIEW projects every
+## island footprint into the camera's own basis and solves for the ortho size and
+## target that contain them all. Move an island in ISLANDS and the opening shot
+## re-frames itself.
+##
+## The camera DIRECTION is still art-directed, because yaw decides which faces
+## the fixed key light strikes:
+##   landscape - the established 45deg yaw, unchanged from OBSERVATORY. At 16:9 the
+##               frame reaches size*1.778 across and size/sin(38deg)=1.618*size deep,
+##               i.e. nearly isotropic, so yaw buys almost nothing (43 vs 50) and
+##               is not worth altering the diorama's light read for.
+##   portrait  - a tall frame reaches ~2.6x further deep than across, so the
+##               cluster's long axis MUST run screen-vertically or the shot has to
+##               pull back ~20% further. The camera orbits onto the cluster's
+##               principal axis, choosing whichever of the two candidate
+##               directions sits nearer the landscape camera so the lighting
+##               barely shifts. (The old portrait orbit was aligned to the
+##               meadow->frost axis, which is the two-island answer.)
+const PORTRAIT_ASPECT := 1.05
+const OVERVIEW_MARGIN_LANDSCAPE := 5.0
+const OVERVIEW_MARGIN_PORTRAIT := 3.0
+## Pitch is preserved exactly: |(20,20)| horizontal against 22 up is the same
+## ~37.9deg tilt every other mode uses.
+const OVERVIEW_REACH := 28.284
+const OVERVIEW_HEIGHT := 22.0
+const OVERVIEW_TARGET_Y := 1.4
+
+## Zoom multiplies whichever mode's base size is active; pan slides the target
+## along the camera's own ground axes. Both are operator controls (MobileHUD /
+## arrow keys) and both are bounded, so the frame can never leave the world.
+const ZOOM_MIN := 0.34
+const ZOOM_MAX := 1.15
+const ZOOM_STEP := 0.16
+## Fraction of the visible frame height panned per second while the pad is held.
+## 0.55 measured as a lurch (the full clamped range in ~1.3s, so a small nudge was
+## impossible); 0.38 crosses it in ~3.7s, which still feels responsive.
+const PAN_SPEED := 0.38
+const PAN_LIMIT := 0.7
+
+var _zoom := 1.0
+var _pan := Vector2.ZERO
+var _overview_target := Vector3(0.0, OVERVIEW_TARGET_Y, 0.0)
+var _overview_offset := Vector3(20.0, 22.0, 20.0)
+var _overview_size := 50.0
 
 var player: AstrixPlayer3D
-var companion: Companion3D
 var camera: Camera3D
-var _time := 0.0
-var _animated_water: Array[MeshInstance3D] = []
-var _animated_plants: Array[Node3D] = []
 var _portrait := false
+var _time := 0.0
 
+# ---------------------------------------------------------------------------
+# LIGHTING / SEASON / TIME
+# ---------------------------------------------------------------------------
+var _sun: DirectionalLight3D
+var _fill: DirectionalLight3D
+var _sky_mat: ProceduralSkyMaterial
+var _env: Environment
+## Authoritative day phase (0..1 across Core's 08:00 -> 08:00 day). -1 = unknown.
+var _sim_phase := -1.0
+var _phase_eased := 0.25
+var _season := ""
+var _season_data: Dictionary = AstrixPalette.SEASONS["summer"]
+## Meshes that repaint with the season: {node, kind, tier}.
+var _seasonal: Array = []
+## Roof/ground snow caps, shown only in winter.
+var _snow_caps: Array[MeshInstance3D] = []
+## Winter shore ice, shown only in winter.
+var _ice_nodes: Array[MeshInstance3D] = []
+
+# ---------------------------------------------------------------------------
+# WATER — a real ocean shader (shaders/ocean.gdshader).
+#
+# The previous water was a translucent plane plus ~46 white "whitecap" quads and
+# ~100 foam dashes ringing each island. Visual review found it did not read as
+# water and the loose quads read as broken slabs floating in the sea. All of it
+# is replaced by one surface that generates waves, crests, shallows and animated
+# shore foam from the island positions in-shader — no decal geometry at all.
+# ---------------------------------------------------------------------------
+var _water_surface := WATER_LEVEL
+var _water: MeshInstance3D
+var _water_mat: ShaderMaterial
+var _boats: Array[Node3D] = []
+## Heading each boat was built with, so mooring yaw can swing AROUND it instead of
+## accumulating drift. Sails are cached to spare a per-frame node lookup.
+var _boat_headings: PackedFloat32Array = PackedFloat32Array()
+var _boat_sails: Array[Node3D] = []
+
+# ---------------------------------------------------------------------------
+# SIM MATERIALIZATION
+# ---------------------------------------------------------------------------
+var _sim: Dictionary = {}            # key -> Node3D
+var _sim_sig: Dictionary = {}        # key -> String (rebuild only on change)
+var _villagers: Array[Node3D] = []
+## Flat list of every anchor, as {"pos","island","kind","work"} — kept flat as
+## well as bucketed because tools/diag_snapshot.gd reports its size.
+var _villager_anchors: Array[Dictionary] = []
+## island id -> Array[Dictionary] of that island's anchors. A villager is only
+## ever routed within ONE bucket, which is what stops the old build's villagers
+## from walking across open water between islands.
+var _island_anchors: Dictionary = {}
+## Deterministic island assignment per villager index, rebuilt with the anchors.
+var _villager_islands: PackedStringArray = PackedStringArray()
+
+# ---------------------------------------------------------------------------
+# AUTHORITATIVE CLOCK + STEWARD FOCUS (from /astrix/agent/status)
+# ---------------------------------------------------------------------------
+## Whether AUTHORITATIVE world time is advancing. Read from the steward's own
+## LoopState, never inferred from how long `day` has sat still.
+##
+## The server freezes Core's clock in exactly two situations: no run is live
+## (IDLE/COMPLETED/STOPPED/FAILED -- see startWorldClock in src/server/index.ts)
+## and AWAITING_APPROVAL, where src/astrix/server.ts's tick() returns early so
+## the day cannot advance underneath a paused human decision. Both must read as
+## a held world on screen, or the Observatory claims progress Core is not making.
+var _world_live := true
+const HELD_LOOP_STATES := ["IDLE", "COMPLETED", "STOPPED", "FAILED", "AWAITING_APPROVAL", ""]
+## Where the steward is authoritatively acting, derived from the tool + args of
+## its own action records. Vector3.ZERO with _has_steward_focus false means Core
+## gave us nothing to point at -- the camera then says so instead of guessing.
+var _steward_focus := Vector3.ZERO
+var _has_steward_focus := false
+var _steward_focus_label := ""
+var _vegetation: Array[Node3D] = []  # swaying props
+## Static set-dressing that must yield when an authoritative building lands on
+## it. Vegetation is built at boot, before any snapshot, so a farm placed by the
+## Steward WILL sometimes land on a tree — that is a real collision, and the
+## settlement clearing land for a new farm is the correct visual answer.
+var _clearable: Array[Node3D] = []
+
+const VILLAGER_SCRIPT := preload("res://scripts/Villager3D.gd")
+const MAX_RENDERED_VILLAGERS := 14
+
+# ===========================================================================
+# BOOT
+# ===========================================================================
 func _ready() -> void:
     var world_state := get_node_or_null("/root/WorldState")
     if world_state:
         world_state.resource_nodes.clear()
     GameClient.astrix_state_received.connect(_on_astrix_state_received)
+    GameClient.astrix_agent_status_received.connect(_on_agent_status_received)
     _build_environment()
+    _build_seabed()
     _build_water()
-    _build_islands()
-    _build_paths()
-    _build_starting_area()
-    _build_decor()
-    _build_resource_nodes()
+    for id in ISLANDS.keys():
+        _build_island(id, ISLANDS[id])
+    _build_settlement_dressing()
+    _build_vegetation()
+    _build_clouds()
     _build_player()
     _build_camera()
     _build_systems()
+    _apply_season("summer", "12:00")
 
 func _process(delta: float) -> void:
     _time += delta
-    _update_cycle(delta)
-    if is_instance_valid(camera) and is_instance_valid(player):
-        # Constant iso offset: camera glides with the player, yaw never rolls.
-        # Portrait pulls the x-offset in and looks further ahead so the beacon
-        # destination stays in frame on narrow mobile viewports.
-        var offset := Vector3(8.0 if _portrait else CAMERA_OFFSET.x, CAMERA_OFFSET.y, CAMERA_OFFSET.z)
-        var look_ahead := 6.0 if _portrait else CAMERA_LOOK_AHEAD
-        var target := player.global_position + offset
-        var focal := player.global_position + Vector3(0.0, CAMERA_LOOK_HEIGHT, look_ahead)
-        var k := 1.0 - exp(-CAMERA_SMOOTH * delta)
-        camera.global_position = camera.global_position.lerp(target, k)
-        camera.look_at(focal, Vector3.UP)
-    for i in range(_animated_water.size()):
-        _animated_water[i].position.y = _water_surface - 0.06 + sin(_time * 0.8 + float(i) * 0.45) * 0.035
-    if is_instance_valid(_water_ripple):
-        # Slow shimmering drift so the ripple reads as moving water.
-        _water_ripple.position.x = 50.0 + sin(_time * 0.3) * 1.5
-        _water_ripple.position.z = 30.0 + cos(_time * 0.25) * 1.2
-    if is_instance_valid(_water_highlight):
-        # The sun sheen travels across the surface, catching the light.
-        _water_highlight.position.x = 50.0 + sin(_time * 0.14) * 20.0
-        _water_highlight.position.z = 30.0 + cos(_time * 0.11) * 12.0
-        _water_highlight.rotation.y = sin(_time * 0.05) * 0.6
-    for i in range(_water_sparkles.size()):
-        var sparkle := _water_sparkles[i]
-        sparkle.visible = fmod(_time * 0.7 + float(i) * 1.7, 1.0) < 0.6
-    for i in range(_animated_plants.size()):
-        var plant := _animated_plants[i]
-        plant.rotation.z = sin(_time * 0.55 + float(i) * 1.3) * 0.025
+    _update_light(delta)
+    _update_water(delta)
+    _update_crops(delta)
+    _update_smoke(delta)
+    _update_clouds(delta)
+    _update_camera(delta)
+    for i in range(_vegetation.size()):
+        var v: Node3D = _vegetation[i]
+        if is_instance_valid(v):
+            v.rotation.z = sin(_time * 0.7 + float(i) * 1.3) * 0.03
 
-# ---------------------------------------------------------------------------
-# Lighting & environment — soft gradient sky + day/dusk cycle.
-# Day: warm pale sky, bright low-saturation light (reference pale intro).
-# Dusk: violet/magenta sky, warmer dim light (reference night still).
-# The cycle is presentation-only; it never touches authoritative state.
-# ---------------------------------------------------------------------------
-var _sky_mat: ProceduralSkyMaterial
-var _sun: DirectionalLight3D
-var _env_settings: Environment
-var _day_phase := 0.0
-const DAY_CYCLE_SECONDS := 90.0
-
+# ===========================================================================
+# ENVIRONMENT + LIGHT
+# ===========================================================================
 func _build_environment() -> void:
-    var environment := WorldEnvironment.new()
-    var settings := Environment.new()
-    _env_settings = settings
-    settings.background_mode = Environment.BG_SKY
+    var holder := WorldEnvironment.new()
+    holder.name = "Environment"
+    var env := Environment.new()
+    _env = env
+    env.background_mode = Environment.BG_SKY
     var sky := Sky.new()
     var sky_mat := ProceduralSkyMaterial.new()
     _sky_mat = sky_mat
-    # Day defaults (set each frame by the cycle anyway). Colors are deliberately
-    # dim so the tonemap doesn't blow the whole frame to white.
-    # Reference target: soft pale sky, NOT a blinding white. Keep the sky's
-    # energy low so the tonemap never clips the terrain (the previous build blew
-    # the whole frame to near-white; the sun disc was 40 degrees wide).
-    sky_mat.sky_top_color = Color("8a9cc0")          # pale soft blue-violet
-    sky_mat.sky_horizon_color = Color("c8b898")      # warm pale horizon
-    sky_mat.ground_bottom_color = Color("5c6894")
-    sky_mat.ground_horizon_color = Color("a89880")
-    sky_mat.sun_angle_max = 4.0                        # small readable sun
-    sky_mat.sun_curve = 0.9
+    sky_mat.sky_top_color = Color("3f8ee0")
+    sky_mat.sky_horizon_color = Color("cfe4ef")
+    sky_mat.ground_horizon_color = Color("cfe4ef")
+    sky_mat.ground_bottom_color = Color("6f8ba8")
+    sky_mat.sun_angle_max = 6.0
+    sky_mat.sun_curve = 0.35
     sky.sky_material = sky_mat
     sky.process_mode = Sky.PROCESS_MODE_REALTIME
-    settings.sky = sky
-    settings.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-    # Deliberately LOW ambient: the key light must carry the form. Sky-based
-    # ambient was 0.35 (washed). 0.22 keeps shadow faces blue-violet-tinted but
-    # clearly darker than lit faces, which is what gives low-poly geometry form.
-    settings.ambient_light_energy = 0.22
-    settings.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-    settings.tonemap_exposure = 0.5
-    settings.glow_enabled = false
-    environment.environment = settings
-    add_child(environment)
+    env.sky = sky
+    # Strong sky ambient: the reference keeps shadow faces bright and colourful
+    # rather than crushing them to black. This is why the world looks sunlit.
+    env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+    env.ambient_light_energy = 0.55
+    env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+    env.tonemap_exposure = 1.0
+    env.tonemap_white = 2.0
+    env.glow_enabled = false
+    holder.environment = env
+    add_child(holder)
 
-    # Warm key light from the upper-left: soft pastel diorama illumination with
-    # readable warm highlights and a gentle fill from the right. This is the
-    # sun that decides lit-vs-shadowed faces, so it is the strongest light.
+    # KEY LIGHT — single coherent direction (upper-left, ~48deg), real shadows.
+    # Replaces the previous fake blob-shadow discs entirely.
     var sun := DirectionalLight3D.new()
-    sun.name = "WarmSun"
+    sun.name = "KeySun"
     _sun = sun
-    sun.rotation_degrees = Vector3(-46.0, -38.0, 0.0)   # upper-left key
-    sun.light_color = Color("ffe6bd")                   # warm cream sunlight
-    sun.light_energy = 1.0
+    sun.rotation_degrees = Vector3(-48.0, -34.0, 0.0)
+    sun.light_color = Color("fff6cf")
+    sun.light_energy = 1.75
     sun.shadow_enabled = true
-    sun.directional_shadow_max_distance = 110.0
-    sun.shadow_blur = 1.6                             # tighter, readable shadows
-    sun.directional_shadow_fade_start = 0.6
+    sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
+    sun.directional_shadow_max_distance = 95.0
+    sun.directional_shadow_blend_splits = false
+    sun.shadow_normal_bias = 1.4
+    sun.shadow_bias = 0.055
+    sun.shadow_blur = 1.1
     add_child(sun)
 
-    # Soft cool fill from the lower-right so shadow faces are never flat-black:
-    # keeps pastel surfaces charming while preserving the lit/shadow separation.
+    # Cool sky fill from the opposite side so shadowed faces stay readable
+    # (no shadows from this one — one shadow-casting light only, mobile budget).
     var fill := DirectionalLight3D.new()
-    fill.name = "WarmFill"
-    fill.rotation_degrees = Vector3(36.0, 42.0, 0.0)
-    fill.light_color = Color("c8dbe8")                 # pale blue fill
-    fill.light_energy = 0.18
+    fill.name = "SkyFill"
+    _fill = fill
+    fill.rotation_degrees = Vector3(-24.0, 148.0, 0.0)
+    fill.light_color = Color("cfe2f5")
+    fill.light_energy = 0.35
     fill.shadow_enabled = false
     add_child(fill)
 
-# Advances the day/dusk cycle and eases all lighting/sky colors between the two
-# reference moods. Pure presentation; no gameplay state.
-func _update_cycle(delta: float) -> void:
-    _day_phase = fmod(_day_phase + delta / DAY_CYCLE_SECONDS, 1.0)
-    # dusk = 0 at phase 0 (full day), 1 at phase 0.5 (full dusk), 0 again at 1.
-    var dusk := sin(_day_phase * PI)
-    if not _env_settings or not is_instance_valid(_sky_mat):
+## Time of day from Core's clock: sun arc + warm/cool grade. Falls back to a
+## fixed midday look before the first authoritative snapshot (never a fake clock).
+func _update_light(delta: float) -> void:
+    if _sim_phase >= 0.0:
+        _phase_eased = lerpf(_phase_eased, _sim_phase, minf(1.0, delta * 1.2))
+    if not _sun or not _sky_mat or not _env:
         return
-    # Sky: warm pale (day) -> pale violet (dusk).
-    _sky_mat.sky_top_color = Color("8a9cc0").lerp(Color("4a3a76"), dusk)
-    _sky_mat.sky_horizon_color = Color("c8b898").lerp(Color("7a5aa0"), dusk)
-    _sky_mat.ground_horizon_color = Color("a89880").lerp(Color("5a4a84"), dusk)
-    _sky_mat.ground_bottom_color = Color("5c6894").lerp(Color("2e2e56"), dusk)
-    # Ambient: pale cool (day) -> violet (dusk). Matches the new low baseline
-    # so the key light keeps carrying form even at dusk.
-    _env_settings.ambient_light_energy = lerpf(0.22, 0.16, dusk)
-    # Sun: warm bright (day) -> warm violet, dimmer (dusk).
-    if _sun:
-        _sun.light_color = Color("ffe9c9").lerp(Color("c9a0d8"), dusk)
-        _sun.light_energy = lerpf(1.0, 0.45, dusk)
 
-# Stylized violet-lavender translucent water — ASTrix's signature material.
-# Layered treatment: a rich violet base plane, a brighter drifting ripple plane,
-# a long moving sun-highlight band, small sparkle patches, and shoreline foam
-# discs where land meets water. All presentation-only.
-var _water_surface := -0.2
-var _water_ripple: MeshInstance3D
-var _water_highlight: MeshInstance3D
-var _water_sparkles: Array[MeshInstance3D] = []
+    # SOLAR ALTITUDE, not distance-from-noon.
+    #
+    # Iteration 1 used `evening = (|phase - 0.21| / 0.5) ^ 1.4`, which at Core's
+    # 19:30 gave only 0.42 — a sunset render still looked like midday.
+    # Iteration 2 put sunset AT 19:30, so altitude hit exactly 0 and the frame
+    # went full night (review: "reads as night, not evening").
+    #
+    # Now: daylight runs 05:30 -> 21:00 (15.5h), so 19:30 lands in the last tenth
+    # of the arc — a real golden hour with the sun still up. The sun's ELEVATION
+    # comes from the altitude angle itself, so shadow length is physical rather
+    # than tuned, and `evening` is a softer curve used only for colour/exposure.
+    var hour := fmod(8.0 + _phase_eased * 24.0, 24.0)
+    var altitude := sin(PI * clampf((hour - 5.5) / 15.5, 0.0, 1.0))
+    var elevation := maxf(6.0, rad_to_deg(asin(clampf(altitude, 0.0, 1.0))))
+    var evening := pow(1.0 - altitude, 1.3)
+
+    var sun_base: Color = _season_data["sun"]
+    var energy := float(_season_data["sun_energy"])
+    # Sell time of day with HUE, not darkness. Golden hour is a WARM KEY against a
+    # COOL FILL — an earlier pass that only cut exposure read as "midday over a
+    # night background" because the light itself never changed temperature.
+    _sun.light_color = sun_base.lerp(Color("ff7a2e"), evening)
+    # Keep a real key light at dusk: the sun is low and warm, not switched off.
+    _sun.light_energy = lerpf(energy, energy * 0.62, evening)
+    # Elevation from the true solar angle => shadows rake long at both ends of the
+    # day. Floored at 16deg (≈3.5x object height) rather than the physical 6deg:
+    # a 10x rake buries the farm plots, and this is a management view.
+    _sun.rotation_degrees = Vector3(-maxf(16.0, elevation), lerpf(-62.0, 62.0, clampf(_phase_eased, 0.0, 1.0)), 0.0)
+    if _fill:
+        # Cool blue-violet skylight fill at dusk, RAISED not lowered: a 1:20
+        # key-to-fill ratio crushed shade faces to black. Golden hour has a strong
+        # sky fill, so shade is a different HUE from the key, not merely darker.
+        _fill.light_color = Color("cfe2f5").lerp(Color("6a7ae0"), evening)
+        _fill.light_energy = lerpf(0.35, 0.62, evening)
+
+    var top: Color = _season_data["sky_top"]
+    var horizon: Color = _season_data["sky_horizon"]
+    _sky_mat.sky_top_color = top.lerp(Color("3a4a86"), evening)
+    # Warm horizon band on the sun side: a flat dark sky said "already set", which
+    # made long raking shadows physically impossible.
+    _sky_mat.sky_horizon_color = horizon.lerp(Color("ffa050"), minf(1.0, evening * 1.25))
+    _sky_mat.ground_horizon_color = horizon.lerp(Color("d07a4a"), evening)
+    _sky_mat.ground_bottom_color = Color("6f8ba8").lerp(Color("3a4270"), evening)
+    # Ambient stays high: the sky is the fill source at dusk, and crushing it is
+    # what made the settlement stop being legible.
+    _env.ambient_light_energy = lerpf(float(_season_data["ambient"]), float(_season_data["ambient"]) * 0.92, evening)
+    # Exposure barely moves. Time of day is carried by hue and shadow length; at
+    # 0.62 the frame went black and plot state became unreadable.
+    _env.tonemap_exposure = lerpf(1.0, 0.94, evening)
+    _apply_water_colors(evening)
+    _update_windows(evening)
+
+## Lit windows: the settlement switches its lamps on as the light fails. Cheap,
+## and the single clearest "it is evening" signal a still frame can carry.
+var _window_lights: Array[MeshInstance3D] = []
+var _windows_lit := false
+func _update_windows(evening: float) -> void:
+    var should_light := evening > 0.35
+    if should_light == _windows_lit:
+        return
+    _windows_lit = should_light
+    for w in _window_lights:
+        if not is_instance_valid(w):
+            continue
+        var mat := w.material_override
+        if mat is StandardMaterial3D:
+            var m := mat as StandardMaterial3D
+            m.albedo_color = Color("ffd98a") if should_light else Color("2f3a44")
+            m.emission_enabled = should_light
+            m.emission = Color("ffcf7a")
+            m.emission_energy_multiplier = 1.4 if should_light else 0.0
+
+## Collect an asset's window panes so the light cycle can switch them on.
+func _register_windows_in(node: Node) -> void:
+    for child in node.get_children():
+        if child is MeshInstance3D and str(child.name).begins_with("Window") \
+                and not str(child.name).contains("Frame"):
+            _window_lights.append(child as MeshInstance3D)
+        _register_windows_in(child)
+
+## Parse Core's "HH:MM" into 0..1 across the simulated day (day starts 08:00).
+func _phase_from_time(text: String) -> float:
+    var parts := text.split(":")
+    if parts.size() < 2:
+        return -1.0
+    var hours := fmod(float(parts[0].to_int()) - 8.0 + 24.0, 24.0) + float(parts[1].to_int()) / 60.0
+    return clampf(hours / 24.0, 0.0, 1.0)
+
+## Authoritative season -> the world repaints. Idempotent per season.
+func _apply_season(season: String, time_text: String) -> void:
+    var phase := _phase_from_time(time_text)
+    if phase >= 0.0:
+        _sim_phase = phase
+    if season == _season:
+        return
+    _season = season
+    _season_data = AstrixPalette.season(season)
+    for entry in _seasonal:
+        _paint_seasonal(entry)
+    var winter := season == "winter"
+    for cap in _snow_caps:
+        if is_instance_valid(cap):
+            cap.visible = winter
+    # Winter shore ice: a pale ring just inside the waterline. Land goes white in
+    # winter, so without this the sea kept a summer coastline.
+    for ice in _ice_nodes:
+        if is_instance_valid(ice):
+            ice.visible = winter
+    for v in _villagers:
+        if is_instance_valid(v) and v.has_method("apply_season"):
+            v.apply_season(season)
+
+## Register a mesh as season-responsive. `kind` selects the season colour;
+## `tier` preserves per-instance value layering (+lighter / -darker).
+##
+## IMPORTANT: the mesh is repainted IMMEDIATELY if a season is already active.
+## Sim-materialized props (resource-node trees, farm crops) are created AFTER the
+## first snapshot applies its season, so registration alone left them painted in
+## their constructor colours — a bright green summer canopy standing in the snow.
+func _seasonal_mesh(node: MeshInstance3D, kind: String, tier: float = 0.0) -> MeshInstance3D:
+    _seasonal.append({"node": node, "kind": kind, "tier": tier})
+    if _season != "":
+        _paint_seasonal({"node": node, "kind": kind, "tier": tier})
+    return node
+
+func _paint_seasonal(entry: Dictionary) -> void:
+    var node: Variant = entry.get("node")
+    # Same freed-operand trap as _update_crops: valid-check first.
+    if not is_instance_valid(node) or not (node is MeshInstance3D):
+        return
+    var mat := (node as MeshInstance3D).material_override
+    if not (mat is StandardMaterial3D):
+        return
+    var base: Color = _season_data.get(str(entry.get("kind", "foliage")), _season_data["foliage"])
+    var tier := float(entry.get("tier", 0.0))
+    (mat as StandardMaterial3D).albedo_color = base.lightened(tier) if tier >= 0.0 else base.darkened(-tier)
+
+func _register_foliage(parts: Array[MeshInstance3D], kind: String = "foliage") -> void:
+    for i in range(parts.size()):
+        _seasonal_mesh(parts[i], kind, 0.06 * float(i))
+
+## A snow cap that only exists in winter (roofs, plot soil, rock tops).
+func _snow_cap(node: MeshInstance3D) -> MeshInstance3D:
+    node.visible = _season == "winter"
+    _snow_caps.append(node)
+    return node
+
+## Assets build their own winter snow as children named "SnowCap*" (a roof cap
+## can only be shaped correctly by whoever built the roof). This scans a freshly
+## instanced asset and hands those nodes to the season system.
+func _register_snow_in(node: Node) -> void:
+    for child in node.get_children():
+        if child is MeshInstance3D and str(child.name).begins_with("SnowCap"):
+            _snow_cap(child as MeshInstance3D)
+        _register_snow_in(child)
+
+# ===========================================================================
+# WATER + SEABED
+#
+# The single biggest previous failure was that water did not read as water.
+# Fixes: ocean-blue specular surface at y=0, a real seabed far below so no gap
+# ever shows through to nothing, island cliffs that continue underwater, a wet
+# shore band, foam rings at every waterline, whitecap dashes and boats.
+# ===========================================================================
+## Padding added to the world span for the water surface and the seabed under it.
+##
+## Sized so NO camera frame can ever run off the edge of the water. Worst case is
+## the portrait overview at maximum zoom-out and maximum pan: ~97 units of visible
+## height, which the 38deg pitch stretches to ~157 units of ground reach, half of
+## that from the centre (79), plus the pan clamp (0.7 x ~84 = 59) plus the offset
+## from world centre to the island centroid (~10) = ~148 per side. 170 per side
+## clears it. This is not cosmetic: the first portrait capture showed a solid band
+## across the bottom sixth of the screen where the frame had run past the water and
+## was showing the empty environment behind it.
+const WATER_PAD := 340.0
+
+func _build_seabed() -> void:
+    # Deep floor well below the surface: guarantees there is never a void band
+    # between islands, and gives the water something to be translucent over.
+    var span := WORLD_MAX - WORLD_MIN
+    var bed := AstrixMesh.box("Seabed", Vector3(span.x + WATER_PAD, 2.0, span.y + WATER_PAD),
+        Vector3((WORLD_MIN.x + WORLD_MAX.x) * 0.5, WATER_LEVEL - 6.0, (WORLD_MIN.y + WORLD_MAX.y) * 0.5),
+        AstrixPalette.WATER_DEEP.darkened(0.45))
+    add_child(bed)
+
+const OCEAN_SHADER := preload("res://shaders/ocean.gdshader")
+
 func _build_water() -> void:
-    var water := MeshInstance3D.new()
-    water.name = "StylizedWater"
-    var mesh := PlaneMesh.new()
-    mesh.size = WORLD_SIZE + Vector2(20.0, 20.0)
-    mesh.material = _water_material(false)
-    water.mesh = mesh
-    water.rotation_degrees.x = -90.0
-    water.position = Vector3(50.0, _water_surface, 30.0)
-    add_child(water)
-    _animated_water.append(water)
-
-    # Brighter translucent top plane with subtle emission = light depth + sparkle.
-    _water_ripple = MeshInstance3D.new()
-    _water_ripple.name = "WaterRipple"
-    var ripple_mesh := PlaneMesh.new()
-    ripple_mesh.size = WORLD_SIZE + Vector2(8.0, 8.0)
-    ripple_mesh.material = _water_material(true)
-    _water_ripple.mesh = ripple_mesh
-    _water_ripple.rotation_degrees.x = -90.0
-    _water_ripple.position = Vector3(50.0, _water_surface + 0.02, 30.0)
-    add_child(_water_ripple)
-    _animated_water.append(_water_ripple)
-
-    # Long moving sun-highlight band: a thin bright sheen that drifts across the
-    # water so the surface visibly changes under the warm key (reads as water).
-    _water_highlight = MeshInstance3D.new()
-    _water_highlight.name = "WaterHighlight"
-    var highlight_mesh := PlaneMesh.new()
-    highlight_mesh.size = Vector2(46.0, 7.0)
-    highlight_mesh.material = _water_material(true, true)
-    _water_highlight.mesh = highlight_mesh
-    _water_highlight.rotation_degrees.x = -90.0
-    _water_highlight.position = Vector3(50.0, _water_surface + 0.045, 30.0)
-    add_child(_water_highlight)
-    _animated_water.append(_water_highlight)
-
-    # Small soft sparkle patches scattered over the water for surface variation.
-    var sparkle_rng := RandomNumberGenerator.new()
-    sparkle_rng.seed = 7331
-    for i in range(9):
-        var sparkle := MeshInstance3D.new()
-        var sparkle_mesh := PlaneMesh.new()
-        sparkle_mesh.size = Vector2(2.0 + sparkle_rng.randf() * 2.5, 1.2 + sparkle_rng.randf() * 1.6)
-        sparkle_mesh.material = _water_material(true, true)
-        sparkle.mesh = sparkle_mesh
-        sparkle.rotation_degrees.x = -90.0
-        sparkle.position = Vector3(20.0 + sparkle_rng.randf() * 60.0, _water_surface + 0.05, 8.0 + sparkle_rng.randf() * 44.0)
-        sparkle.rotation.y = sparkle_rng.randf() * TAU
-        add_child(sparkle)
-        _water_sparkles.append(sparkle)
-        _animated_water.append(sparkle)
-
-    _build_shore_foam()
-
-# Foam/edge discs at the water line around each island so the land->water
-# boundary reads as a bright edge instead of a hard cut.
-func _build_shore_foam() -> void:
-    var foam_color := Color("c9bcee")
-    for biome_id in ISLANDS:
-        var data: Dictionary = ISLANDS[biome_id]
+    var span := WORLD_MAX - WORLD_MIN
+    var centre := Vector3((WORLD_MIN.x + WORLD_MAX.x) * 0.5, WATER_LEVEL, (WORLD_MIN.y + WORLD_MAX.y) * 0.5)
+    _water = MeshInstance3D.new()
+    _water.name = "Ocean"
+    var plane := PlaneMesh.new()
+    plane.size = span + Vector2(WATER_PAD, WATER_PAD)
+    # Subdivided so the vertex-adjacent shader work has resolution to play with
+    # and the surface never shows a single flat facet across the whole frame.
+    # Raised with WATER_PAD to hold roughly the previous vertex spacing.
+    plane.subdivide_width = 48
+    plane.subdivide_depth = 48
+    _water.mesh = plane
+    var mat := ShaderMaterial.new()
+    mat.shader = OCEAN_SHADER
+    _water_mat = mat
+    _apply_water_colors()
+    # Feed the island footprints so the shader can draw shallows and shore foam
+    # exactly where land actually is.
+    var slots := ["island_a", "island_b", "island_c"]
+    var i := 0
+    for id in ISLANDS.keys():
+        if i >= slots.size():
+            break
+        var data: Dictionary = ISLANDS[id]
         var c: Vector3 = data["center"]
-        var radius: Vector2 = data["radius"]
-        for i in range(16):
-            var ang := TAU * float(i) / 16.0 + fmod(float(i * 5), TAU) * 0.02
-            var fx := c.x + cos(ang) * (radius.x * 1.52)
-            var fz := c.z + sin(ang) * (radius.y * 1.52)
-            var foam := MeshInstance3D.new()
-            var foam_mesh := PlaneMesh.new()
-            foam_mesh.size = Vector2(1.1, 0.7)
-            foam_mesh.material = _foam_material()
-            foam.mesh = foam_mesh
-            foam.rotation_degrees.x = -90.0
-            foam.position = Vector3(fx, _water_surface + 0.01, fz)
-            foam.rotation.y = ang
-            add_child(foam)
-    # Foam ring around the magic islet shore too.
-    for i in range(10):
-        var ang := TAU * float(i) / 10.0
-        var foam := MeshInstance3D.new()
-        var foam_mesh := PlaneMesh.new()
-        foam_mesh.size = Vector2(1.0, 0.6)
-        foam_mesh.material = _foam_material()
-        foam.mesh = foam_mesh
-        foam.rotation_degrees.x = -90.0
-        foam.position = Vector3(22.0 + cos(ang) * 3.6, _water_surface + 0.01, 43.5 + sin(ang) * 3.6)
-        foam.rotation.y = ang
-        add_child(foam)
+        var rad: Vector2 = data["radius"]
+        mat.set_shader_parameter(slots[i], Vector4(c.x, c.z, rad.x, rad.y))
+        i += 1
+    _water.material_override = mat
+    _water.position = centre
+    add_child(_water)
 
-func _foam_material() -> StandardMaterial3D:
-    var material := StandardMaterial3D.new()
-    material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-    material.albedo_color = Color(0.79, 0.74, 0.93, 0.75)
-    material.emission_enabled = true
-    material.emission = Color("b8a8e8")
-    material.emission_energy_multiplier = 0.45
-    material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-    material.roughness = 0.6
-    return material
+    for spec in BOAT_ANCHORS:
+        var boat := AstrixAssets.sailboat(int(spec["seed"]), float(spec["heading"]))
+        boat.position = (spec["pos"] as Vector3) + Vector3(0.0, WATER_LEVEL + 0.14, 0.0)
+        add_child(boat)
+        _boats.append(boat)
+        # sailboat() adds deterministic per-boat jitter to the heading, so read the
+        # built value back rather than assuming the spec's.
+        _boat_headings.append(boat.rotation.y)
+        _boat_sails.append(boat.get_node_or_null("Sail"))
 
-func _water_material(ripple: bool, highlight: bool = false) -> StandardMaterial3D:
-    var material := StandardMaterial3D.new()
-    material.metallic = 0.0
-    material.roughness = 0.22
-    material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-    if highlight:
-        # Bright moving sheen: the sun reflecting off the surface.
-        material.albedo_color = Color("b4a4ea")
-        material.albedo_color.a = 0.55
-        material.emission_enabled = true
-        material.emission = Color("c8b8f4")
-        material.emission_energy_multiplier = 0.5
-    elif ripple:
-        material.albedo_color = Color("8d7fd4")   # brighter lavender sparkle plane
-        material.albedo_color.a = 0.5
-        material.emission_enabled = true
-        material.emission = Color("9a8be0")
-        material.emission_energy_multiplier = 0.2
-    else:
-        # Rich violet-lavender base, deeper than the sand/grass above it so the
-        # water is the dark base of the value hierarchy, not a pale wash.
-        material.albedo_color = Color("54439c")
-        material.albedo_color.a = 0.9
-        material.emission_enabled = true
-        material.emission = Color("45388a")
-        material.emission_energy_multiplier = 0.12
-    return material
+func _apply_water_colors(evening: float = 0.0) -> void:
+    if _water_mat == null:
+        return
+    var deep: Color = _season_data.get("water_deep", AstrixPalette.WATER_DEEP)
+    var shallow: Color = _season_data.get("water_shallow", AstrixPalette.WATER_SHALLOW)
+    # At dusk the sea goes dark and cool; foam stays the brightest thing on it.
+    _water_mat.set_shader_parameter("deep_color", deep.lerp(Color("101c38"), evening * 0.8))
+    _water_mat.set_shader_parameter("shallow_color", shallow.lerp(Color("2b4470"), evening * 0.75))
+    _water_mat.set_shader_parameter("foam_color", AstrixPalette.FOAM.lerp(Color("c8b8d8"), evening * 0.5))
 
-# ---------------------------------------------------------------------------
-# Terrain
-# ---------------------------------------------------------------------------
-func _build_islands() -> void:
-    for biome_id in ISLANDS:
-        var data: Dictionary = ISLANDS[biome_id]
-        _add_island_slabs(biome_id, data)
-        _add_island_rim(biome_id, data)
-        _add_shoreline_band(biome_id, data)
-        _add_biome_features(biome_id, data)
-        _add_island_floor(biome_id, data)
-    # Flush the frost snow cap by raising its top slab height.
-    _mesh_box("FrostSnowCap", Vector3(50.0, FROST_SURFACE + 0.2, 14.0), Vector3(ISLANDS["frost"]["radius"].x * 1.38, 0.3, ISLANDS["frost"]["radius"].y * 1.38), Color("dbeaf0")).rotation.y = 0.05
+## Boats are MOORED, and they stay moored.
+##
+## Everything here is wind and water acting on a stationary hull: heave, roll,
+## pitch, a slow swing on the mooring and a sail that luffs. None of it moves a
+## boat from one place to another, because Core has no transportation state at all
+## -- no vessels, no routes, no cargo, no in-transit resources (see the missing-
+## field list in the audit). A boat that sailed somewhere would be asserting a
+## journey the authoritative world does not contain, so no boat sails and none
+## carries a wake.
+func _update_water(_delta: float) -> void:
+    # The surface itself is animated in-shader; only the boats need CPU motion.
+    for i in range(_boats.size()):
+        var boat: Node3D = _boats[i]
+        if not is_instance_valid(boat):
+            continue
+        var phase := float(i)
+        boat.position.y = WATER_LEVEL + 0.14 + sin(_time * 0.7 + phase * 1.4) * 0.07
+        boat.rotation.z = sin(_time * 0.6 + phase) * 0.05
+        boat.rotation.x = cos(_time * 0.5 + phase) * 0.035
+        # Mooring yaw: a hull on a single line lies to the wind and swings slowly.
+        # Bounded at +-0.045 rad about the BUILT heading, which keeps the sail off
+        # edge-on (the failure that made boats collapse to ~2px) and cannot drift.
+        if i < _boat_headings.size():
+            boat.rotation.y = _boat_headings[i] + sin(_time * 0.19 + phase * 2.1) * 0.045
+        # Sail luff: unsheeted cloth shivers. Rotating the sail node about Y keeps
+        # it in one draw call -- no vertex animation, no extra material.
+        var sail: Node3D = _boat_sails[i] if i < _boat_sails.size() else null
+        if is_instance_valid(sail):
+            sail.rotation.y = (PI * 0.5) + sin(_time * 1.9 + phase * 0.8) * 0.07
 
-func _add_island_slabs(biome_id: String, data: Dictionary) -> void:
-    var center: Vector3 = data["center"]
+# ===========================================================================
+# CLOUDS — purely environmental sky life. Flat-shaded diorama puffs drifting
+# slowly over the ocean; they assert nothing about the simulation (Core has no
+# weather), cast no shadows, and drift on wall-clock time even while the world
+# clock is held, exactly like wind and water.
+# ===========================================================================
+var _clouds: Array[Node3D] = []
+var _cloud_bases: Array[Vector3] = []
+
+func _build_clouds() -> void:
+    var group := Node3D.new()
+    group.name = "Clouds"
+    add_child(group)
+    var r := AstrixMesh.rng(4242)
+    # Six clouds over the OUTER ocean only: from the diorama camera a cloud at
+    # any height projects onto the ground plane, so anything placed over the
+    # island triangle would regularly cover a farm or building and read as
+    # simulation state (snow? smoke? a verification mark?). Outer water never
+    # holds authoritative meaning, so sky life lives there. Stations are LOW
+    # (y~13): the higher a cloud, the further its projection shifts, so low
+    # clouds stay over the water they were placed above.
+    var spots := [
+        Vector3(-48.0, 13.0, -2.0), Vector3(-44.0, 14.0, -36.0), Vector3(0.0, 13.0, -50.0),
+        Vector3(50.0, 12.0, 14.0), Vector3(-42.0, 15.0, -22.0), Vector3(22.0, 13.0, 30.0),
+    ]
+    var bases: Array[Vector3] = []
+    for i in range(spots.size()):
+        var cloud := Node3D.new()
+        cloud.name = "Cloud_%d" % i
+        cloud.position = (spots[i] as Vector3) + Vector3(r.randf() * 4.0 - 2.0, r.randf() * 2.0 - 1.0, r.randf() * 4.0 - 2.0)
+        var puffs := 3 + int(r.randf() * 2.0)
+        for p in range(puffs):
+            var rad := 1.2 + r.randf() * 0.8
+            var puff := AstrixMesh.blob("Puff", rad,
+                Vector3(float(p) * 2.2 - float(puffs) * 1.1 + r.randf(), r.randf() * 0.8, (r.randf() - 0.5) * 2.4),
+                Color("f4f8fc"), 7, 4)
+            puff.scale.y = 0.45
+            # Unshaded: clouds stay bright against any sky grade, and critically
+            # they must never darken the world beneath them.
+            puff.material_override = AstrixPalette.unshaded(Color("f4f8fc"))
+            puff.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+            cloud.add_child(puff)
+        # Deterministic variety: some clouds read larger and lazier. Capped so
+        # no single cloud grows island-sized and confusing at close framing.
+        var s := 0.7 + r.randf() * 0.4
+        cloud.scale = Vector3(s, s, s)
+        group.add_child(cloud)
+        _clouds.append(cloud)
+        _cloud_bases.append(cloud.position)
+
+func _update_clouds(_delta: float) -> void:
+    # A slow breathing bob around each cloud's fixed station — deliberately NOT
+    # lateral travel. Travel would eventually carry a cloud over an island,
+    # where it would cover authoritative state; the station never moves, so the
+    # sky stays alive and the islands stay readable.
+    for i in range(_clouds.size()):
+        var cloud: Node3D = _clouds[i]
+        if not is_instance_valid(cloud):
+            continue
+        var base: Vector3 = _cloud_bases[i] if i < _cloud_bases.size() else cloud.position
+        cloud.position.x = base.x + sin(_time * 0.05 + float(i) * 1.7) * 2.0
+        cloud.position.y = base.y + sin(_time * 0.07 + float(i) * 2.3) * 0.5
+        cloud.position.z = base.z + cos(_time * 0.04 + float(i) * 1.1) * 1.5
+
+# ===========================================================================
+# ISLANDS
+#
+# Each island is a CONTINUOUS column: submerged plinth -> stone cliff -> soil
+# band -> grass cap, then a rocky rim, a beach where appropriate, and a foam
+# ring at the waterline. No vertical gaps (the old build left a void band from
+# y1.6-2.3 that made every island look like it was floating).
+# ===========================================================================
+func _build_island(id: String, data: Dictionary) -> void:
+    var group := Node3D.new()
+    group.name = "Island_%s" % id
+    add_child(group)
+    var centre: Vector3 = data["center"]
     var radius: Vector2 = data["radius"]
     var top: float = data["top"]
-    # Face-to-face value separation: stone base and soil step are visibly DARKER
-    # than the grass top, so the terrain reads as layered ground (bright sunlit
-    # grass above, shadowed earth/rock below) instead of one flat pastel mass.
-    var base := _mesh_box("%s_StoneBase" % biome_id, center + Vector3(0.0, 0.0, 0.0), Vector3(radius.x * 2.0, 1.0, radius.y * 2.0), Color("5f6a74"))
-    base.rotation.y = 0.12
-    add_child(base)
-    var middle := _mesh_box("%s_SoilStep" % biome_id, center + Vector3(0.0, 0.8, 0.0), Vector3(radius.x * 1.86, 1.6, radius.y * 1.86), (data["color"] as Color).darkened(0.28))
-    middle.rotation.y = -0.08
-    add_child(middle)
-    var top_mesh := _mesh_box("%s_GrassTop" % biome_id, center + Vector3(0.0, top - 0.2, 0.0), Vector3(radius.x * 1.68, 1.0, radius.y * 1.68), (data["color"] as Color).lightened(0.06))
-    top_mesh.rotation.y = 0.05
-    add_child(top_mesh)
-    if biome_id == "frost":
-        var snow := _mesh_box("FrostSnowCap_Lower", center + Vector3(0.0, FROST_SURFACE - 0.35, 0.0), Vector3(radius.x * 1.38, 0.3, radius.y * 1.38), Color("e6f2f6"))
-        snow.rotation.y = 0.05
-        add_child(snow)
-    elif biome_id == "dusk":
-        var sand := _mesh_box("DuskSandCap", center + Vector3(0.0, top + 0.32, 0.0), Vector3(radius.x * 1.42, 0.18, radius.y * 1.42), Color("e3bd9a"))
-        sand.rotation.y = 0.05
-        add_child(sand)
+    var grass_kind: String = data["grass"]
+    var rock_color: Color = data["rock"]
 
-# Rounded "chunky edge" rim for each island slab: fat turf overhang balls around
-# the grass-top rim (so the lip is soft, not a sharp box) plus a sparse ring of
-# small soil/pebble mounds at the soil-step boundary for layered, hand-built
-# elevation. Never spaced too regularly so it reads natural, not tessellated.
-func _add_island_rim(biome_id: String, data: Dictionary) -> void:
-    var c: Vector3 = data["center"]
-    var radius: Vector2 = data["radius"]
-    var top: float = data["top"]
-    var surface := _surface_of(biome_id)
-    var tuft_color := (data["color"] as Color).darkened(0.08)
-    var mound_color := Color("b9a888") if biome_id == "meadow" else (
-        Color("aeb6c4") if biome_id == "frost" else Color("b79b86"))
-    var count := 18
+    var grass_h := 0.9
+    var soil_h := 0.8
+    var grass_bottom := top - grass_h
+    var soil_bottom := grass_bottom - soil_h
+    # Cliff runs from 5 units UNDER the water up to the soil band: the island
+    # visibly rises out of the sea and has mass below it.
+    var cliff_bottom := WATER_LEVEL - 5.0
+
+    # Stone cliff, faceted, slightly rotated so it never looks like a box.
+    # Cliff rock is darkened well below the grass so the island silhouette reads
+    # as land rising out of water rather than a pale mass floating in sky.
+    var cliff := AstrixMesh.cylinder_on("Cliff", radius.x * 0.99, radius.x * 1.06,
+        soil_bottom - cliff_bottom, Vector3(centre.x, cliff_bottom, centre.z), rock_color.darkened(0.18), 11)
+    cliff.scale.z = radius.y / radius.x
+    cliff.rotation.y = 0.19
+    group.add_child(cliff)
+    # Wet band right at the waterline: darkest value in the island stack.
+    var wet := AstrixMesh.cylinder_on("WetRock", radius.x * 1.02, radius.x * 1.05, 1.4,
+        Vector3(centre.x, WATER_LEVEL - 0.8, centre.z), rock_color.darkened(0.48), 11)
+    wet.scale.z = radius.y / radius.x
+    wet.rotation.y = 0.19
+    group.add_child(wet)
+
+    # Soil band, inset so the profile steps inward toward the grass.
+    var soil := AstrixMesh.cylinder_on("Soil", radius.x * 0.955, radius.x * 0.985, soil_h,
+        Vector3(centre.x, soil_bottom, centre.z), AstrixPalette.SOIL, 12)
+    soil.scale.z = radius.y / radius.x
+    soil.rotation.y = -0.11
+    group.add_child(soil)
+
+    # Grass cap — its bottom sits exactly on the soil band, no gap.
+    var grass := AstrixMesh.cylinder_on("Grass", radius.x * 0.93, radius.x * 0.95, grass_h,
+        Vector3(centre.x, grass_bottom, centre.z), _grass_color(grass_kind), 12)
+    grass.scale.z = radius.y / radius.x
+    grass.rotation.y = 0.07
+    group.add_child(grass)
+    _seasonal_mesh(grass, _grass_season_kind(grass_kind), 0.0)
+    # Winter snow blanket, sized just above the grass cap.
+    var snow := AstrixMesh.cylinder_on("SnowBlanket", radius.x * 0.935, radius.x * 0.955, 0.14,
+        Vector3(centre.x, top - 0.04, centre.z), AstrixPalette.SNOW, 12)
+    snow.scale.z = radius.y / radius.x
+    snow.rotation.y = 0.07
+    group.add_child(_snow_cap(snow))
+
+    # WINTER SHORE ICE: a pale collar floating just outside the rim. In winter the
+    # land goes white, so without this the coastline still read as summer.
+    var ice := AstrixMesh.cylinder_on("ShoreIce", radius.x * 1.14, radius.x * 1.14, 0.18,
+        Vector3(centre.x, WATER_LEVEL - 0.02, centre.z), Color("dbe9f2"), 14)
+    ice.scale.z = radius.y / radius.x
+    ice.rotation.y = -0.14
+    group.add_child(ice)
+    ice.visible = _season == "winter"
+    _ice_nodes.append(ice)
+
+    # Interior elevation: a low knoll so the ground is not a perfect disc.
+    var knoll := AstrixMesh.cylinder_on("Knoll", radius.x * 0.34, radius.x * 0.44, 0.55,
+        Vector3(centre.x - radius.x * 0.28, top - 0.1, centre.z - radius.y * 0.3),
+        _grass_color(grass_kind).darkened(0.05), 10)
+    knoll.scale.z = radius.y / radius.x
+    group.add_child(knoll)
+    _seasonal_mesh(knoll, _grass_season_kind(grass_kind), -0.05)
+
+    _build_island_rim(group, id, centre, radius, top, rock_color, bool(data["beach"]))
+    _build_island_floor(group, id, centre, radius, top)
+
+func _grass_color(kind: String) -> Color:
+    match kind:
+        "frost": return AstrixPalette.FROST_GRASS
+        "dusk": return AstrixPalette.DUSK_GRASS
+        _: return AstrixPalette.GRASS
+## Frost/dusk keep their identity through the seasons: each biome has its own
+## per-season grass colour in AstrixPalette.SEASONS, so a seasonal repaint never
+## flattens dusk's violet or frost's mint into meadow green.
+func _grass_season_kind(kind: String) -> String:
+    match kind:
+        "frost": return "frost_grass"
+        "dusk": return "dusk_grass"
+        _: return "grass"
+
+## Rocky rim + optional beach. Islands end in blocky boulders meeting the water,
+## with an occasional sand strip — a crisp readable silhouette. Shore foam is
+## drawn by the ocean shader, so there is no decal geometry here.
+func _build_island_rim(group: Node3D, id: String, centre: Vector3, radius: Vector2,
+        top: float, rock_color: Color, beach: bool) -> void:
+    var r := AstrixMesh.rng(hash(id) & 0x7fffffff)
+    var count := int(radius.x * 1.5)
     for i in range(count):
-        # Grass overhang just proud of the grass-top rim.
-        var ang := TAU * float(i) / float(count) + fmod(float(i * 7), TAU) * 0.03
-        var gx := c.x + cos(ang) * (radius.x * 1.70)
-        var gz := c.z + sin(ang) * (radius.y * 1.70)
-        var turf := _mesh_box("RimTurf_%s_%02d" % [biome_id, i], Vector3(gx, surface - 0.18, gz), Vector3(1.1, 0.4, 1.1), tuft_color)
-        turf.rotation.y = ang + PI * 0.25
-        turf.material_override = _material(tuft_color)
-        add_child(turf)
-        # Layered soil mound slightly farther out, a touch lower -> stepped edge.
+        var a := TAU * float(i) / float(count) + r.randf() * 0.12
+        var dir := Vector3(cos(a), 0.0, sin(a))
+        var rad := AstrixMesh.ellipse_radius(radius * 0.95, dir)
+        var pos := centre + dir * rad
+        # Boulders straddle the waterline: land visibly enters the sea. They are
+        # DARK and wet-looking on purpose — pale grey rocks at the waterline read
+        # as cloud puffs under a floating island, which made the ocean read as sky.
+        var boulder := AstrixAssets.rock(int(r.randi()), 1.1 + r.randf() * 0.45, rock_color.darkened(0.3))
+        boulder.position = Vector3(pos.x, WATER_LEVEL + 0.08, pos.z)
+        boulder.scale.y = 1.4 + r.randf() * 1.0
+        group.add_child(boulder)
+        # Turf overhang so the top rim is soft, not a sharp disc.
         if i % 2 == 0:
-            var mx := c.x + cos(ang) * (radius.x * 1.82)
-            var mz := c.z + sin(ang) * (radius.y * 1.82)
-            var mound := _mesh_box("RimMound_%s_%02d" % [biome_id, i], Vector3(mx, top - 0.5, mz), Vector3(1.5, 0.5, 1.5), mound_color)
-            mound.rotation.y = ang
-            mound.material_override = _material(mound_color)
-            add_child(mound)
+            var lip := AstrixMesh.blob("Turf", 0.5 + r.randf() * 0.28,
+                Vector3(pos.x, top - 0.32, pos.z), _grass_color(ISLANDS[id]["grass"]), 6, 3)
+            lip.scale.y = 0.42
+            group.add_child(lip)
+            _seasonal_mesh(lip, _grass_season_kind(ISLANDS[id]["grass"]), 0.03)
+    if beach:
+        # Sand spit on the camera-facing side: LAND -> SAND -> WATER reads
+        # instantly. It sits ABOVE the waterline and overlaps the grass cap so it
+        # is visibly part of the island — a sand disc floating at water level
+        # read as a detached white blob in open water.
+        var dir2 := Vector3(0.72, 0.0, 0.69).normalized()
+        var rad2 := AstrixMesh.ellipse_radius(radius * 0.82, dir2)
+        var beach_pos := centre + dir2 * rad2
+        var sand := AstrixMesh.cylinder_on("Beach", 2.6, 3.4, 1.2,
+            Vector3(beach_pos.x, WATER_LEVEL + 0.15, beach_pos.z), AstrixPalette.SAND, 10)
+        sand.scale.z = 0.55
+        sand.rotation.y = -0.7
+        group.add_child(sand)
 
-# Soft bright sand/foam band ringing an island at the water line. This is the
-# shoreline->water transition the viewer reads to understand where dry land ends.
-func _add_shoreline_band(biome_id: String, data: Dictionary) -> void:
-    var c: Vector3 = data["center"]
-    var radius: Vector2 = data["radius"]
-    var segments := 14
-    var top: float = data["top"]
-    var band_color := Color("d9b98a") if biome_id == "meadow" else (Color("bcd4d0") if biome_id == "frost" else Color("deaa8f"))
-    for i in range(segments):
-        var ang := TAU * float(i) / float(segments)
-        var px := c.x + cos(ang) * (radius.x * 1.42)
-        var pz := c.z + sin(ang) * (radius.y * 1.42)
-        var band := _mesh_box("Shore_%s_%02d" % [biome_id, i], Vector3(px, top - 0.65, pz), Vector3(2.1, 0.24, 2.1), band_color)
-        band.rotation.y = ang
-        band.material_override = _material(band_color)
-        add_child(band)
-
-# Invisible StaticBody floor at the true walkable surface so the player rests on
-# the terrain (froze at their spawn height otherwise).
-func _add_island_floor(biome_id: String, data: Dictionary) -> void:
-    var surface := _surface_of(biome_id)
-    var radius: Vector2 = data["radius"]
+func _build_island_floor(group: Node3D, id: String, centre: Vector3, radius: Vector2, top: float) -> void:
     var body := StaticBody3D.new()
-    body.name = "%s_Floor" % biome_id
-    body.position = Vector3(data["center"].x, surface, data["center"].z)
+    body.name = "%s_Floor" % id
+    body.position = Vector3(centre.x, top - 0.3, centre.z)
     var shape := CollisionShape3D.new()
     var box := BoxShape3D.new()
-    box.size = Vector3(radius.x * 1.7, 0.6, radius.y * 1.7)
+    box.size = Vector3(radius.x * 1.75, 0.6, radius.y * 1.75)
     shape.shape = box
     body.add_child(shape)
-    add_child(body)
+    group.add_child(body)
 
-func _surface_of(biome_id: String) -> float:
-    match biome_id:
-        "meadow": return MEADOW_SURFACE
-        "frost": return FROST_SURFACE
-        _: return DUSK_SURFACE
+func _surface_of(id: String) -> float:
+    return float(ISLANDS.get(id, ISLANDS["meadow"])["top"])
 
-func _add_biome_features(biome_id: String, data: Dictionary) -> void:
-    var c: Vector3 = data["center"]
-    var s := _surface_of(biome_id)
-    if biome_id == "meadow":
-        for i in range(6):
-            _add_tree(c + Vector3(-13.0 + float(i % 3) * 11.0, 0.0, -8.0 + float(i / 3) * 13.0), s, i, data["accent"])
-        for i in range(10):
-            _add_grass(c + Vector3(-15.0 + float(i % 5) * 7.0, s, -11.0 + float(i / 5) * 14.0), i, Color("a8b98a"))
-    elif biome_id == "frost":
-        for i in range(5):
-            _add_ice(c + Vector3(-10.0 + float(i % 3) * 10.0, s, -5.0 + float(i / 3) * 8.0), i)
-        for i in range(4):
-            _add_rock(c + Vector3(-11.0 + float(i) * 7.0, s, 5.0), i, Color("a8c4d4"))
-    else:
-        for i in range(5):
-            _add_crystal(c + Vector3(-10.0 + float(i % 3) * 10.0, s, -5.0 + float(i / 3) * 9.0), i)
-        for i in range(4):
-            _add_rock(c + Vector3(-10.0 + float(i) * 7.0, s, 6.0), i, Color("ae887e"))
+## Signed distance-ish helper: >0 means the point is inside some island's grass
+## disc. Used to keep water dressing off the land.
+func _nearest_island_penetration(pos: Vector3) -> float:
+    var best := -999.0
+    for id in ISLANDS.keys():
+        var data: Dictionary = ISLANDS[id]
+        var c: Vector3 = data["center"]
+        var rad: Vector2 = data["radius"]
+        var dx := (pos.x - c.x) / rad.x
+        var dz := (pos.z - c.z) / rad.y
+        best = maxf(best, 1.0 - sqrt(dx * dx + dz * dz))
+    return best
 
-func _build_paths() -> void:
-    # Meadow clearing + a dirt path that runs from the spawn toward the southern
-    # water and bridge. Warm tan paths read as the "built" accent per the refs.
-    add_child(_mesh_box("MeadowClearing", Vector3(22.0, MEADOW_SURFACE - 0.08, 30.0), Vector3(14.0, 0.16, 11.0), Color("cfa97a")))
-    add_child(_mesh_box("MeadowPath", Vector3(22.0, MEADOW_SURFACE - 0.05, 37.0), Vector3(3.6, 0.12, 12.0), Color("c29568")))
-    add_child(_mesh_box("MeadowPath_South", Vector3(22.0, MEADOW_SURFACE - 0.05, 42.0), Vector3(3.0, 0.12, 4.0), Color("b98a5d")))
-    add_child(_mesh_box("FrostPath", Vector3(50.0, FROST_SURFACE - 0.05, 14.0), Vector3(3.0, 0.12, 14.0), Color("c4c9d6")))
-    add_child(_mesh_box("DuskPath", Vector3(76.0, DUSK_SURFACE - 0.05, 39.0), Vector3(18.0, 0.12, 2.8), Color("c08976")))
+## Map an authoritative Core position onto its rendered island.
+##
+## Core's coordinates are abstract (farms clustered at one end of each island,
+## houses at the other). `core_scale` is an ANISOTROPIC world-units-per-Core-unit
+## factor: the meadow stretches X so Core's 4-unit farm spacing becomes ~6 world
+## units — enough that two farm plots with barns never overlap — while keeping Z
+## inside the island. `core_flip` mirrors Z so the farm belt faces the camera.
+##
+## The clamp is PER-AXIS (a box, not an ellipse): an ellipse clamp collapsed
+## distinct farms onto the same rim arc, which made them overlap.
+func _map_core_pos(island_id: String, core_pos: Vector3) -> Vector3:
+    var data: Dictionary = ISLANDS.get(island_id, ISLANDS["meadow"])
+    var centre: Vector3 = data["center"]
+    var radius: Vector2 = data["radius"]
+    var core_centre: Vector2 = data["core_center"]
+    var flip: Vector2 = data.get("core_flip", Vector2.ONE)
+    var scale: Vector2 = data.get("core_scale", Vector2.ONE)
+    var offset := Vector2(
+        (core_pos.x - core_centre.x) * flip.x * scale.x,
+        (core_pos.z - core_centre.y) * flip.y * scale.y)
+    # Buildable interior: 72% of the island radius keeps a margin from the rim so
+    # nothing is ever built on a cliff or hanging over the sea.
+    var limit := radius * 0.72
+    offset.x = clampf(offset.x, -limit.x, limit.x)
+    offset.y = clampf(offset.y, -limit.y, limit.y)
+    return Vector3(centre.x + offset.x, float(data["top"]), centre.z + offset.y)
 
-# ---------------------------------------------------------------------------
-# Curated starting clearing — the "front door" of the game.
-# ---------------------------------------------------------------------------
-func _build_starting_area() -> void:
+## World-space point on an island's rim facing another island — used for bridge
+## endpoints and for routing the static path network to the bridge head.
+func _rim_point(from_id: String, toward_id: String, inset: float = 0.93) -> Vector3:
+    var da: Dictionary = ISLANDS[from_id]
+    var db: Dictionary = ISLANDS[toward_id]
+    var ca: Vector3 = da["center"]
+    var cb: Vector3 = db["center"]
+    var dir := cb - ca
+    dir.y = 0.0
+    dir = dir.normalized()
+    var point := ca + dir * (AstrixMesh.ellipse_radius((da["radius"] as Vector2) * inset, dir))
+    point.y = float(da["top"])
+    return point
+
+# ===========================================================================
+# SETTLEMENT DRESSING (static: paths, square, well, market, fences)
+#
+# Ground decals are THIN BOXES with real thickness at distinct heights, never
+# coplanar quads — this is the actual fix for the ground striping / z-fighting,
+# rather than hiding it with a camera angle.
+# ===========================================================================
+const GROUND_PATH_Y := 0.02        # path slabs sit 2cm above the grass cap
+const GROUND_PLAZA_Y := 0.015
+
+## A path slab running between two points on the island surface. Built as a real
+## box (never a coplanar quad) at a fixed offset above the grass, so ground
+## decals can never z-fight; the caller supplies actual endpoints, which is what
+## stops paths from dead-ending in open grass.
+func _path_between(from_pos: Vector3, to_pos: Vector3, width: float, surface: float) -> MeshInstance3D:
+    var delta := to_pos - from_pos
+    delta.y = 0.0
+    var length := Vector2(delta.x, delta.z).length()
+    var mid := (from_pos + to_pos) * 0.5
+    var path := AstrixMesh.box_on("Path", Vector3(width, 0.1, length + width * 0.6),
+        Vector3(mid.x, surface + GROUND_PATH_Y, mid.z), AstrixPalette.PATH.darkened(0.05))
+    path.rotation.y = atan2(delta.x, delta.z)
+    return path
+
+func _build_settlement_dressing() -> void:
     var s := MEADOW_SURFACE
-    # Trees / rocks curtaining the clearing so the path is readable.
-    _add_tree(Vector3(16.0, 0.0, 40.0), s + 0.5, 90, Color("ed9dcc"))
-    _add_tree(Vector3(28.0, 0.0, 39.0), s + 0.5, 91, Color("a5d873"))
-    _add_shrub(Vector3(14.5, s, 31.0), "Shrub_01")
-    _add_shrub(Vector3(29.5, s, 25.5), "Shrub_02")
-    _add_shrub(Vector3(25.0, s, 36.5), "Shrub_03")
+    var group := Node3D.new()
+    group.name = "Settlement"
+    add_child(group)
 
-    # Small handcrafted hut with a doorway (walkable gap).
-    _build_hut(Vector3(29.0, s, 26.0))
+    # Village plaza at the island centre. Warm gravel (not grey — grey read as a
+    # missing-material patch against the green), with a darker trim ring so its
+    # edge is a deliberate shape rather than a hard cut into the grass.
+    group.add_child(AstrixMesh.box_on("Plaza", Vector3(7.0, 0.13, 6.0),
+        Vector3(0.0, s + GROUND_PLAZA_Y, -1.5), AstrixPalette.PATH))
+    group.add_child(AstrixMesh.box_on("PlazaTrim", Vector3(7.7, 0.1, 6.7),
+        Vector3(0.0, s + GROUND_PLAZA_Y - 0.015, -1.5), AstrixPalette.PATH_DARK))
 
-    # Using high indices avoids clashing with the meadow feature trees (0..5).
-    _add_signpost(Vector3(18.0, s, 32.5))
-    _add_lantern(Vector3(24.5, s, 29.5))
-    _add_bench(Vector3(16.5, s, 27.0))
-    _add_crate(Vector3(27.0, s, 33.0))
-    _add_crate(Vector3(27.9, s, 33.8))
-    _add_barrel(Vector3(26.2, s, 33.4))
-    _add_rock(Vector3(31.5, s, 31.0), 80, Color("8f98a3"))
-    _add_rock(Vector3(13.5, s, 36.0), 81, Color("9aa3ae"))
-    # A little well by the hut path edge ties the clearing to "habitation".
-    _add_well(Vector3(19.5, s, 24.5))
-    # A low split fence lines the southern path from spawn toward the shore,
-    # guiding the eye (and traversal) toward the bridge and magic islet.
-    for i in range(4):
-        _add_fence_post(Vector3(24.6, s, 34.2 + float(i) * 2.4), float(i) * 90.0)
-
-    # Flowers + pebbles scattered around the clearing give readable grass dressing.
-    var flower_colors := [Color("f5c6d8"), Color("f0e08a"), Color("e8a0b8"), Color("f4f0c8")]
-    for i in range(14):
-        var fx: float = 15.0 + fmod(float(i) * 3.7, 12.0)
-        var fz: float = 24.5 + fmod(float(i) * 5.1, 9.0)
-        if Vector2(fx - 22.0, fz - 30.0).length() > 7.5:
-            _add_flower(Vector3(fx, s, fz), i, flower_colors[i % flower_colors.size()])
-    for i in range(10):
-        var px: float = 14.0 + fmod(float(i) * 4.3, 14.0)
-        var pz: float = 23.0 + fmod(float(i) * 6.7, 11.0)
-        if Vector2(px - 22.0, pz - 30.0).length() > 7.8:
-            _add_pebble(Vector3(px, s, pz), i)
-    # A couple of mushrooms at the tree bases for a cozy, hand-planted feel.
-    _add_mushroom(Vector3(15.2, s, 39.6), 0)
-    _add_mushroom(Vector3(27.2, s, 38.4), 1)
-
-    # Southern shore, water edge + the bridge to the magic islet, all kept
-    # close to spawn so the clearing -> path -> water -> bridge -> landmark
-    # composition reads in a single camera frame next to the player.
-    _build_shoreline(s)
-    _build_bridge(s)
-    _build_magic_islet(s + 0.5)
-    _build_staging()
-
-# ---------------------------------------------------------------------------
-# Foreground / midground / background staging (Presentation Pass 2).
-# Foreground: large framing elements entering the frame corners for overlap &
-# occlusion depth. Midground: clusters filling the once-hollow center. Far:
-# a quieter rim of trees behind the clearing. All coords computed from the
-# ortho camera's world->screen mapping at spawn so staging lands on-frame.
-# ---------------------------------------------------------------------------
-func _build_staging() -> void:
-    var s := MEADOW_SURFACE
-
-    # FOREGROUND — bottom-right frame corner gets a large tree that partially
-    # enters the frame (overlap/occlusion depth); the bottom-left is already the
-    # beacon destination, so the left edge gets shore rocks + a shrub instead.
-    _add_tree(Vector3(31.3, 0.0, 29.3), s, 100, Color("e89fc0"), 1.6)    # right foreground tree
-    _add_rock(Vector3(19.1, s, 41.8), 82, Color("9aa3ae"))                # left edge shore rock
-    _add_rock(Vector3(23.2, s, 39.8), 83, Color("8f98a3"))
-    _add_shrub(Vector3(19.6, s, 40.9), "Shrub_FG1")
-    _add_shrub(Vector3(28.3, s, 31.7), "Shrub_FG2")
-    _add_grass(Vector3(30.2, s, 30.6), 100, Color("8fc08a"))
-    _add_grass(Vector3(32.6, s, 28.4), 101, Color("8fc08a"))
-    _add_flower(Vector3(30.0, s, 30.0), 110, Color("f5d0e0"))
-    _add_flower(Vector3(32.4, s, 28.0), 111, Color("f0e08a"))
-
-    # MIDGROUND — clusters that fill the previously hollow center band (world
-    # z ~31-37) without blocking the path. Intentional groups, not scatter.
-    _add_shrub(Vector3(24.6, s, 33.6), "Shrub_M1")
-    _add_rock(Vector3(25.2, s, 34.8), 84, Color("a0a9b2"))
-    _add_flower(Vector3(25.8, s, 34.2), 112, Color("e8c4f0"))
-    _add_flower(Vector3(24.9, s, 35.2), 113, Color("f5d0e0"))
-    _add_shrub(Vector3(18.9, s, 34.0), "Shrub_M2")
-    _add_pebble(Vector3(18.3, s, 33.4), 20)
-    _add_pebble(Vector3(19.6, s, 34.5), 21)
-    _add_grass(Vector3(19.4, s, 33.4), 102, Color("a8c98a"))
-    _add_grass(Vector3(25.4, s, 31.2), 103, Color("a8c98a"))
-    _add_flower(Vector3(26.2, s, 30.8), 114, Color("f0e08a"))
-    _add_flower(Vector3(20.4, s, 32.2), 115, Color("c8e8ff"))
-    _add_mushroom(Vector3(26.6, s, 32.8), 5)
-
-    # BACKGROUND RIM — a quieter, smaller tree line behind the clearing (upper
-    # frame) that frames the scene without competing with the foreground.
-    _add_tree(Vector3(12.5, 0.0, 36.8), s, 102, Color("a5d873"), 0.85)
-    _add_tree(Vector3(15.0, 0.0, 32.1), s, 103, Color("ed9dcc"), 0.9)
-    _add_tree(Vector3(20.8, 0.0, 24.4), s, 104, Color("a5d873"), 1.0)
-    _add_rock(Vector3(14.4, s, 34.5), 87, Color("aab6c2"))
-    _add_grass(Vector3(16.2, s, 31.0), 104, Color("8fc08a"))
-
-    # AUTHORED GROUPS — little composed scenes so the world feels designed.
-    # Hut garden: fence posts + flowers on the hut's south face.
-    _add_fence_post(Vector3(28.0, s, 28.3), 0.0)
-    _add_fence_post(Vector3(30.0, s, 28.3), 0.0)
-    _add_flower(Vector3(28.6, s, 27.9), 116, Color("f5c6d8"))
-    _add_flower(Vector3(29.4, s, 27.7), 117, Color("f0e08a"))
-    _add_pebble(Vector3(29.0, s, 27.5), 22)
-    # Well cluster: barrel + crate + flowers around the well.
-    _add_crate(Vector3(18.8, s, 23.8))
-    _add_barrel(Vector3(20.3, s, 23.6))
-    _add_flower(Vector3(18.4, s, 24.8), 118, Color("e8a0b8"))
-    _add_grass(Vector3(20.9, s, 24.0), 105, Color("a8c98a"))
-    # Bridge shoreline: rocks + flowers flanking the bridge head on both sides.
-    _add_rock(Vector3(19.2, s, 40.6), 88, Color("8f98a3"))
-    _add_rock(Vector3(24.6, s, 40.7), 89, Color("a0a9b2"))
-    _add_flower(Vector3(19.8, s, 39.9), 119, Color("c8e8ff"))
-    _add_flower(Vector3(24.0, s, 39.9), 123, Color("f5d0e0"))
-    _add_grass(Vector3(20.6, s, 39.6), 106, Color("8fc08a"))
-    _add_grass(Vector3(23.4, s, 39.6), 107, Color("8fc08a"))
-
-func _build_shoreline(s: float) -> void:
-    for i in range(5):
-        var x: float = 17.0 + float(i) * 2.4
-        add_child(_mesh_box("ShoreSand_%d" % i, Vector3(x, s - 0.12, 38.2), Vector3(2.2, 0.2, 3.4), Color("d9b98a")))
-
-# Walkable wooden deck flush with the meadow surface, bridging the shore to the
-# magic islet. Planks carry their own StaticBody so the player crosses it.
-func _build_bridge(s: float) -> void:
-    # Wide soft grounding shadow under the deck so the bridge reads as a solid
-    # object sitting on the water, not a floating plank.
-    _add_ground_shadow(Vector3(22.0, s + 0.02, 41.0), 3.2, 3.4, 0.3)
-    var deck := StaticBody3D.new()
-    deck.name = "Bridge_Deck"
-    deck.position = Vector3(22.0, s, 41.0)
-    deck.rotation.y = 0.0
-    var shape := CollisionShape3D.new()
-    var box := BoxShape3D.new()
-    box.size = Vector3(4.2, 0.3, 6.0)
-    shape.shape = box
-    deck.add_child(shape)
-    var rail_l := _mesh_box("Rail_L", Vector3(-1.9, 1.0, 0.0), Vector3(0.2, 1.1, 6.0), Color("8a5a3f"))
-    var rail_r := _mesh_box("Rail_R", Vector3(1.9, 1.0, 0.0), Vector3(0.2, 1.1, 6.0), Color("8a5a3f"))
-    rail_l.material_override = StandardMaterial3D.new()
-    rail_r.material_override = StandardMaterial3D.new()
-    (rail_l.material_override as StandardMaterial3D).albedo_color = Color("8a5a3f")
-    (rail_r.material_override as StandardMaterial3D).albedo_color = Color("8a5a3f")
-    deck.add_child(rail_l)
-    deck.add_child(rail_r)
-    for i in range(7):
-        var plank := MeshInstance3D.new()
-        var pm := BoxMesh.new()
-        pm.size = Vector3(3.8, 0.22, 0.95)
-        plank.mesh = pm
-        plank.position = Vector3(0.0, 0.0, (float(i) - 3.0) * 1.0)
-        plank.material_override = _material(Color("a9795c"))
-        deck.add_child(plank)
-    add_child(deck)
-
-# A small modular island the player reaches by crossing the bridge. Carries its
-# own floor collider, then the magic landmark on top.
-func _build_magic_islet(s: float) -> void:
-    var isle_base := StaticBody3D.new()
-    isle_base.name = "MagicIslet_Floor"
-    isle_base.position = Vector3(22.0, s, 43.5)
-    var shape := CollisionShape3D.new()
-    var box := BoxShape3D.new()
-    box.size = Vector3(6.0, 0.6, 6.0)
-    shape.shape = box
-    isle_base.add_child(shape)
-    add_child(isle_base)
-    add_child(_mesh_box("MagicIslet_Stone", Vector3(22.0, s - 3.4, 43.5), Vector3(8.0, 6.4, 8.0), Color("6e748c")))
-    add_child(_mesh_box("MagicIslet_Top", Vector3(22.0, s - 0.22, 43.5), Vector3(7.0, 0.5, 7.0), Color("c4b18e")))
-    add_child(_mesh_box("MagicIslet_Grass", Vector3(22.0, s - 0.02, 43.5), Vector3(6.4, 0.1, 6.4), Color("a5b886")))
-
-    # The magic landmark: a softly glowing obelisk beacon. Emissive body + tip,
-    # a warm violet light pool at its base, a small OmniLight, and a ring of
-    # standing stones so it reads as a deliberate destination, not a prop.
-    var obelisk := MeshInstance3D.new()
-    obelisk.name = "MagicLandmark"
-    var om := BoxMesh.new()
-    om.size = Vector3(1.0, 4.8, 1.0)
-    obelisk.mesh = om
-    obelisk.position = Vector3(22.0, s + 2.4, 43.5)
-    obelisk.material_override = _material(Color("8a6cc9"), 0.5)
-    add_child(obelisk)
-    var tip := MeshInstance3D.new()
-    var tm := PrismMesh.new()
-    tm.size = Vector3(1.4, 1.1, 1.4)
-    tip.mesh = tm
-    tip.position = Vector3(22.0, s + 5.1, 43.5)
-    tip.material_override = _material(Color("a88ae6"), 0.7)
-    add_child(tip)
-    var base := _mesh_box("LandmarkBase", Vector3(22.0, s + 0.4, 43.5), Vector3(2.4, 0.8, 2.4), Color("5e6f78"))
-    base.material_override = _material(Color("5e6f78"))
-    add_child(base)
-    # Warm violet glow pool on the ground under the beacon.
-    var pool := MeshInstance3D.new()
-    var pool_mesh := CylinderMesh.new()
-    pool_mesh.top_radius = 1.7
-    pool_mesh.bottom_radius = 1.7
-    pool_mesh.height = 0.02
-    pool.mesh = pool_mesh
-    pool.position = Vector3(22.0, s + 0.03, 43.5)
-    pool.material_override = _material(Color("a889e8"), 0.65)
-    add_child(pool)
-    # Small localized light so the beacon visibly illuminates its surroundings.
-    var beacon_light := OmniLight3D.new()
-    beacon_light.name = "BeaconLight"
-    beacon_light.position = Vector3(22.0, s + 3.4, 43.5)
-    beacon_light.light_color = Color("c9a0ff")
-    beacon_light.light_energy = 2.2
-    beacon_light.omni_range = 11.0
-    beacon_light.shadow_enabled = false
-    add_child(beacon_light)
-    # Standing-stone ring: chunky silhouettes that frame the beacon.
-    for i in range(6):
-        var ang := TAU * float(i) / 6.0 + 0.3
-        var stone := MeshInstance3D.new()
-        var stone_mesh := PrismMesh.new()
-        stone_mesh.size = Vector3(0.7, 1.6 + float(i % 3) * 0.5, 0.7)
-        stone.mesh = stone_mesh
-        stone.position = Vector3(22.0 + cos(ang) * 2.6, s + 0.8 + float(i % 2) * 0.3, 43.5 + sin(ang) * 2.6)
-        stone.rotation.y = ang
-        stone.material_override = _material(Color("7a5a9e"))
-        add_child(stone)
-    # Surrounding vegetation + a couple of rocks so the islet feels lived-in.
-    _add_flower(Vector3(20.2, s, 42.4), 120, Color("e8c4f0"))
-    _add_flower(Vector3(23.9, s, 44.6), 121, Color("c8e8ff"))
-    _add_flower(Vector3(20.6, s, 45.0), 122, Color("f0e0c0"))
-    _add_rock(Vector3(24.6, s, 42.6), 85, Color("8a7a9e"))
-    _add_rock(Vector3(19.4, s, 43.9), 86, Color("96849e"))
-
-func _build_hut(center: Vector3) -> void:
-    var s := center.y
-    _add_ground_shadow(center + Vector3(0.0, 0.0, 0.0), 2.9, 2.5, 0.4)
-    var body := MeshInstance3D.new()
-    body.name = "Hut"
-    var bm := BoxMesh.new()
-    bm.size = Vector3(4.4, 2.6, 3.6)
-    body.mesh = bm
-    body.position = center + Vector3(0.0, 1.3, 0.0)
-    body.material_override = _material(Color("e0b288"))
-    add_child(body)
-    var roof := MeshInstance3D.new()
-    var rm := PrismMesh.new()
-    rm.size = Vector3(5.2, 1.4, 4.4)
-    roof.mesh = rm
-    roof.position = center + Vector3(0.0, 2.8, 0.0)
-    roof.rotation.y = 0.0
-    roof.material_override = _material(Color("d07c63"))
-    add_child(roof)
-    # Door (southern side) + window accents.
-    var door := _mesh_box("HutDoor", center + Vector3(0.0, 0.95, 1.85), Vector3(1.1, 1.9, 0.15), Color("8a5a3f"))
-    door.material_override = _material(Color("8a5a3f"))
-    add_child(door)
-    var win := _mesh_box("HutWindow", center + Vector3(-1.9, 1.6, 0.4), Vector3(0.15, 0.9, 0.9), Color("e9b95c"))
-    win.material_override = _material(Color("e9b95c"), 0.2)
-    add_child(win)
-    # Collision: walls (leave the door open).
-    var body_collider := StaticBody3D.new()
-    body_collider.name = "Hut_Walls"
-    body_collider.position = center + Vector3(0.0, 1.3, 0.0)
-    for part in [
-        {"p": Vector3(0.0, 0.0, -1.9), "s": Vector3(4.6, 2.6, 0.25)},   # north wall
-        {"p": Vector3(0.0, 0.0, 1.9), "s": Vector3(4.6, 2.6, 0.25)},    # south wall (blocked partially by collider too; door visual only)
-        {"p": Vector3(-2.3, 0.0, 0.0), "s": Vector3(0.25, 2.6, 4.0)},   # west wall
-        {"p": Vector3(2.3, 0.0, 0.0), "s": Vector3(0.25, 2.6, 4.0)},    # east wall
+    # Path network. Every path RUNS BETWEEN two real places (plaza -> farm belt,
+    # plaza -> houses, plaza -> bridge head, plaza -> beach) instead of
+    # dead-ending in open grass.
+    var bridge_head := _rim_point("meadow", "frost", 0.84)
+    for spec in [
+        # plaza -> farm belt (south, camera-facing)
+        {"from": Vector3(0.0, 0.0, 1.0), "to": Vector3(0.0, 0.0, 8.0), "w": 2.4},
+        # plaza -> houses (north)
+        {"from": Vector3(0.0, 0.0, -4.0), "to": Vector3(-1.5, 0.0, -9.0), "w": 2.2},
+        # plaza -> bridge head (north-east)
+        {"from": Vector3(3.0, 0.0, -2.0), "to": Vector3(bridge_head.x, 0.0, bridge_head.z), "w": 2.2},
+        # plaza -> beach/dock (south-east)
+        {"from": Vector3(2.5, 0.0, 1.5), "to": Vector3(8.0, 0.0, 7.5), "w": 1.9},
+        # farm belt spur (west)
+        {"from": Vector3(-2.0, 0.0, 5.5), "to": Vector3(-8.5, 0.0, 5.0), "w": 1.8},
     ]:
-        var cs := CollisionShape3D.new()
-        var csh := BoxShape3D.new()
-        csh.size = part["s"]
-        cs.shape = csh
-        cs.position = part["p"]
-        body_collider.add_child(cs)
-    add_child(body_collider)
+        group.add_child(_path_between(spec["from"] as Vector3, spec["to"] as Vector3, float(spec["w"]), s))
 
-func _add_signpost(pos: Vector3) -> void:
-    _add_ground_shadow(pos, 0.5, 0.5, 0.4)
-    var group := Node3D.new()
-    group.name = "Signpost"
-    group.position = pos
-    var pole := _mesh_box("SigpPole", Vector3(0.0, 1.0, 0.0), Vector3(0.2, 2.0, 0.2), Color("7d5237"))
-    var board := _mesh_box("SigpBoard", Vector3(0.35, 1.5, 0.0), Vector3(1.6, 0.8, 0.12), Color("b98a5f"))
-    group.add_child(pole)
-    group.add_child(board)
-    add_child(group)
-    _obstacle(pos + Vector3(0.0, 0.9, 0.0), Vector3(0.5, 1.8, 0.5))
+    var well := AstrixAssets.well()
+    well.position = Vector3(0.0, s, -1.5)
+    group.add_child(well)
 
-func _add_lantern(pos: Vector3) -> void:
-    _add_ground_shadow(pos, 0.42, 0.42, 0.4)
-    var group := Node3D.new()
-    group.name = "Lantern"
-    group.position = pos
-    var pole := _mesh_box("LantPole", Vector3(0.0, 1.2, 0.0), Vector3(0.15, 2.4, 0.15), Color("4c5560"))
-    var glow := _mesh_box("LantGlow", Vector3(0.0, 2.5, 0.0), Vector3(0.7, 0.7, 0.7), Color("ffd98a"))
-    glow.material_override = _material(Color("ffd98a"), 0.6)
-    group.add_child(pole)
-    group.add_child(glow)
-    add_child(group)
-    _obstacle(pos + Vector3(0.0, 1.2, 0.0), Vector3(0.4, 2.4, 0.4))
+    # Market stalls lining the plaza edge (not scattered across it), rotated to
+    # face inward so the square reads as a market.
+    var stall_colors := [Color("d64239"), Color("3f91da"), Color("79b93b")]
+    for i in range(3):
+        var stall := AstrixAssets.market_stall(50 + i, stall_colors[i])
+        stall.position = Vector3(-2.6 + float(i) * 2.6, s, -4.0)
+        stall.rotation.y = 0.0
+        group.add_child(_clearable_prop(stall))
 
-func _add_bench(pos: Vector3) -> void:
-    _add_ground_shadow(pos, 1.15, 0.6, 0.42)
-    var group := Node3D.new()
-    group.name = "Bench"
-    group.position = pos
-    group.add_child(_mesh_box("BenchSeat", Vector3(0.0, 0.55, 0.0), Vector3(1.9, 0.2, 0.7), Color("b98a5f")))
-    group.add_child(_mesh_box("BenchLegA", Vector3(-0.8, 0.25, 0.0), Vector3(0.2, 0.5, 0.6), Color("8a5a3f")))
-    group.add_child(_mesh_box("BenchLegB", Vector3(0.8, 0.25, 0.0), Vector3(0.2, 0.5, 0.6), Color("8a5a3f")))
-    add_child(group)
-    _obstacle(pos + Vector3(0.0, 0.5, 0.0), Vector3(2.0, 0.6, 1.0))
+    var cart := AstrixAssets.cart(77)
+    cart.position = Vector3(2.6, s, -0.2)
+    group.add_child(_clearable_prop(cart))
 
-func _add_crate(pos: Vector3) -> void:
-    _add_ground_shadow(pos, 0.72, 0.72, 0.45)
-    var box := _mesh_box("Crate", pos + Vector3(0.0, 0.55, 0.0), Vector3(1.1, 1.1, 1.1), Color("c2925f"))
-    box.material_override = _material(Color("c2925f"))
-    add_child(box)
-    _obstacle(pos + Vector3(0.0, 0.55, 0.0), Vector3(1.1, 1.1, 1.1))
+    for spec2 in [
+        {"pos": Vector3(1.9, 0.0, 1.6), "seed": 91},
+        {"pos": Vector3(-3.4, 0.0, -0.4), "seed": 92},
+    ]:
+        var sign_post := AstrixAssets.signpost(int(spec2["seed"]))
+        sign_post.position = (spec2["pos"] as Vector3) + Vector3(0.0, s, 0.0)
+        group.add_child(_clearable_prop(sign_post))
 
-func _add_barrel(pos: Vector3) -> void:
-    _add_ground_shadow(pos, 0.7, 0.7, 0.45)
-    var barrel := MeshInstance3D.new()
-    barrel.name = "Barrel"
-    var bm := CylinderMesh.new()
-    bm.top_radius = 0.55
-    bm.bottom_radius = 0.62
-    bm.height = 1.15
-    barrel.mesh = bm
-    barrel.position = pos + Vector3(0.0, 0.57, 0.0)
-    barrel.material_override = _material(Color("a9795c"))
-    add_child(barrel)
-    # Band accent for material readability.
-    var band := _mesh_box("Band", pos + Vector3(0.0, 0.95, 0.0), Vector3(1.1, 0.12, 1.1), Color("7d5237"))
-    add_child(band)
-    _obstacle(pos + Vector3(0.0, 0.55, 0.0), Vector3(1.2, 1.15, 1.2))
+    for lx in [-3.2, 3.2]:
+        var lamp := AstrixAssets.lantern()
+        lamp.position = Vector3(lx, s, -3.0)
+        group.add_child(_clearable_prop(lamp))
 
-func _add_flower(pos: Vector3, index: int, color: Color) -> void:
-    _add_ground_shadow(pos, 0.18, 0.18, 0.3)
-    var flower := MeshInstance3D.new()
-    flower.name = "Flower_%02d" % index
-    var stem := CylinderMesh.new()
-    stem.top_radius = 0.02
-    stem.bottom_radius = 0.025
-    stem.height = 0.32
-    flower.mesh = stem
-    flower.position = pos + Vector3(0.0, 0.16, 0.0)
-    flower.material_override = _material(Color("6f9a55"))
-    add_child(flower)
-    var head := MeshInstance3D.new()
-    var hm := SphereMesh.new()
-    hm.radius = 0.1
-    hm.height = 0.18
-    head.mesh = hm
-    head.position = pos + Vector3(0.0, 0.34, 0.0)
-    head.material_override = _material(color)
-    add_child(head)
-
-func _add_pebble(pos: Vector3, index: int) -> void:
-    _add_ground_shadow(pos, 0.24, 0.24, 0.32)
-    var pebble := MeshInstance3D.new()
-    pebble.name = "Pebble_%02d" % index
-    var pm := SphereMesh.new()
-    pm.radius = 0.16 + float(index % 3) * 0.05
-    pm.height = 0.2
-    pebble.mesh = pm
-    pebble.position = pos + Vector3(0.0, 0.09, 0.0)
-    pebble.rotation.x = 0.6
-    pebble.rotation.y = float(index) * 0.9
-    pebble.material_override = _material(Color("b8b4aa"))
-    add_child(pebble)
-
-func _add_mushroom(pos: Vector3, index: int) -> void:
-    _add_ground_shadow(pos, 0.24, 0.24, 0.35)
-    var mushroom := Node3D.new()
-    mushroom.name = "Mushroom_%02d" % index
-    mushroom.position = pos
-    add_child(mushroom)
-    var stem := MeshInstance3D.new()
-    var sm := CylinderMesh.new()
-    sm.top_radius = 0.06
-    sm.bottom_radius = 0.09
-    sm.height = 0.26
-    stem.mesh = sm
-    stem.position.y = 0.13
-    stem.material_override = _material(Color("e8e3d6"))
-    mushroom.add_child(stem)
-    var cap := MeshInstance3D.new()
-    var cm := SphereMesh.new()
-    cm.radius = 0.18
-    cm.height = 0.22
-    cap.mesh = cm
-    cap.position.y = 0.27
-    cap.scale = Vector3(1.0, 0.7, 1.0)
-    cap.material_override = _material(Color("e05f4e"))
-    mushroom.add_child(cap)
-
-func _add_well(pos: Vector3) -> void:
-    _add_ground_shadow(pos, 1.35, 1.35, 0.4)
-    var group := Node3D.new()
-    group.name = "Well"
-    group.position = pos + Vector3(0.0, 0.0, 0.0)
-    add_child(group)
-    var base := MeshInstance3D.new()
-    var bm := CylinderMesh.new()
-    bm.top_radius = 0.95
-    bm.bottom_radius = 1.05
-    bm.height = 1.0
-    base.mesh = bm
-    base.position.y = 0.5
-    base.material_override = _material(Color("c9c5ba"))
-    group.add_child(base)
-    var rim := MeshInstance3D.new()
-    var rm := CylinderMesh.new()
-    rm.top_radius = 0.95
-    rm.bottom_radius = 0.95
-    rm.height = 0.3
-    rim.mesh = rm
-    rim.position.y = 1.0
-    rim.material_override = _material(Color("8a8378"))
-    group.add_child(rim)
-    var post_l := _mesh_box("PostL", Vector3(-0.62, 1.6, 0.0), Vector3(0.14, 1.4, 0.14), Color("7d5237"))
-    var post_r := _mesh_box("PostR", Vector3(0.62, 1.6, 0.0), Vector3(0.14, 1.4, 0.14), Color("7d5237"))
-    group.add_child(post_l)
-    group.add_child(post_r)
-    var cross := _mesh_box("Cross", Vector3(0.0, 2.25, 0.0), Vector3(1.6, 0.14, 0.14), Color("8a5a3f"))
-    group.add_child(cross)
-    _obstacle(pos + Vector3(0.0, 0.9, 0.0), Vector3(2.2, 1.6, 2.2))
-
-func _add_fence_post(pos: Vector3, rot_deg: float) -> void:
-    _add_ground_shadow(pos, 0.3, 0.4, 0.4)
-    var post := _mesh_box("FencePost", pos + Vector3(0.0, 0.5, 0.0), Vector3(0.16, 1.0, 0.5), Color("9a6a45"))
-    post.rotation.y = deg_to_rad(rot_deg)
-    post.material_override = _material(Color("9a6a45"))
-    add_child(post)
-    var rail := _mesh_box("FenceRail", pos + Vector3(0.0, 0.72, 0.0), Vector3(0.16, 0.1, 0.86), Color("b98a5f"))
-    rail.rotation.y = deg_to_rad(rot_deg)
-    rail.material_override = _material(Color("b98a5f"))
-    add_child(rail)
-    _obstacle(pos + Vector3(0.0, 0.4, 0.0), Vector3(0.4, 0.9, 0.6))
-
-func _obstacle(center: Vector3, size: Vector3) -> void:
-    var body := StaticBody3D.new()
-    body.name = "Obstacle_%s_%s" % [center.x, center.z]
-    body.position = center
-    var cs := CollisionShape3D.new()
-    var sh := BoxShape3D.new()
-    sh.size = size
-    cs.shape = sh
-    body.add_child(cs)
-    add_child(body)
-
-func _add_tree(position: Vector3, surface: float, index: int, crown_color: Color, scale_mult: float = 1.0) -> void:
-    _add_ground_shadow(Vector3(position.x, surface, position.z), 1.9 * scale_mult, 1.7 * scale_mult, 0.42)
-    var tree := Node3D.new()
-    tree.name = "Tree_%02d" % index
-    tree.position = Vector3(position.x, surface, position.z)
-    tree.scale = Vector3(scale_mult, scale_mult, scale_mult)
-    add_child(tree)
-    _animated_plants.append(tree)
-    var trunk := _mesh_box("Trunk", Vector3(0.0, 1.0, 0.0), Vector3(0.6, 2.0, 0.6), Color("8a5a3f"))
-    tree.add_child(trunk)
-    # Lit side of the trunk brighter, shadow side darker: the key light defines
-    # the cylinder's form instead of leaving it a flat brown stick.
-    var trunk_light := _mesh_box("TrunkLight", Vector3(-0.2, 1.0, 0.0), Vector3(0.28, 2.0, 0.6), Color("a9795c"))
-    trunk_light.material_override = _material(Color("a9795c"))
-    tree.add_child(trunk_light)
-    for tier in range(3):
-        var crown := MeshInstance3D.new()
-        var mesh := PrismMesh.new()
-        mesh.size = Vector3(3.4 - tier * 0.6, 1.5, 3.0 - tier * 0.5)
-        crown.mesh = mesh
-        crown.position.y = 2.2 + float(tier) * 0.95
-        crown.rotation.y = float(tier) * 0.4
-        # Foliage value tiers: lowest tier darkest (shadowed underside), upper
-        # tiers brighter (sun-facing) — the cone reads as volumetric, not flat.
-        var tier_color := crown_color.darkened(0.18 - 0.06 * float(tier))
-        crown.material_override = _material(tier_color.lightened(0.04 * float(tier)))
-        tree.add_child(crown)
-    # Trunk collision so the player can't pass through trees.
-    var body := StaticBody3D.new()
-    var cs := CollisionShape3D.new()
-    var cyl := CylinderShape3D.new()
-    cyl.radius = 0.42
-    cyl.height = 1.8
-    cs.shape = cyl
-    cs.position = Vector3(0.0, 0.9, 0.0)
-    body.add_child(cs)
-    tree.add_child(body)
-
-func _add_shrub(node_pos: Vector3, node_name: String) -> void:
-    _add_ground_shadow(node_pos, 1.0, 0.85, 0.42)
-    var shrub := Node3D.new()
-    shrub.name = node_name
-    shrub.position = node_pos
-    add_child(shrub)
-    _animated_plants.append(shrub)
-    for i in range(5):
-        var ball := MeshInstance3D.new()
-        var sm := SphereMesh.new()
-        sm.radius = 0.28
-        sm.height = 0.5
-        ball.mesh = sm
-        ball.position = Vector3((i - 2) * 0.4, 0.3, (i % 3) * 0.3)
-        ball.material_override = _material(Color("7cb56f"))
-        shrub.add_child(ball)
-    _obstacle(node_pos + Vector3(0.0, 0.3, 0.0), Vector3(1.6, 0.7, 1.2))
-
-func _add_ice(position: Vector3, index: int) -> void:
-    var ice := MeshInstance3D.new()
-    ice.name = "IceFormation_%02d" % index
-    var mesh := PrismMesh.new()
-    mesh.size = Vector3(1.2, 3.0 + float(index % 2), 1.0)
-    ice.mesh = mesh
-    ice.position = position
-    ice.rotation.y = float(index) * 0.7
-    ice.material_override = _material(Color("a9dae8"), 0.15)
-    add_child(ice)
-
-func _add_crystal(position: Vector3, index: int) -> void:
-    var crystal := MeshInstance3D.new()
-    crystal.name = "DuskCrystal_%02d" % index
-    var mesh := PrismMesh.new()
-    mesh.size = Vector3(0.9, 2.6 + float(index % 2), 0.9)
-    crystal.mesh = mesh
-    crystal.position = position
-    crystal.rotation.y = float(index) * 0.8
-    crystal.material_override = _material(Color("a979df"), 0.3)
-    add_child(crystal)
-
-func _add_rock(position: Vector3, index: int, color: Color) -> void:
-    _add_ground_shadow(position, 1.05, 0.9, 0.45)
-    var rock := MeshInstance3D.new()
-    rock.name = "Rock_%02d" % index
-    var mesh := PrismMesh.new()
-    mesh.size = Vector3(1.8, 1.1, 1.4)
-    rock.mesh = mesh
-    rock.position = position
-    rock.rotation.y = float(index) * 0.8
-    rock.material_override = _material(color)
-    add_child(rock)
-    _obstacle(position + Vector3(0.0, 0.4, 0.0), Vector3(1.6, 0.9, 1.3))
-
-func _add_grass(position: Vector3, index: int, color: Color) -> void:
-    var tuft := Node3D.new()
-    tuft.name = "GrassTuft_%02d" % index
-    tuft.position = position
-    add_child(tuft)
-    _animated_plants.append(tuft)
-    for i in range(4):
-        var blade := _mesh_box("Blade", Vector3((i - 2) * 0.18, 0.35, sin(float(i)) * 0.15), Vector3(0.12, 0.7 + float(i % 2) * 0.15, 0.12), color)
-        blade.rotation.z = float(i - 2) * 0.12
-        tuft.add_child(blade)
-
-# Materialize gatherable resource nodes so the action button / gather_nearest()
-# actually has targets. Each node carries its authoritative server id, wires into
-# the "resource_nodes" group that Player3D scans, and shows a small floating glow
-# marker so the player can see what is collectable. Positions sit on the walkable
-# surface; server-node ids match src/astrix/state.ts seeds so gathering mutates
-# authoritative state and follows the conflict-free GATHER flow.
-func _build_resource_nodes() -> void:
-    var specs := [
-        {"id": "tree-meadow-002", "type": "wood", "pos": Vector3(22.8, MEADOW_SURFACE, 29.2), "color": Color("b9876a")},   # right beside spawn
-        {"id": "tree-meadow-001", "type": "wood", "pos": Vector3(28.2, MEADOW_SURFACE, 31.8), "color": Color("c08a6a")},
-        {"id": "rock-frost-001", "type": "stone", "pos": Vector3(31.6, MEADOW_SURFACE, 31.0), "color": Color("aab6c2")},  # by the path rock
-        {"id": "crystal-dusk-001", "type": "crystal", "pos": Vector3(75.5, DUSK_SURFACE, 36.5), "color": Color("cf9ef0")},
-        {"id": "water-source-001", "type": "water", "pos": Vector3(22.0, MEADOW_SURFACE, 38.0), "color": Color("7fb8e8")},  # shoreline
-    ]
-    for spec in specs:
-        var node := ResourceNode3D.new()
-        node.name = "ResourceNode_" + str(spec["id"])
-        node.resource_id = spec["type"]
-        node.server_node_id = spec["id"]
-        node.amount = 1
-        node.position = spec["pos"] + Vector3(0.0, 0.05, 0.0)
-        node.add_to_group("resource_nodes")
-        add_child(node)
-        # Floating soft-glow pickup marker (visible, presentation-only).
-        var marker := MeshInstance3D.new()
-        var mm := PrismMesh.new()
-        mm.size = Vector3(0.42, 0.7, 0.42)
-        marker.mesh = mm
-        marker.position = Vector3(0.0, 1.15, 0.0)
-        marker.rotation.y = 0.6
-        marker.material_override = _material(spec["color"], 0.45)
-        node.add_child(marker)
-        var halo := MeshInstance3D.new()
-        var hm := SphereMesh.new()
-        hm.radius = 0.34
-        hm.height = 0.5
-        halo.mesh = hm
-        halo.position = Vector3(0.0, 1.15, 0.0)
-        halo.material_override = _material((spec["color"] as Color).lightened(0.3), 0.3)
-        node.add_child(halo)
-
-func _build_decor() -> void:
-    # Three decorative trees around the far meadow so the space doesn't feel bare.
-    _add_tree(Vector3(31.0, 0.0, 41.0), MEADOW_SURFACE, 92, Color("a5d873"))
-    _add_grass(Vector3(33.0, MEADOW_SURFACE, 43.0), 90, Color("89cd97"))
-    _add_grass(Vector3(11.0, MEADOW_SURFACE, 23.0), 91, Color("89cd97"))
-
-func _on_astrix_state_received(state: Dictionary) -> void:
-    var world_state := get_node_or_null("/root/WorldState")
-    var prev: Variant = null if world_state == null else {
-        "crops": world_state.crops.duplicate(true), "bridges": world_state.bridges.duplicate(true),
-        "buildings": world_state.buildings.duplicate(true), "season": world_state.season,
-    }
-    if world_state:
-        world_state.apply_snapshot(state)
-    _materialize_sim(prev)
-
-# ---------------------------------------------------------------------------
-# SIM MATERIALIZATION (final pass): render the authoritative simulation's
-# changing state into the world so Godot is the agent's visible laboratory.
-# Presentation-only — every entity below is driven purely by the server
-# snapshot (GameClient polls /astrix/state). Never simulates locally.
-# ---------------------------------------------------------------------------
-var _sim_nodes: Dictionary = {}
-var _materialized_once := false
-
-const SIM_BRIDGE_SPANS := {
-    "frost-meadow": {"p": Vector3(36.5, 0.0, 22.0), "rot": 0.55},
-    "dusk-meadow": {"p": Vector3(50.0, 0.0, 35.0), "rot": -0.4},
-}
-
-func _surface_for_island(island_id: String) -> float:
-    if island_id == "frost":
-        return FROST_SURFACE
-    if island_id == "dusk":
-        return DUSK_SURFACE
-    return MEADOW_SURFACE
-
-func _seed_materializer() -> void:
-    if _materialized_once:
-        return
-    _materialized_once = true
-    # Decorative authored trees get a node-name mapping so clear_terrain can
-    # hide them. The tree seeds at these indexes correspond to resource nodes.
-    _sim_nodes["trees"] = {}
-
-func _materialize_sim(prev: Dictionary) -> void:
-    _seed_materializer()
-    var world_state := get_node_or_null("/root/WorldState")
-    if world_state == null:
-        return
-
-    # 1) FARMS + CROPS — build one farmoplot group per authoritative farm; crop
-    # height scales with growthStage (0 = newly planted, <0.8 growing, >=0.8 mature).
-    var handled_farms := {}
-    var idx := 0
-    for building in world_state.buildings.values():
-        if not (building is Dictionary):
-            continue
-        if str(building.get("type", "")) != "farm":
-            continue
-        handled_farms[str(building.get("id", "farm_%d" % idx))] = true
-        _build_sim_farm(building, world_state, str(building.get("id", "farm_%d" % idx)))
-        idx += 1
-    # Remove farm groups no longer in authoritative state.
-    for key in _sim_nodes.keys():
-        if str(key).begins_with("farm:") and not handled_farms.has(str(key).substr(5)):
-            _free_sim_node(key)
-
-    # 2) BRIDGES — render where authoritative connectivity says islands are joined.
-    var seen_pairs := {}
-    for bridge in world_state.bridges:
-        var pair := [str(bridge.get("islandA", "")), str(bridge.get("islandB", ""))]
-        pair.sort()
-        var key := String(pair[0]) + "-" + String(pair[1])
-        if seen_pairs.has(key):
-            continue
-        seen_pairs[key] = true
-        var span = SIM_BRIDGE_SPANS.get(key)
-        if span is Dictionary:
-            _build_sim_bridge(key, span, bridge)
-    # Remove bridge groups whose pair is no longer connected.
-    for key in _sim_nodes.keys():
-        if str(key).begins_with("bridge:") and not seen_pairs.has(str(key).substr(7)):
-            _free_sim_node(key)
-
-    # 3) RESOURCE NODES — hide glow markers when their authoritative server id
-    # is gone (clear_terrain permanently removes wood nodes). Presentation-only.
-    var live_ids := {}
-    for node in world_state.resource_nodes.values():
-        if node is Dictionary:
-            live_ids[str(node.get("id", ""))] = true
-    for rn in get_tree().get_nodes_in_group("resource_nodes"):
-        if rn is ResourceNode3D:
-            var rn3 := rn as ResourceNode3D
-            var sid := rn3.server_node_id
-            rn3.visible = live_ids.has(sid)
-    notify_property_list_changed()
-
-func _build_sim_farm(building: Dictionary, world_state: Node, farm_id: String) -> void:
-    var node_key := "farm:" + farm_id
-    var group: Node3D = _sim_nodes.get(node_key) as Node3D
-    if group == null:
-        group = Node3D.new()
-        group.name = "SimFarm_" + farm_id
-        add_child(group)
-        _sim_nodes[node_key] = group
-    # Clear previous plot meshes (sim nodes only — cheap, ~3 plots/farm).
-    for child in group.get_children():
-        child.queue_free()
-    var pos := _snapshot_pos(building)
-    var surface := _surface_for_island(str(building.get("islandId", "meadow")))
-    group.position = Vector3(pos.x, surface, pos.z)
-
-    # Farm bed + up to 3 crop plots.
-    var bed := MeshInstance3D.new()
-    var bm := BoxMesh.new()
-    bm.size = Vector3(3.6, 0.12, 4.6)
-    bed.mesh = bm
-    bed.position = Vector3(0.0, 0.06, 0.0)
-    bed.material_override = _material(Color("8a5a2b"))
-    group.add_child(bed)
-    var rim := MeshInstance3D.new()
-    var rm := BoxMesh.new()
-    rm.size = Vector3(3.9, 0.06, 0.35)
-    rim.mesh = rm
-    rim.position = Vector3(0.0, 0.1, 2.4)
-    rim.material_override = _material(Color("6e4a24"))
-    group.add_child(rim)
-
-    # Attach crops from authoritative crops[] by matching farmPlotId.
-    var plot_stages: Array[float] = [0.0, 0.0, 0.0]
-    var used := 0
-    for crop in world_state.crops.values():
-        if str(crop.get("farmPlotId", "")) != farm_id:
-            continue
-        if used < plot_stages.size():
-            plot_stages[used] = float(crop.get("growthStage", 0.0))
-            used += 1
-    var plot_colors := [Color("6fbf3f"), Color("7ccb48"), Color("e7cf5a")]
-    for i in range(plot_stages.size()):
-        var stage := plot_stages[i]
-        if stage <= 0.0:
-            # Empty furrow.
-            var furrow := MeshInstance3D.new()
-            var fm := BoxMesh.new()
-            fm.size = Vector3(1.4, 0.06, 0.8)
-            furrow.mesh = fm
-            furrow.position = Vector3((float(i) - 1.0) * 1.5, 0.12, 0.0)
-            furrow.material_override = _material(Color("6e4a24").darkened(0.15))
-            group.add_child(furrow)
-            continue
-        # Crop stalk — height reflects growth (planted=short, mature=tall).
-        var mature := stage >= 0.8
-        var height := 0.5 + stage * 1.3
-        var crop := MeshInstance3D.new()
-        var cm := BoxMesh.new()
-        cm.size = Vector3(0.22, height, 0.22)
-        crop.mesh = cm
-        crop.position = Vector3((float(i) - 1.0) * 1.5, 0.12 + height * 0.5, 0.0)
-        crop.material_override = _material(plot_colors[i % plot_colors.size()])
-        crop.name = "Crop_plot%d_stage%.1f" % [i, stage]
-        group.add_child(crop)
-        if mature:
-            # Mature crops get a small golden tip + slight emissive so harvest-readiness reads.
-            var tip := MeshInstance3D.new()
-            var tm := BoxMesh.new()
-            tm.size = Vector3(0.3, 0.08, 0.3)
-            tip.mesh = tm
-            tip.position = crop.position + Vector3(0.0, height * 0.5, 0.0)
-            tip.material_override = _material(Color("ffd98a"), 0.45)
-            group.add_child(tip)
-
-func _build_sim_bridge(pair_key: String, span: Dictionary, bridge: Dictionary) -> void:
-    var node_key := "bridge:" + pair_key
-    if _sim_nodes.has(node_key):
-        return  # already rendered
-    var group := Node3D.new()
-    group.name = "SimBridge_" + pair_key
-    var base := span["p"] as Vector3
-    var surface := MEADOW_SURFACE - 0.1
-    group.position = Vector3(base.x, surface, base.z)
-    add_child(group)
-    _sim_nodes[node_key] = group
-
-    # Deck planks across the water gap, oriented along the span.
-    for i in range(6):
-        var plank := MeshInstance3D.new()
-        var pm := BoxMesh.new()
-        pm.size = Vector3(1.0, 0.2, 3.0)
-        plank.mesh = pm
-        var t := (float(i) - 2.5) * 0.85
-        plank.position = Vector3(0.0, 0.0, t)
-        plank.material_override = _material(Color("a9713a"))
-        group.add_child(plank)
+    # Pasture: a CLOSED four-sided pen with hay inside, on the west side. The
+    # previous open fence corner enclosed nothing, which read as unfinished.
+    var pen_centre := Vector3(-10.5, s, -3.0)
+    var pen := Node3D.new()
+    pen.name = "Pasture"
+    pen.position = pen_centre
     for side in [-1.0, 1.0]:
-        var rail := MeshInstance3D.new()
-        var rrm := BoxMesh.new()
-        rrm.size = Vector3(0.12, 1.1, 6.0)
-        rail.mesh = rrm
-        rail.position = Vector3(side * 0.9, 0.9, 0.25)
-        rail.material_override = _material(Color("6b4a22"))
-        group.add_child(rail)
-    for end in [-4.0, 4.0]:
-        var post := MeshInstance3D.new()
-        var pom := BoxMesh.new()
-        pom.size = Vector3(0.5, 1.2, 0.5)
-        post.mesh = pom
-        post.position = Vector3(0.0, 0.6, end)
-        post.material_override = _material(Color("6b4a22"))
-        group.add_child(post)
-    group.rotation.y = float(span["rot"])
+        var rail_z := AstrixAssets.fence_run(7.0, 31)
+        rail_z.position = Vector3(side * 3.0, 0.0, 0.0)
+        pen.add_child(rail_z)
+        var rail_x := AstrixAssets.fence_run(6.0, 32)
+        rail_x.position = Vector3(0.0, 0.0, side * 3.5)
+        rail_x.rotation.y = PI * 0.5
+        pen.add_child(rail_x)
+    for i in range(3):
+        pen.add_child(AstrixMesh.cylinder_on("HayBale", 0.45, 0.45, 0.6,
+            Vector3(-1.2 + float(i) * 1.2, 0.0, -0.5 + float(i % 2) * 1.2),
+            AstrixPalette.CROP_HARVEST.darkened(0.15), 9))
+    group.add_child(_clearable_prop(pen))
 
-func _snapshot_pos(node: Dictionary) -> Vector3:
-    var p: Variant = node.get("position", Vector3.ZERO)
-    if p is Dictionary:
-        return Vector3(float(p.get("x", 0.0)), 0.0, float(p.get("z", 0.0)))
-    if p is Vector3:
-        return p
-    return Vector3.ZERO
+    # Frost island: a stone watchtower so the island has a landmark instead of
+    # a bare grey box (review flagged the old cairn as placeholder geometry).
+    var frost: Vector3 = ISLANDS["frost"]["center"]
+    var tower := Node3D.new()
+    tower.name = "FrostWatchtower"
+    tower.position = Vector3(frost.x - 3.0, FROST_SURFACE, frost.z + 2.5)
+    tower.add_child(AstrixMesh.cylinder_on("TowerBase", 1.05, 1.25, 0.4, Vector3.ZERO, AstrixPalette.FROST_ROCK, 10))
+    tower.add_child(AstrixMesh.cylinder_on("TowerShaft", 0.8, 0.9, 2.6, Vector3(0.0, 0.4, 0.0), AstrixPalette.STONE_WALL, 10))
+    # Crenellations round the top: unmistakably built, unmistakably a tower.
+    for i in range(8):
+        var a := TAU * float(i) / 8.0
+        tower.add_child(AstrixMesh.box_on("Merlon", Vector3(0.26, 0.4, 0.26),
+            Vector3(cos(a) * 0.85, 3.0, sin(a) * 0.85), AstrixPalette.FROST_ROCK))
+    tower.add_child(AstrixMesh.cylinder_on("TowerDeck", 1.0, 1.0, 0.16, Vector3(0.0, 3.0, 0.0), AstrixPalette.STONE_WALL, 10))
+    tower.add_child(AstrixMesh.box("TowerDoor", Vector3(0.4, 0.75, 0.06), Vector3(0.0, 0.78, 0.86), AstrixPalette.TIMBER))
+    # Brazier on the deck, registered with the settlement's window lights so it
+    # kindles at dusk from the SAME authoritative `time` the lamps use. A manned
+    # watchtower is the only "activity" this landmark can honestly claim: Core has
+    # no garrison, no patrol and no watch state, so nothing here moves.
+    var brazier := AstrixMesh.box("TowerBrazier", Vector3(0.36, 0.3, 0.36),
+        Vector3(0.0, 3.26, 0.0), Color("2f3a44"))
+    tower.add_child(brazier)
+    _window_lights.append(brazier)
+    _windows_lit = false   # force the next light update to evaluate it
+    group.add_child(tower)
+    group.add_child(_snow_cap(AstrixMesh.box("TowerSnow", Vector3(1.9, 0.12, 1.9),
+        Vector3(frost.x - 3.0, FROST_SURFACE + 3.2, frost.z + 2.5), AstrixPalette.SNOW)))
+    # Dusk island: crystal formation — the arcane accent, contained to one place.
+    var dusk: Vector3 = ISLANDS["dusk"]["center"]
+    for i in range(3):
+        var crystal := AstrixAssets.crystal(200 + i)
+        crystal.position = Vector3(dusk.x - 2.0 + float(i) * 2.0, DUSK_SURFACE, dusk.z - 1.5 + float(i))
+        group.add_child(_clearable_prop(crystal))
 
-func _free_sim_node(key: String) -> void:
-    var node = _sim_nodes.get(key)
-    if node is Node:
-        node.queue_free()
-    _sim_nodes.erase(key)
+# ===========================================================================
+# VEGETATION
+#
+# Placement rule (fixes the canopy-occlusion failure): tall vegetation goes on
+# island INTERIORS and FAR rims only. The camera sits on the +X/+Z side, so the
+# near corridor (+X/+Z of the settlement) carries only low bushes and tufts.
+# ===========================================================================
+func _build_vegetation() -> void:
+    var group := Node3D.new()
+    group.name = "Vegetation"
+    add_child(group)
+    var s := MEADOW_SURFACE
+
+    # Hero tree: one landmark with more detail than anything else, the way the
+    # reference anchors its settlement. North-west, so it never occludes.
+    var hero := AstrixAssets.tree_broadleaf(1, 2.3)
+    (hero["root"] as Node3D).position = Vector3(-9.0, s, -8.0)
+    group.add_child(_clearable_prop(hero["root"]))
+    _register_foliage(hero["foliage"])
+
+    # Treeline along the north and west rim (away from the camera and away from
+    # the farm belt, which occupies the south).
+    var meadow_trees := [
+        Vector3(-11.0, 0.0, -4.5), Vector3(-10.0, 0.0, -1.0), Vector3(-5.5, 0.0, -10.0),
+        Vector3(-2.0, 0.0, -10.8), Vector3(1.5, 0.0, -11.0), Vector3(4.5, 0.0, -10.0),
+        Vector3(7.5, 0.0, -8.0), Vector3(-11.5, 0.0, 2.0),
+    ]
+    for i in range(meadow_trees.size()):
+        var is_conifer := i % 3 == 2
+        var kind := AstrixAssets.tree_broadleaf(10 + i, 0.9 + float(i % 3) * 0.18) if not is_conifer else AstrixAssets.tree_conifer(10 + i, 1.05)
+        (kind["root"] as Node3D).position = (meadow_trees[i] as Vector3) + Vector3(0.0, s, 0.0)
+        group.add_child(_clearable_prop(kind["root"]))
+        # Evergreens keep their cold green through autumn: repainting them with
+        # the seasonal broadleaf colour turned the frost biome orange.
+        _register_foliage(kind["foliage"], "conifer" if is_conifer else "foliage")
+
+    # Young trees: visible growth stages, clustered near the treeline.
+    for i in range(4):
+        var young := AstrixAssets.tree_young(40 + i)
+        (young["root"] as Node3D).position = Vector3(-10.0 + float(i) * 1.7, s, -6.5 + float(i % 2) * 1.5)
+        group.add_child(_clearable_prop(young["root"]))
+        _register_foliage(young["foliage"])
+
+    # Ground cover across the whole island: this is what stops the grass from
+    # reading as one enormous flat colour field. Dense, low, never occluding.
+    var r := AstrixMesh.rng(808)
+    for i in range(84):
+        var a := r.randf() * TAU
+        var rad := sqrt(r.randf()) * 11.6
+        var pos := Vector3(cos(a) * rad, s, sin(a) * rad * 0.88)
+        # Keep the plaza, the farm belt and the orchard block clear, so those
+        # areas read as CULTIVATED (ordered) rather than wild.
+        if absf(pos.x) < 4.6 and absf(pos.z + 1.5) < 4.2:
+            continue
+        if pos.z > 2.0 and pos.z < 9.5 and pos.x > -2.0 and pos.x < 12.0:
+            continue    # south farm belt
+        if pos.x > -8.2 and pos.x < -0.7 and pos.z > 7.2 and pos.z < 11.8:
+            continue    # south-west orchard
+        var roll := r.randf()
+        if roll < 0.3:
+            var b := AstrixAssets.bush(300 + i)
+            (b["root"] as Node3D).position = pos
+            group.add_child(_clearable_prop(b["root"]))
+            _register_foliage(b["foliage"])
+        elif roll < 0.42:
+            var rk2 := AstrixAssets.rock(1300 + i, 0.6 + r.randf() * 0.3)
+            rk2.position = pos
+            group.add_child(_clearable_prop(rk2))
+        else:
+            var tuft := AstrixAssets.grass_tuft(400 + i)
+            (tuft["root"] as Node3D).position = pos
+            group.add_child(_clearable_prop(tuft["root"]))
+            _register_foliage(tuft["foliage"], "grass_dark")
+            _vegetation.append(tuft["root"])
+    for i in range(16):
+        var f := AstrixAssets.flower(500 + i, [Color("e8d24a"), Color("e2649b"), Color("f4f2ea")][i % 3])
+        var a2 := r.randf() * TAU
+        var rad2 := 5.0 + r.randf() * 6.0
+        f.position = Vector3(cos(a2) * rad2, s, sin(a2) * rad2 * 0.88)
+        group.add_child(_clearable_prop(f))
+        _vegetation.append(f)
+
+    # ORCHARD: ordered rows of fruit trees on the SOUTH-WEST lawn, with a
+    # continuous tilled strip under each row so the grid reads as PLANTED, not as
+    # wild woodland. Placed here because in camera axes (u = (x-z)/√2 right,
+    # v = (x+z)/√2 down) this block lands left-of-centre and BELOW centre — clear
+    # of the top-left Observatory panel, which previously covered it.
+    for row in range(3):
+        var oz := 8.0 + float(row) * 1.6
+        var strip := AstrixMesh.box_on("OrchardStrip", Vector3(6.4, 0.1, 0.85),
+            Vector3(-4.45, s + 0.01, oz), AstrixPalette.SOIL_TILLED)
+        group.add_child(strip)
+        for col in range(4):
+            var tree := AstrixAssets.tree_young(900 + row * 10 + col)
+            (tree["root"] as Node3D).position = Vector3(-7.0 + float(col) * 1.7, s + 0.1, oz)
+            group.add_child(_clearable_prop(tree["root"]))
+            _register_foliage(tree["foliage"])
+
+    # Frost island: conifers + boulders, sparser (harsher biome reads as sparser).
+    var frost: Vector3 = ISLANDS["frost"]["center"]
+    for i in range(6):
+        var a3 := TAU * float(i) / 6.0 + 0.4
+        var conifer := AstrixAssets.tree_conifer(600 + i, 0.95 + float(i % 2) * 0.2)
+        (conifer["root"] as Node3D).position = frost + Vector3(cos(a3) * 6.0, FROST_SURFACE, sin(a3) * 5.0)
+        group.add_child(_clearable_prop(conifer["root"]))
+        _register_foliage(conifer["foliage"], "conifer")
+    for i in range(4):
+        var rk := AstrixAssets.rock(700 + i, 1.2, AstrixPalette.FROST_ROCK)
+        rk.position = frost + Vector3(-4.0 + float(i) * 2.2, FROST_SURFACE, -3.5 + float(i % 2) * 2.0)
+        group.add_child(_clearable_prop(rk))
+
+    # Dusk island: sparse, degraded-looking (biomeHealth 0.4) — exposed ground.
+    var dusk: Vector3 = ISLANDS["dusk"]["center"]
+    for i in range(3):
+        var db := AstrixAssets.bush(800 + i)
+        (db["root"] as Node3D).position = dusk + Vector3(-3.0 + float(i) * 3.0, DUSK_SURFACE, 3.0)
+        group.add_child(_clearable_prop(db["root"]))
+        _register_foliage(db["foliage"])
+    for i in range(5):
+        var dr := AstrixAssets.rock(900 + i, 1.0, AstrixPalette.DUSK_ROCK)
+        dr.position = dusk + Vector3(2.0 - float(i) * 1.5, DUSK_SURFACE, -2.0 + float(i % 3) * 2.0)
+        group.add_child(_clearable_prop(dr))
+    # Two windswept saplings: dusk stays wild and undeveloped, but a completely
+    # bare disc reads as unfinished rather than wild. Small, leaning, clear of
+    # the crystal accent and the beach, so the island's silhouette gains variety
+    # without implying settlement.
+    for i in range(2):
+        var dw := AstrixAssets.tree_young(810 + i)
+        var droot := dw["root"] as Node3D
+        droot.position = dusk + Vector3(5.0 - float(i) * 10.5, DUSK_SURFACE, -4.0 + float(i) * 1.5)
+        droot.rotation.z = 0.14 + float(i) * 0.06
+        group.add_child(_clearable_prop(droot))
+        _register_foliage(dw["foliage"])
+
+# ===========================================================================
+# PLAYER + CAMERA
+# ===========================================================================
+func _build_player() -> void:
+    player = AstrixPlayer3D.new()
+    player.name = "Overseer"
+    player.position = Vector3(3.0, MEADOW_SURFACE + 0.5, 4.5)
+    player.water_level = WATER_LEVEL + 0.1
+    # Scaled to villager proportions so the Overseer belongs to the settlement
+    # instead of towering over it (it was ~2.6u against 1.4u villagers).
+    player.scale = Vector3(0.62, 0.62, 0.62)
+    add_child(player)
+
+func _build_camera() -> void:
+    camera = Camera3D.new()
+    camera.name = "DioramaCamera"
+    camera.projection = Camera3D.PROJECTION_ORTHOGONAL
+    camera.near = 1.0
+    camera.far = CAMERA_FAR
+    add_child(camera)
+    _apply_camera_framing()
+    var target := _camera_target()
+    camera.global_position = _camera_eye(target)
+    camera.look_at(target, Vector3.UP)
+    camera.current = true
+    get_viewport().size_changed.connect(_apply_camera_framing)
+    # Operator camera controls arrive through the AstrixInput autoload so the HUD
+    # never has to reach into the 3D scene tree by node path.
+    AstrixInput.camera_zoom_requested.connect(_on_camera_zoom_requested)
+    AstrixInput.camera_mode_requested.connect(set_camera_mode_named)
+
+func _camera_target() -> Vector3:
+    match camera_mode:
+        CameraMode.FOLLOW:
+            return (player.global_position + Vector3(0.0, FOLLOW_LOOK_HEIGHT, 0.0)) if is_instance_valid(player) else _overview_target
+        CameraMode.ARCHIPELAGO:
+            return ARCH_TARGET + _pan_offset()
+        CameraMode.OBSERVATORY:
+            return (OBS_TARGET_PORTRAIT if _portrait else OBS_TARGET) + _pan_offset()
+        CameraMode.ISLAND:
+            return _island_target() + _pan_offset()
+        CameraMode.STEWARD:
+            # No authoritative target means no target. Fall back to the whole
+            # world rather than framing an arbitrary point and implying the
+            # steward is working there.
+            if not _has_steward_focus:
+                return _overview_target + _pan_offset()
+            return _steward_focus + Vector3(0.0, STEWARD_LOOK_HEIGHT, 0.0) + _pan_offset()
+        _:
+            return _overview_target + _pan_offset()
+
+## Core's island list, filtered to islands this renderer has geography for and
+## ordered west-to-east. Empty until the first authoritative snapshot arrives.
+func _sync_core_islands(world_state: Node) -> void:
+    var found: PackedStringArray = PackedStringArray()
+    for entry in world_state.islands:
+        if entry is Dictionary:
+            var id := str((entry as Dictionary).get("id", ""))
+            if ISLANDS.has(id) and not found.has(id):
+                found.append(id)
+    var ordered: PackedStringArray = PackedStringArray()
+    for id in ISLAND_ORDER:
+        if found.has(id):
+            ordered.append(str(id))
+    if ordered != _core_islands:
+        _core_islands = ordered
+        _island_index = 0
+
+## The islands ISLAND mode may visit. Before the first snapshot this is the
+## authored geography already standing in the scene, never a longer list.
+func _island_cycle() -> PackedStringArray:
+    if not _core_islands.is_empty():
+        return _core_islands
+    var authored: PackedStringArray = PackedStringArray()
+    for id in ISLAND_ORDER:
+        authored.append(str(id))
+    return authored
+
+## Centre of the currently selected island, at its own surface height.
+func _island_target() -> Vector3:
+    var cycle := _island_cycle()
+    var id: String = cycle[_island_index % cycle.size()]
+    var centre: Vector3 = ISLANDS[id]["center"]
+    return Vector3(centre.x, _surface_of(id) + 0.6, centre.z)
+
+## Which island ISLAND mode is showing, for the HUD pill. Empty in other modes.
+func island_focus_name() -> String:
+    if camera_mode != CameraMode.ISLAND:
+        return ""
+    var cycle := _island_cycle()
+    return str(cycle[_island_index % cycle.size()])
+
+## What the STEWARD camera is pointed at, derived from authoritative action
+## records. Empty when Core gave us nothing to point at.
+func steward_focus_name() -> String:
+    return _steward_focus_label if _has_steward_focus else ""
+
+## How far back the eye sits along the view axis, and the matching far plane.
+##
+## THIS IS NOT A COMPOSITION SETTING. Under an ORTHOGONAL projection, sliding the
+## eye along its own view axis changes nothing on screen -- only the depth range.
+## The mode offsets below therefore set the camera's DIRECTION (and the pitch that
+## gives the diorama its read); the distance is this one number for every mode.
+##
+## It has to be this large. The bug it fixes: the overview offset was 35.8 units
+## long while the portrait frame has to see ground up to 0.814 x size = 68 units
+## TOWARD the camera, which put the nearest 24 units of ground BEHIND the near
+## plane. It was clipped away, and the bottom 18% of a portrait frame rendered as
+## bare seabed and background. Measured at 820x1180: the band began at y=978,
+## against y=970 predicted by that arithmetic.
+##
+## Requirement is `distance >= near + 0.643 * size` at the widest zoom, which for
+## the portrait overview (size 84, ZOOM_MAX 1.15) is 63. 180 clears every mode
+## with room for the solve to grow. Ortho depth is linear, so a generous range
+## costs almost no precision -- ~0.000025 units per step over CAMERA_FAR.
+const CAMERA_DISTANCE := 180.0
+const CAMERA_FAR := 420.0
+
+## Eye position for a given look-at target: mode direction, fixed distance.
+func _camera_eye(target: Vector3) -> Vector3:
+    return target + _camera_offset().normalized() * CAMERA_DISTANCE
+
+func _camera_offset() -> Vector3:
+    match camera_mode:
+        CameraMode.FOLLOW: return FOLLOW_OFFSET
+        CameraMode.ARCHIPELAGO: return ARCH_OFFSET_PORTRAIT if _portrait else ARCH_OFFSET
+        CameraMode.OBSERVATORY, CameraMode.ISLAND, CameraMode.STEWARD:
+            return OBS_OFFSET_PORTRAIT if _portrait else OBS_OFFSET
+        _: return _overview_offset
+
+## Base ortho height before zoom. OVERVIEW's is solved; the others stay the
+## hand-composed values that visual review signed off on.
+func _base_camera_size() -> float:
+    match camera_mode:
+        CameraMode.ARCHIPELAGO: return ARCH_SIZE_PORTRAIT if _portrait else ARCH_SIZE_LANDSCAPE
+        CameraMode.FOLLOW: return 15.0 if _portrait else 13.0
+        CameraMode.OBSERVATORY, CameraMode.ISLAND:
+            return OBS_SIZE_PORTRAIT if _portrait else OBS_SIZE_LANDSCAPE
+        CameraMode.STEWARD:
+            # With nothing authoritative to frame, STEWARD is the world frame.
+            if not _has_steward_focus:
+                return _overview_size
+            return STEWARD_SIZE_PORTRAIT if _portrait else STEWARD_SIZE_LANDSCAPE
+        _: return _overview_size
+
+# ---------------------------------------------------------------------------
+# DERIVED FRAMING
+# ---------------------------------------------------------------------------
+## The two GROUND directions that move the frame exactly one unit screen-right
+## and one unit screen-up, for whatever direction the camera currently sits in.
+## Both are horizontal, so panning never changes the target's height and the
+## diorama never tilts.
+func _screen_ground_basis() -> Array:
+    var bz := _camera_offset().normalized()
+    var right := Vector3.UP.cross(bz)
+    right = right.normalized() if right.length() > 0.001 else Vector3.RIGHT
+    var up := -(bz - Vector3.UP * bz.dot(Vector3.UP))
+    up = up.normalized() if up.length() > 0.001 else Vector3.FORWARD
+    return [right, up]
+
+## Operator pan, expressed in the camera's ground axes. `_pan.y` is screen-DOWN
+## (the direction a finger drags), hence the negated up vector.
+func _pan_offset() -> Vector3:
+    if is_zero_approx(_pan.x) and is_zero_approx(_pan.y):
+        return Vector3.ZERO
+    var b := _screen_ground_basis()
+    return (b[0] as Vector3) * _pan.x - (b[1] as Vector3) * _pan.y
+
+func _clamp_pan() -> void:
+    var limit := _base_camera_size() * PAN_LIMIT
+    _pan.x = clampf(_pan.x, -limit, limit)
+    _pan.y = clampf(_pan.y, -limit, limit)
+
+## Every point the OVERVIEW frame must contain: each island footprint corner at
+## water level AND at its plateau height (a tall island crops from the top before
+## it crops from the side), plus every boat anchor. Derived from ISLANDS, so the
+## opening shot cannot drift out of sync with the geography.
+func _world_frame_points() -> Array:
+    var pts: Array = []
+    for key in ISLANDS:
+        var isl: Dictionary = ISLANDS[key]
+        var c: Vector3 = isl["center"]
+        var r: Vector2 = isl["radius"]
+        var top := float(isl["top"])
+        for ix in [-1.0, 1.0]:
+            for iz in [-1.0, 1.0]:
+                var px: float = c.x + float(ix) * r.x
+                var pz: float = c.z + float(iz) * r.y
+                pts.append(Vector3(px, 0.0, pz))
+                pts.append(Vector3(px, top, pz))
+    for spec in BOAT_ANCHORS:
+        pts.append(spec["pos"] as Vector3)
+    return pts
+
+## Horizontal principal axis of the island cluster (PCA on the frame points).
+## PORTRAIT orbits the camera onto this axis; see the OVERVIEW comment block.
+func _cluster_major_axis() -> Vector3:
+    var pts := _world_frame_points()
+    var n := float(maxi(1, pts.size()))
+    var cx := 0.0
+    var cz := 0.0
+    for p in pts:
+        cx += (p as Vector3).x
+        cz += (p as Vector3).z
+    cx /= n
+    cz /= n
+    var sxx := 0.0
+    var szz := 0.0
+    var sxz := 0.0
+    for p in pts:
+        var dx: float = (p as Vector3).x - cx
+        var dz: float = (p as Vector3).z - cz
+        sxx += dx * dx
+        szz += dz * dz
+        sxz += dx * dz
+    if is_zero_approx(sxz) and is_zero_approx(sxx - szz):
+        return Vector3(1.0, 0.0, 0.0)
+    var angle := 0.5 * atan2(2.0 * sxz, sxx - szz)
+    return Vector3(cos(angle), 0.0, sin(angle))
+
+## Solve {target, size} so every point in `pts` sits inside an ORTHOGONAL frame
+## looking down `-offset`.
+##
+## Godot's ortho `size` is the visible HEIGHT, so the frame spans `size` along the
+## camera's screen-up axis and `size * aspect` along screen-right — both measured
+## in the CAMERA's basis, which already carries the pitch foreshortening. That is
+## why this needs no sin/cos of the tilt: project, measure, divide.
+##
+## Recentring is exact because the two correction directions are orthogonal in
+## screen space: moving along `right` changes screen-x only (it is perpendicular
+## to screen-up by construction), and moving along `up` changes screen-y only.
+func _solve_frame(offset: Vector3, pts: Array, aspect: float, margin: float) -> Dictionary:
+    var t0 := Vector3(0.0, OVERVIEW_TARGET_Y, 0.0)
+    var bz := offset.normalized()
+    var bx := Vector3.UP.cross(bz)
+    bx = bx.normalized() if bx.length() > 0.001 else Vector3.RIGHT
+    var by := bz.cross(bx).normalized()
+    var up := -(bz - Vector3.UP * bz.dot(Vector3.UP))
+    up = up.normalized() if up.length() > 0.001 else Vector3.FORWARD
+    # Screen-y gained per world unit travelled along `up` — the foreshortening,
+    # measured rather than assumed.
+    var f_up := up.dot(by)
+    var min_x := INF
+    var max_x := -INF
+    var min_y := INF
+    var max_y := -INF
+    for p in pts:
+        var q: Vector3 = (p as Vector3) - t0
+        var sx := q.dot(bx)
+        var sy := q.dot(by)
+        min_x = minf(min_x, sx)
+        max_x = maxf(max_x, sx)
+        min_y = minf(min_y, sy)
+        max_y = maxf(max_y, sy)
+    if min_x > max_x:
+        return {"target": t0, "size": OBS_SIZE_LANDSCAPE}
+    var need_h := (max_y - min_y) + margin * 2.0 * absf(f_up)
+    var need_w := (max_x - min_x) + margin * 2.0
+    var target := t0 + bx * ((min_x + max_x) * 0.5)
+    if absf(f_up) > 0.001:
+        target += up * ((min_y + max_y) * 0.5 / f_up)
+    return {"target": target, "size": maxf(need_h, need_w / maxf(0.2, aspect))}
+
+## Re-solve the OVERVIEW shot for the current viewport. Cheap (44 points) and
+## only runs on boot and on resize/orientation change.
+func _recompute_overview(aspect: float) -> void:
+    var horizontal := Vector3(OBS_OFFSET.x, 0.0, OBS_OFFSET.z).normalized()
+    if aspect < PORTRAIT_ASPECT:
+        var axis := _cluster_major_axis()
+        # Two candidate orbits; take the one nearer the landscape camera so the
+        # fixed key light keeps striking roughly the same faces.
+        horizontal = axis if axis.dot(horizontal) >= 0.0 else -axis
+    _overview_offset = horizontal * OVERVIEW_REACH + Vector3.UP * OVERVIEW_HEIGHT
+    var margin := OVERVIEW_MARGIN_PORTRAIT if aspect < PORTRAIT_ASPECT else OVERVIEW_MARGIN_LANDSCAPE
+    var solved := _solve_frame(_overview_offset, _world_frame_points(), aspect, margin)
+    _overview_target = solved["target"]
+    _overview_size = float(solved["size"])
+
+func _update_camera(delta: float) -> void:
+    if not is_instance_valid(camera):
+        return
+    var panning := false
+    if camera_mode != CameraMode.FOLLOW:
+        var pan_in: Vector2 = AstrixInput.camera_pan()
+        if pan_in.length_squared() > 0.0001:
+            # Scaled by the live ortho height so the pan rate feels identical at
+            # every zoom level (a fixed world-units/sec rate crawls when zoomed out).
+            _pan += pan_in * PAN_SPEED * camera.size * delta
+            _clamp_pan()
+            panning = true
+    var target := _camera_target()
+    if camera_mode != CameraMode.FOLLOW and not panning:
+        # Slow orbital breathing keeps the frame alive without moving the
+        # composition or introducing roll. Suppressed while the operator pans, so
+        # a deliberate camera move is not fighting an idle drift.
+        target += Vector3(sin(_time * 0.05) * 0.8, 0.0, cos(_time * 0.04) * 0.6)
+    var desired := _camera_eye(target)
+    var k := 1.0 - exp(-(FOLLOW_SMOOTH if camera_mode == CameraMode.FOLLOW else 2.2) * delta)
+    camera.global_position = camera.global_position.lerp(desired, k)
+    camera.look_at(target, Vector3.UP)
+
+## Portrait is a DESIGNED framing, not a shrunk desktop view: the camera orbits
+## so the island axis runs screen-vertically, the ortho height grows to fit the
+## whole cluster, and the HUD reserves the top and bottom bands.
+func _apply_camera_framing() -> void:
+    var vp := get_viewport()
+    if not vp or not is_instance_valid(camera):
+        return
+    var size := vp.get_visible_rect().size
+    var aspect := size.x / maxf(1.0, size.y)
+    var was_portrait := _portrait
+    _portrait = aspect < PORTRAIT_ASPECT
+    _recompute_overview(aspect)
+    camera.size = _base_camera_size() * _zoom
+    _clamp_pan()
+    # An orientation flip re-composes the shot, so snap rather than glide there:
+    # lerping across a 60-degree yaw change sweeps the camera through the sea.
+    if was_portrait != _portrait:
+        _snap_camera()
+
+func _snap_camera() -> void:
+    if not is_instance_valid(camera):
+        return
+    var target := _camera_target()
+    camera.global_position = _camera_eye(target)
+    camera.look_at(target, Vector3.UP)
+
+# ---------------------------------------------------------------------------
+# OPERATOR CAMERA CONTROLS
+# ---------------------------------------------------------------------------
+## Reachability note: before this pass `set_camera_mode` had exactly one caller in
+## the whole repo — tools/screenshot_harness.gd — so ARCHIPELAGO was dead code at
+## runtime and there was no zoom, no pan and no way back to a wide shot. The mode
+## is now driven by MobileHUD through the AstrixInput autoload.
+## snap = false keeps the ortho size fixed and lets _update_camera glide the eye
+## to the new target. Used when the composition is unchanged and only the subject
+## moves -- cycling ISLAND, or STEWARD re-aiming at a new authoritative action --
+## so those read as a pan across one world, not as a cut to somewhere else.
+func set_camera_mode(mode: int, snap := true) -> void:
+    camera_mode = mode
+    # A mode is a composition; entering one starts from that composition rather
+    # than inheriting the previous mode's zoom and pan.
+    _zoom = 1.0
+    _pan = Vector2.ZERO
+    _apply_camera_framing()
+    if snap:
+        _snap_camera()
+    _sync_hud_mode()
+
+## Name-addressed entry point for the HUD (see AstrixInput.camera_mode_requested).
+## Re-requesting "island" while already in ISLAND advances to the next island
+## Core reports, which is how one button tours the whole archipelago.
+func set_camera_mode_named(mode_name: String) -> void:
+    match mode_name:
+        "observatory": set_camera_mode(CameraMode.OBSERVATORY)
+        "archipelago": set_camera_mode(CameraMode.ARCHIPELAGO)
+        "follow": set_camera_mode(CameraMode.FOLLOW)
+        "steward": set_camera_mode(CameraMode.STEWARD)
+        "island":
+            if camera_mode == CameraMode.ISLAND:
+                _island_index = (_island_index + 1) % _island_cycle().size()
+                set_camera_mode(CameraMode.ISLAND, false)
+            else:
+                set_camera_mode(CameraMode.ISLAND)
+        _: set_camera_mode(CameraMode.OVERVIEW)
+
+## step < 0 tightens the frame, step > 0 widens it.
+func _on_camera_zoom_requested(step: float) -> void:
+    _zoom = clampf(_zoom + step * ZOOM_STEP, ZOOM_MIN, ZOOM_MAX)
+    if is_instance_valid(camera):
+        camera.size = _base_camera_size() * _zoom
+    _clamp_pan()
+
+func _sync_hud_mode() -> void:
+    var hud := get_node_or_null("MobileHUD")
+    if hud == null:
+        return
+    if hud.has_method("set_camera_mode_name"):
+        hud.set_camera_mode_name(_camera_mode_name(), _camera_subject())
+    elif hud.has_method("set_follow_mode"):
+        hud.set_follow_mode(camera_mode == CameraMode.FOLLOW)
+
+## The mode name the HUD addresses this mode by (see set_camera_mode_named).
+func _camera_mode_name() -> String:
+    match camera_mode:
+        CameraMode.FOLLOW: return "follow"
+        CameraMode.ISLAND: return "island"
+        CameraMode.STEWARD: return "steward"
+        CameraMode.ARCHIPELAGO: return "archipelago"
+        CameraMode.OBSERVATORY: return "observatory"
+        _: return "overview"
+
+## What the active mode is looking at, for the pill caption. Empty when the mode
+## frames the whole world, and empty in STEWARD when Core named no subject --
+## the HUD then says so instead of naming a place the steward is not working.
+func _camera_subject() -> String:
+    match camera_mode:
+        CameraMode.ISLAND: return island_focus_name().to_upper()
+        CameraMode.STEWARD: return steward_focus_name()
+        _: return ""
 
 func _build_systems() -> void:
     var building_system := Node3D.new()
     building_system.name = "BuildingSystem"
     building_system.set_script(load("res://scripts/BuildingSystem.gd"))
     add_child(building_system)
-    var console := CanvasLayer.new()
-    console.name = "AgentConsole"
-    console.set_script(load("res://scripts/AgentConsole.gd"))
-    add_child(console)
+    var observatory := CanvasLayer.new()
+    observatory.name = "AgentConsole"
+    observatory.set_script(load("res://scripts/AgentConsole.gd"))
+    add_child(observatory)
     var approval := CanvasLayer.new()
     approval.name = "ApprovalGate"
     approval.set_script(load("res://scripts/ApprovalGate.gd"))
@@ -1291,98 +1649,721 @@ func _build_systems() -> void:
     hud.name = "MobileHUD"
     hud.set_script(load("res://scripts/MobileHUD.gd"))
     add_child(hud)
+    _sync_hud_mode()
 
-func _build_player() -> void:
-    player = AstrixPlayer3D.new()
-    player.name = "Player"
-    player.position = Vector3(22.0, MEADOW_SURFACE + 1.0, 30.0)
-    add_child(player)
-    companion = Companion3D.new()
-    companion.name = "Companion"
-    companion.position = player.position + Vector3(-2.0, 0.0, 1.5)
-    companion.target = player
-    add_child(companion)
+# ===========================================================================
+# AUTHORITATIVE STEWARD STATUS -> WORLD
+# ===========================================================================
+## The steward's own reported LoopState decides whether the world animates as a
+## LIVING world or as a HELD one, and its own action records decide where the
+## STEWARD camera points. Nothing here writes world state; nothing here invents a
+## target when Core supplies none.
+func _on_agent_status_received(status: Dictionary) -> void:
+    var loop_state := str(status.get("state", "")).to_upper()
+    var live := not HELD_LOOP_STATES.has(loop_state)
+    if live != _world_live:
+        _world_live = live
+        _broadcast_world_live()
+    _derive_steward_focus(status)
 
-func _build_camera() -> void:
-    camera = Camera3D.new()
-    camera.name = "IsometricCamera"
-    camera.projection = Camera3D.PROJECTION_ORTHOGONAL
-    camera.position = player.global_position + CAMERA_OFFSET
-    add_child(camera)
-    _apply_camera_framing()
-    camera.look_at(player.global_position + Vector3(0.0, CAMERA_LOOK_HEIGHT, CAMERA_LOOK_AHEAD), Vector3.UP)
-    camera.current = true
-    # Re-framing on rotation/resize keeps the player a clear anchor on tablets.
-    get_viewport().size_changed.connect(_on_viewport_resized)
+## Push the authoritative clock gate to every figure whose animation would
+## otherwise imply the world is progressing.
+func _broadcast_world_live() -> void:
+    for v in _villagers:
+        if is_instance_valid(v) and v.has_method("set_world_live"):
+            v.set_world_live(_world_live)
 
+## WHERE IS THE STEWARD WORKING? Answered only from authoritative records, in
+## descending order of certainty:
+##   1. the pending proposal (that is literally what is awaiting a human)
+##   2. the action currently executing
+##   3. the most recent action with a resolvable target
+## Every branch resolves through the SAME mapping the world itself is built from
+## (_bridge_endpoints / _map_core_pos / the authoritative building and resource
+## records), so the camera lands on the object the viewer can see, not on a
+## parallel guess at where it might be.
+func _derive_steward_focus(status: Dictionary) -> void:
+    var was_label := _steward_focus_label
+    var had_focus := _has_steward_focus
+    _resolve_steward_focus(status)
+    # The STEWARD pill names its subject, so refresh it when the subject changes.
+    if camera_mode == CameraMode.STEWARD and (was_label != _steward_focus_label or had_focus != _has_steward_focus):
+        _sync_hud_mode()
 
-func _on_viewport_resized() -> void:
-    _apply_camera_framing()
+func _resolve_steward_focus(status: Dictionary) -> void:
+    var pending: Variant = status.get("pendingApproval")
+    if pending is Dictionary:
+        var from_pending := _focus_from_pending(pending)
+        if from_pending.size() == 2:
+            _set_steward_focus(from_pending[0], str(from_pending[1]))
+            return
+    var current: Variant = status.get("currentAction")
+    if current is Dictionary:
+        var from_current := _focus_from_action(current)
+        if from_current.size() == 2:
+            _set_steward_focus(from_current[0], str(from_current[1]))
+            return
+    var actions: Variant = status.get("actions")
+    if actions is Array:
+        for i in range((actions as Array).size() - 1, -1, -1):
+            var action: Variant = (actions as Array)[i]
+            if not (action is Dictionary):
+                continue
+            var resolved := _focus_from_action(action)
+            if resolved.size() == 2:
+                _set_steward_focus(resolved[0], str(resolved[1]))
+                return
+    # Core told us nothing to point at. Say so rather than holding a stale target.
+    _has_steward_focus = false
+    _steward_focus_label = ""
 
-# Keep the player a readable size on both landscape (desktop) and portrait
-# (mobile) viewports while showing the clearing, shoreline and bridge landmarks.
-# Portrait/tall screens get a SMALLER ortho size (more zoom) so the player stays
-# a clear anchor instead of floating tiny in a huge frame.
-func _apply_camera_framing() -> void:
-    var vp := get_viewport()
-    if not vp:
+func _set_steward_focus(pos: Vector3, label: String) -> void:
+    _steward_focus = pos
+    _steward_focus_label = label
+    _has_steward_focus = true
+
+## [position, label] or [] — a pending bridge proposal points at the span it
+## would create, which is the object the human is being asked about.
+func _focus_from_pending(pending: Dictionary) -> Array:
+    var a := str(pending.get("sourceIsland", ""))
+    var b := str(pending.get("destinationIsland", ""))
+    if ISLANDS.has(a) and ISLANDS.has(b):
+        var span := _bridge_endpoints(a, b)
+        return [(span[0] + span[1]) * 0.5, "%s <-> %s" % [a.to_upper(), b.to_upper()]]
+    if ISLANDS.has(a) and pending.get("position") is Dictionary:
+        return [_map_core_pos(a, _core_vec(pending.get("position"))), a.to_upper()]
+    # Older server builds report the proposal as a NESTED action record with no
+    # flattened island fields at all. Read the action the same way a completed
+    # action is read rather than giving up on a payload that does carry a target.
+    var nested: Variant = pending.get("action")
+    if nested is Dictionary:
+        return _focus_from_action(nested)
+    return []
+
+## [position, label] or [] for one action record. `args` keys are the MCP tool
+## vocabulary (src/astrix/mcpTools.ts); an unrecognised or unresolvable tool
+## returns [] so the caller can fall further back rather than point at the origin.
+func _focus_from_action(action: Dictionary) -> Array:
+    var tool_name := str(action.get("tool", ""))
+    var args: Variant = action.get("args")
+    if not (args is Dictionary):
+        return []
+    var a: Dictionary = args
+    var world_state := get_node_or_null("/root/WorldState")
+    match tool_name:
+        "build_bridge":
+            var ia := str(a.get("island_a", ""))
+            var ib := str(a.get("island_b", ""))
+            if ISLANDS.has(ia) and ISLANDS.has(ib):
+                var span := _bridge_endpoints(ia, ib)
+                return [(span[0] + span[1]) * 0.5, "%s <-> %s" % [ia.to_upper(), ib.to_upper()]]
+        "build":
+            var island := str(a.get("island_id", "meadow"))
+            if ISLANDS.has(island) and a.get("position") is Dictionary:
+                return [_map_core_pos(island, _core_vec(a.get("position"))),
+                    "%s · %s" % [island.to_upper(), str(a.get("building_type", "build")).to_upper()]]
+        "plant":
+            var farm := _building_position(world_state, str(a.get("farm_plot_id", "")))
+            if farm.size() == 2:
+                return [farm[0], "PLANTING · " + str(farm[1]).to_upper()]
+        "harvest":
+            var crop_farm := _crop_farm_position(world_state, str(a.get("crop_id", "")))
+            if crop_farm.size() == 2:
+                return [crop_farm[0], "HARVEST · " + str(crop_farm[1]).to_upper()]
+        "gather":
+            var node_pos := _resource_position(world_state, str(a.get("resource_id", "")))
+            if node_pos.size() == 2:
+                return [node_pos[0], "GATHER · " + str(node_pos[1]).to_upper()]
+    return []
+
+## [world position, island id] for an authoritative building, or [].
+func _building_position(world_state: Node, building_id: String) -> Array:
+    if world_state == null or building_id == "":
+        return []
+    var record: Variant = world_state.buildings.get(building_id)
+    if not (record is Dictionary):
+        return []
+    var island := str((record as Dictionary).get("islandId", "meadow"))
+    if not ISLANDS.has(island):
+        return []
+    return [_map_core_pos(island, _core_vec((record as Dictionary).get("position"))), island]
+
+## A crop lives on its farm plot, so a harvest points at the farm Core assigned it.
+func _crop_farm_position(world_state: Node, crop_id: String) -> Array:
+    if world_state == null or crop_id == "":
+        return []
+    var crop: Variant = world_state.crops.get(crop_id)
+    if not (crop is Dictionary):
+        return []
+    return _building_position(world_state, str((crop as Dictionary).get("farmPlotId", "")))
+
+## [world position, island id] for an authoritative resource node, or [].
+func _resource_position(world_state: Node, resource_id: String) -> Array:
+    if world_state == null or resource_id == "":
+        return []
+    var record: Variant = world_state.resource_nodes.get(resource_id)
+    if not (record is Dictionary):
+        return []
+    var island := str((record as Dictionary).get("islandId", "meadow"))
+    if not ISLANDS.has(island):
+        return []
+    return [_map_core_pos(island, _core_vec((record as Dictionary).get("position"))), island]
+
+# ===========================================================================
+# AUTHORITATIVE SNAPSHOT -> WORLD
+# ===========================================================================
+func _on_astrix_state_received(state: Dictionary) -> void:
+    var world_state := get_node_or_null("/root/WorldState")
+    if world_state == null:
         return
-    var size := vp.get_visible_rect().size
-    var aspect := size.x / maxf(1.0, size.y)
-    _portrait = aspect < 1.05
-    # Portrait zooms out slightly (13 vs 12) with a narrower x-offset and longer
-    # look-ahead so the player anchor AND the beacon destination both stay on
-    # screen; landscape keeps the fuller clearing view.
-    camera.size = 13.0 if _portrait else 12.0
+    world_state.apply_snapshot(state)
+    if not world_state.is_ready():
+        return
+    _apply_season(str(world_state.season), str(world_state.time_of_day))
+    _sync_core_islands(world_state)
+    _materialize_buildings(world_state)
+    _materialize_bridges(world_state)
+    _materialize_resource_nodes(world_state)
+    _materialize_food_store(world_state)
+    _sync_villagers(world_state)
 
-# Grounding contact shadow: a tight dark disc at the object's base plus a wider,
-# fainter disc that softens outward. This is what makes props visibly TOUCH the
-# terrain instead of floating. Presentation-only.
-func _add_ground_shadow(center: Vector3, radius_x: float, radius_z: float, strength: float = 0.45) -> void:
-    var group := Node3D.new()
-    group.name = "GroundShadow"
-    group.position = center + Vector3(0.0, 0.03, 0.0)
-    for layer in [
-        {"r": 1.0, "a": strength},                # tight core
-        {"r": 1.55, "a": strength * 0.42},        # soft outer falloff
-    ]:
-        var disc := MeshInstance3D.new()
-        var mesh := CylinderMesh.new()
-        mesh.top_radius = radius_x * layer["r"]
-        mesh.bottom_radius = radius_x * layer["r"]
-        mesh.height = 0.02
-        disc.mesh = mesh
-        disc.scale.z = radius_z / maxf(0.01, radius_x)
-        disc.material_override = _ground_shadow_material(layer["a"])
-        group.add_child(disc)
-    add_child(group)
+## FOOD STORE — the village's grain store, stocked in proportion to authoritative
+## `food`. This is the fix for "the stakes exist only in the HUD": a viewer can
+## see the reserve emptying without reading a number.
+##
+## CAPACITY 48 is a presentation constant, not a Core rule: Core's food is
+## unbounded, so the store shows food/48 clamped to 0..1 as 0..5 stacks. 48 is
+## ~10 days of feed for a 4-villager village, which makes "full" mean "safe".
+const FOOD_STORE_CAPACITY := 48
+func _materialize_food_store(world_state: Node) -> void:
+    var food := int(world_state.food)
+    # Rebuild only when the stack count would actually change.
+    var stacks := int(round(clampf(float(food) / float(FOOD_STORE_CAPACITY), 0.0, 1.0) * 5.0))
+    if str(_sim_sig.get("foodstore", "")) == str(stacks):
+        return
+    _free_sim("foodstore")
+    var store := AstrixAssets.food_store(food, FOOD_STORE_CAPACITY, 4711)
+    # NORTH-EAST of the plaza, well away from the south farm belt: a granary
+    # standing next to the wheat field read as "more wheat" rather than as a
+    # stored reserve. Rotated so the stock platform faces the camera.
+    store.position = Vector3(7.4, MEADOW_SURFACE, -3.6)
+    store.rotation.y = 2.35
+    add_child(store)
+    _clear_footprint(store.position, 4.2, 4.0)
+    _sim["foodstore"] = store
+    _sim_sig["foodstore"] = str(stacks)
 
-func _ground_shadow_material(alpha: float) -> StandardMaterial3D:
-    var material := StandardMaterial3D.new()
-    material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-    material.albedo_color = Color(0.10, 0.07, 0.09, alpha)
-    material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-    material.roughness = 1.0
-    return material
+## Buildings: one authored structure per authoritative building, by type.
+## Farms additionally build a plot with furrows and crops at their real stages.
+func _materialize_buildings(world_state: Node) -> void:
+    var seen := {}
+    for id in world_state.buildings.keys():
+        var building: Variant = world_state.buildings[id]
+        if not (building is Dictionary):
+            continue
+        var type_name := str(building.get("type", "house"))
+        # A bridge_segment is ALREADY drawn by _materialize_bridges, from the
+        # authoritative bridges[] topology and the real island rims. Rendering
+        # the building record too would double up -- and because the structure
+        # match below falls through to `house`, an unhandled bridge_segment used
+        # to appear as a HOUSE standing next to its own bridge.
+        if type_name == "bridge_segment":
+            continue
+        var key := "building:" + str(id)
+        seen[key] = true
+        var island := str(building.get("islandId", "meadow"))
+        var pos := _map_core_pos(island, _core_vec(building.get("position")))
+        var sig := "%s|%s|%.2f,%.2f" % [type_name, island, pos.x, pos.z]
+        if type_name == "farm":
+            sig += "|" + _crop_signature(world_state, str(id))
+        if str(_sim_sig.get(key, "")) == sig:
+            continue
+        _free_sim(key)
+        # Clear the land this structure stands on before placing it. Farms need
+        # the widest berth (plot + barn + scarecrow).
+        if type_name == "farm":
+            _clear_footprint(pos, 6.2, 4.6)
+        elif type_name == "storage":
+            _clear_footprint(pos, 2.6, 2.6)
+        else:
+            _clear_footprint(pos, 2.8, 2.6)
+        var node := _build_structure(type_name, str(id), pos, island, world_state)
+        if node:
+            add_child(node)
+            _sim[key] = node
+            _sim_sig[key] = sig
+    for key in _sim.keys():
+        if str(key).begins_with("building:") and not seen.has(key):
+            _free_sim(key)
 
-func _mesh_box(node_name: String, position: Vector3, size: Vector3, color: Color) -> MeshInstance3D:
-    var node := MeshInstance3D.new()
-    node.name = node_name
-    var mesh := BoxMesh.new()
-    mesh.size = size
-    node.mesh = mesh
-    node.position = position
-    node.material_override = _material(color)
+## Hide static dressing that an authoritative structure now occupies. Called
+## before a structure is added, so nothing ever interpenetrates a building.
+func _clear_footprint(centre: Vector3, rx: float, rz: float) -> void:
+    for node in _clearable:
+        if not is_instance_valid(node) or not node.visible:
+            continue
+        var dx := absf(node.global_position.x - centre.x)
+        var dz := absf(node.global_position.z - centre.z)
+        if dx <= rx and dz <= rz:
+            node.visible = false
+
+## Register a static prop as clearable (yields to authoritative buildings).
+func _clearable_prop(node: Node3D) -> Node3D:
+    _clearable.append(node)
     return node
 
-func _material(color: Color, emission_energy: float = 0.0) -> StandardMaterial3D:
-    var material := StandardMaterial3D.new()
-    material.albedo_color = color
-    # Roughness 0.82 keeps the matte pastel look while letting the directional
-    # key produce gentle specular response on lit faces (form without gloss).
-    material.roughness = 0.82
-    if emission_energy > 0.0:
-        material.emission_enabled = true
-        material.emission = color
-        material.emission_energy_multiplier = emission_energy
-    return material
+func _build_structure(type_name: String, id: String, pos: Vector3, island: String, world_state: Node) -> Node3D:
+    var seed_value := hash(id) & 0x7fffffff
+    var group := Node3D.new()
+    group.name = "Sim_%s_%s" % [type_name, id]
+    group.position = pos
+    match type_name:
+        "farm":
+            # Field sized to the authoritative crop count, so a farm with 3
+            # crops is visibly bigger than a farm with 1.
+            var crop_count := _crop_count_for(world_state, id)
+            var plot: Dictionary = AstrixAssets.farm_plot(seed_value, crop_count)
+            group.add_child(plot["root"])
+            group.add_child(_snow_cap(AstrixMesh.box("PlotFrost", Vector3(4.6, 0.07, 5.0),
+                Vector3(0.0, 0.24, 0.0), AstrixPalette.SNOW)))
+            # A barn set BEHIND the field (not beside it) so a farm's footprint
+            # stays narrow and two authoritative farms never overlap.
+            var barn := AstrixAssets.barn(seed_value + 7)
+            barn.position = Vector3(0.4, 0.0, -(float(maxi(3, crop_count)) * 1.25 + 1.0) * 0.5 - 1.9)
+            group.add_child(barn)
+            group.add_child(_snow_cap(AstrixMesh.box("BarnSnow", Vector3(3.6, 0.12, 2.9),
+                Vector3(0.4, 3.15, barn.position.z), AstrixPalette.SNOW)))
+            var crow := AstrixAssets.scarecrow(seed_value + 3)
+            crow.position = Vector3(2.3, 0.0, 0.6)
+            group.add_child(crow)
+            _plant_rows(group, plot["rows"], world_state, id)
+        "storage":
+            var silo := AstrixAssets.storage(seed_value)
+            group.add_child(silo)
+        _:
+            var house := AstrixAssets.house(seed_value)
+            group.add_child(house)
+            _register_snow_in(house)
+            _register_windows_in(house)
+            _register_smoke_in(house)
+            _windows_lit = false   # force the next light update to repaint them
+    return group
+
+## Crops rendered from authoritative crops[] — one crop = one planted row at its
+## real growthStage. Row order is deterministic (sorted crop id) so a crop keeps
+## its row between snapshots and only its growth changes.
+func _plant_rows(group: Node3D, rows: Array, world_state: Node, farm_id: String) -> void:
+    var ids: Array[String] = []
+    for crop_id in world_state.crops.keys():
+        var crop: Variant = world_state.crops[crop_id]
+        if crop is Dictionary and str(crop.get("farmPlotId", "")) == farm_id:
+            ids.append(str(crop_id))
+    ids.sort()
+    for i in range(rows.size()):
+        var row: Dictionary = rows[i]
+        if i >= ids.size():
+            continue    # bare tilled ridge: unused capacity is visible
+        var crop: Dictionary = world_state.crops[ids[i]]
+        var stage := float(crop.get("growthStage", 0.0))
+        var planted := AstrixAssets.crop_row(stage, float(row["width"]), hash(ids[i]) & 0x7fffffff)
+        planted.position = Vector3(0.0, float(row["y"]), float(row["z"]))
+        group.add_child(planted)
+        _ease_growth(planted, str(ids[i]), stage)
+        _register_crop_row(planted, stage)
+
+## GROWTH TRANSITION. A crop's tier changes the instant Core's growthStage crosses
+## a threshold, and the farm group is rebuilt from scratch when it does — so the
+## new, taller row used to appear at full size in one frame. The row is instead
+## born at the PREVIOUS tier's height and grows into the new one over ~0.7s.
+##
+## This is presentation only in the strictest sense: the authoritative stage has
+## ALREADY changed before a single frame of this plays, the tween touches nothing
+## but this node's scale, and it never runs backwards toward an older stage.
+## Growth cannot appear while Core's clock is held, because a held clock cannot
+## change growthStage and therefore cannot trigger a rebuild.
+const GROWTH_EASE_SECONDS := 0.7
+var _crop_stage: Dictionary = {}     # crop id -> last rendered growthStage
+func _ease_growth(row: Node3D, crop_id: String, stage: float) -> void:
+    var previous: Variant = _crop_stage.get(crop_id)
+    _crop_stage[crop_id] = stage
+    if previous == null or float(previous) >= stage:
+        return
+    var from_h := AstrixAssets.crop_tier_height(float(previous))
+    var to_h := AstrixAssets.crop_tier_height(stage)
+    if to_h <= from_h + 0.001:
+        return
+    row.scale = Vector3(1.0, from_h / to_h, 1.0)
+    var tween := create_tween()
+    tween.tween_property(row, "scale", Vector3.ONE, GROWTH_EASE_SECONDS) \
+        .set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+
+## WOODSMOKE. AstrixAssets.house already builds a four-puff column at the chimney
+## pot; it just never moved, which is what made an inhabited village look like a
+## model of one. Each puff now rises from the pot, swells, and dissolves on a
+## deterministic loop offset per puff, so the column is continuous.
+##
+## Restraint is deliberate: only authoritative HOUSES smoke. There is no attempt
+## to animate every structure, and no state is implied — a hearth burning is a
+## house being lived in, which is exactly what `population` already asserts.
+## Scale, not transparency, does the dissolving: alpha writes would touch shared
+## materials, and a puff that shrinks to nothing reads the same from 28px/unit.
+const SMOKE_RISE := 2.4
+const SMOKE_PERIOD := 4.6
+var _smoke: Array[Dictionary] = []
+func _register_smoke_in(node: Node) -> void:
+    var puffs := node.find_children("Smoke*", "MeshInstance3D", true, false)
+    for i in range(puffs.size()):
+        var puff := puffs[i] as MeshInstance3D
+        _smoke.append({
+            "node": puff,
+            "base": puff.position,
+            "scale": puff.scale,
+            # Evenly spaced offsets so the four puffs form one continuous column
+            # rather than four synchronised blobs.
+            "offset": float(i) / float(maxi(1, puffs.size())),
+        })
+
+func _update_smoke(_delta: float) -> void:
+    var live: Array[Dictionary] = []
+    for entry in _smoke:
+        var node: Variant = entry.get("node")
+        # Same freed-operand trap as _update_crops: valid-check first.
+        if not is_instance_valid(node) or not (node is MeshInstance3D):
+            continue
+        var puff := node as MeshInstance3D
+        var t: float = fposmod(_time / SMOKE_PERIOD + float(entry.get("offset", 0.0)), 1.0)
+        var base: Vector3 = entry.get("base", Vector3.ZERO)
+        var scale0: Vector3 = entry.get("scale", Vector3.ONE)
+        puff.position = Vector3(base.x + t * 0.55, base.y + t * SMOKE_RISE, base.z - t * 0.4)
+        # sin(pi t) is 0 at both ends of the loop, so a puff is born and dies at
+        # zero size and the wrap is invisible.
+        puff.scale = scale0 * (0.35 + sin(t * PI) * 0.9)
+        live.append(entry)
+    _smoke = live
+
+## Crop rows join the wind. Amplitude scales with the row's authoritative height,
+## so a seedling barely stirs and a heavy harvestable sheaf leans — the wind
+## itself is weather (presentation), but how much it moves is set by real growth.
+var _crop_rows: Array[Dictionary] = []
+func _register_crop_row(row: Node3D, stage: float) -> void:
+    _crop_rows.append({
+        "node": row,
+        "amp": clampf(AstrixAssets.crop_tier_height(stage) * 0.030, 0.004, 0.038),
+        "phase": float(_crop_rows.size()) * 0.9 + row.position.z * 0.4,
+    })
+
+## Wind pass over the crop rows. Freed rows are compacted out here rather than
+## tracked with signals: a farm rebuild frees a dozen nodes at once.
+func _update_crops(_delta: float) -> void:
+    var live: Array[Dictionary] = []
+    for entry in _crop_rows:
+        var node: Variant = entry.get("node")
+        # ORDER MATTERS, and it used to be wrong: `node is Node3D` on a FREED
+        # reference is itself a script error ("Left operand of 'is' is a
+        # previously freed instance"), which aborted this pass mid-loop. A farm
+        # is rebuilt whenever a crop crosses a growth tier, so the first real
+        # harvest cycle freed a dozen rows, and from the next frame on the wind
+        # died permanently and the freed entries were never compacted out.
+        # is_instance_valid() is the one check that is safe on a freed operand,
+        # so it has to come first.
+        if not is_instance_valid(node) or not (node is Node3D):
+            continue
+        var row := node as Node3D
+        var phase := float(entry.get("phase", 0.0))
+        # Two frequencies so the field ripples rather than swaying as one board.
+        row.rotation.z = (sin(_time * 1.15 + phase) + sin(_time * 0.47 + phase * 1.7) * 0.5) \
+            * float(entry.get("amp", 0.01))
+        live.append(entry)
+    _crop_rows = live
+
+func _crop_count_for(world_state: Node, farm_id: String) -> int:
+    var count := 0
+    for crop_id in world_state.crops.keys():
+        var crop: Variant = world_state.crops[crop_id]
+        if crop is Dictionary and str(crop.get("farmPlotId", "")) == farm_id:
+            count += 1
+    return count
+
+func _crop_signature(world_state: Node, farm_id: String) -> String:
+    var parts: Array[String] = []
+    for crop_id in world_state.crops.keys():
+        var crop: Variant = world_state.crops[crop_id]
+        if crop is Dictionary and str(crop.get("farmPlotId", "")) == farm_id:
+            parts.append("%s:%.2f" % [str(crop_id), float(crop.get("growthStage", 0.0))])
+    parts.sort()
+    return ",".join(parts)
+
+## Bridges: built between the real island rims, with piers in the water.
+func _materialize_bridges(world_state: Node) -> void:
+    var seen := {}
+    for bridge in world_state.bridges:
+        var a := str(bridge.get("islandA", ""))
+        var b := str(bridge.get("islandB", ""))
+        if not ISLANDS.has(a) or not ISLANDS.has(b):
+            continue
+        var pair := [a, b]
+        pair.sort()
+        var key := "bridge:%s-%s" % [pair[0], pair[1]]
+        seen[key] = true
+        if _sim.has(key):
+            continue
+        var span := _bridge_endpoints(str(pair[0]), str(pair[1]))
+        var node := AstrixAssets.bridge(span[0], span[1], WATER_LEVEL, hash(key) & 0x7fffffff)
+        add_child(node)
+        _sim[key] = node
+        _sim_sig[key] = key
+    for key in _sim.keys():
+        if str(key).begins_with("bridge:") and not seen.has(key):
+            _free_sim(key)
+
+## Endpoints on each island's actual rim, facing each other — so a bridge always
+## lands on land at both ends and crosses only water in between.
+func _bridge_endpoints(a: String, b: String) -> Array:
+    return [_rim_point(a, b), _rim_point(b, a)]
+
+## Resource nodes: authored props at mapped authoritative positions, kept in the
+## `resource_nodes` group so gathering and clear_terrain removal still work.
+func _materialize_resource_nodes(world_state: Node) -> void:
+    var seen := {}
+    for id in world_state.resource_nodes.keys():
+        var node_data: Variant = world_state.resource_nodes[id]
+        if not (node_data is Dictionary):
+            continue
+        var type_name := str(node_data.get("type", "wood"))
+        if type_name == "water":
+            continue    # the ocean already represents water
+        var key := "resource:" + str(id)
+        seen[key] = true
+        if _sim.has(key):
+            continue
+        var island := str(node_data.get("islandId", "meadow"))
+        var pos := _map_core_pos(island, _core_vec(node_data.get("position")))
+        var holder := ResourceNode3D.new()
+        holder.name = "Resource_%s" % str(id)
+        holder.server_node_id = str(id)
+        holder.resource_id = type_name
+        holder.amount = int(node_data.get("quantity", 1))
+        holder.position = pos
+        holder.add_to_group("resource_nodes")
+        match type_name:
+            "stone":
+                holder.add_child(AstrixAssets.rock(hash(id) & 0xffff, 1.5, AstrixPalette.ROCK_LIT))
+            "crystal":
+                holder.add_child(AstrixAssets.crystal(hash(id) & 0xffff))
+            _:
+                var tree := AstrixAssets.tree_broadleaf(hash(id) & 0xffff, 1.25)
+                holder.add_child(tree["root"])
+                _register_foliage(tree["foliage"])
+        add_child(holder)
+        _sim[key] = holder
+    for key in _sim.keys():
+        if str(key).begins_with("resource:") and not seen.has(key):
+            _free_sim(key)
+
+# ---------------------------------------------------------------------------
+# VILLAGERS — rendered count always equals authoritative `population`.
+#
+# THE FABRICATION THAT WAS HERE. _rebuild_anchors used to pour every island's
+# buildings into ONE anchor list, and _route_for sliced that list blindly, so a
+# villager's round could start on Meadow and end on Frost. _physics_process walks
+# in a straight line and sets y from the target, so those villagers strode across
+# open water at surface height. That is fabricated transportation: Core has no
+# transport state, no boat routes and no villager movement of any kind, and a
+# bridge is the ONLY authoritative link between two islands.
+#
+# Anchors are therefore bucketed BY ISLAND and a villager is only ever routed
+# inside one bucket. Nothing crosses water, because nothing in Core says anything
+# crosses water.
+# ---------------------------------------------------------------------------
+func _sync_villagers(world_state: Node) -> void:
+    _rebuild_anchors(world_state)
+    var target := clampi(int(world_state.population), 0, MAX_RENDERED_VILLAGERS)
+    _assign_villager_islands(target)
+    while _villagers.size() > target:
+        var doomed: Node3D = _villagers.pop_back()
+        if is_instance_valid(doomed):
+            doomed.queue_free()
+    while _villagers.size() < target:
+        _villagers.append(_spawn_villager(_villagers.size()))
+    for i in range(_villagers.size()):
+        var v: Node3D = _villagers[i]
+        if not is_instance_valid(v):
+            continue
+        var route := _route_for(i)
+        # The costume is DERIVED (see _role_for), so when the authoritative world
+        # gains a granary the villager stationed at it becomes a carrier. Rebuild
+        # the figure only on an actual change: the rig is built once, not per frame.
+        if v.role != _role_for(route):
+            v.queue_free()
+            v = _spawn_villager(i)
+            _villagers[i] = v
+        else:
+            v.route = route
+        if v.has_method("set_world_live"):
+            v.set_world_live(_world_live)
+
+func _spawn_villager(index: int) -> Node3D:
+    var route := _route_for(index)
+    var villager := Node3D.new()
+    villager.set_script(VILLAGER_SCRIPT)
+    villager.name = "Villager_%d" % index
+    add_child(villager)
+    villager.setup(_role_for(route), index, route)
+    if villager.has_method("apply_season"):
+        villager.apply_season(_season)
+    if villager.has_method("set_world_live"):
+        villager.set_world_live(_world_live)
+    return villager
+
+## Role is DERIVED from the authoritative structure the villager is stationed at,
+## never from its index. Core has no per-villager job record, so the costume is a
+## statement about the BUILDING ("this farm is worked", "this granary is stocked")
+## and not an invented personnel file. index % 4 -- the old rule -- was exactly
+## the fabricated-job pattern the mandate forbids.
+func _role_for(route: Array[Dictionary]) -> int:
+    for entry in route:
+        match str(entry.get("kind", "")):
+            "farm": return 0        # FARMER  — hat + hoe
+            "storage": return 2     # CARRIER — basket
+            "resource": return 1    # BUILDER — timber over the shoulder
+    return 0
+
+## Deterministic island per villager index, weighted by how many authoritative
+## anchors each island actually has: people are where the structures are, and a
+## bare island gets nobody. Recomputed with the anchors, so a new building on
+## Frost visibly moves someone there on the next snapshot.
+func _assign_villager_islands(count: int) -> void:
+    var slots: PackedStringArray = PackedStringArray()
+    for id in ISLANDS.keys():
+        var bucket: Variant = _island_anchors.get(id)
+        if bucket is Array:
+            for _i in range((bucket as Array).size()):
+                slots.append(str(id))
+    _villager_islands = PackedStringArray()
+    if slots.is_empty():
+        return
+    for i in range(count):
+        _villager_islands.append(slots[(i * 7) % slots.size()])
+
+## Anchors are authoritative places — Core's buildings, Core's resource nodes, and
+## the meadow plaza that the static settlement dressing occupies — each tagged
+## with WHAT IS THERE so the villager animation can only claim work Core supports:
+##   kind: farm | storage | house | resource | plaza | approach
+##   work: "crop"   the farm authoritatively holds crops  -> tending motion
+##         "gather" an authoritative resource node        -> gathering motion
+##         ""       nothing workable here                 -> a pause, no work
+##
+## The MOST RECENT authoritative building gets an extra anchor: the steward's last
+## act should have bodies at it, so a viewer can find what changed by looking at
+## the world rather than only reading the activity log.
+func _rebuild_anchors(world_state: Node) -> void:
+    var buckets: Dictionary = {}
+    for id in ISLANDS.keys():
+        buckets[id] = []
+    var newest_id := ""
+    var newest_island := "meadow"
+    var newest_pos := Vector3.ZERO
+    for id in world_state.buildings.keys():
+        var building: Variant = world_state.buildings[id]
+        if not (building is Dictionary):
+            continue
+        var type_name := str(building.get("type", "house"))
+        # A bridge_segment is topology, not a workplace: it is drawn once by
+        # _materialize_bridges and nobody is stationed on it.
+        if type_name == "bridge_segment":
+            continue
+        var island := str(building.get("islandId", "meadow"))
+        if not buckets.has(island):
+            continue
+        var pos := _map_core_pos(island, _core_vec(building.get("position")))
+        var list: Array = buckets[island]
+        match type_name:
+            "farm":
+                # Two anchors per farm: standing in the crop rows, and at the
+                # field edge by the barrel. Farming is the story, so it gets the
+                # most visible bodies. The rows only count as WORK when Core says
+                # this plot actually holds crops.
+                var work := "crop" if _crop_count_for(world_state, str(id)) > 0 else ""
+                list.append(_anchor(pos + Vector3(1.2, 0.3, 0.8), island, "farm", work))
+                list.append(_anchor(pos + Vector3(-1.6, 0.0, 2.4), island, "approach", ""))
+            "storage":
+                list.append(_anchor(pos + Vector3(1.8, 0.0, 1.6), island, "storage", ""))
+                list.append(_anchor(pos + Vector3(-1.5, 0.0, 2.2), island, "approach", ""))
+            _:
+                list.append(_anchor(pos + Vector3(0.0, 0.0, 2.4), island, "house", ""))
+                list.append(_anchor(pos + Vector3(2.2, 0.0, 1.4), island, "approach", ""))
+        # Building ids are monotonic (`farm-001`, `farm-002`, ...), so the highest
+        # id is the most recently constructed.
+        if str(id) > newest_id:
+            newest_id = str(id)
+            newest_island = island
+            newest_pos = pos
+    # Resource nodes are workable places Core owns: a villager at one is gathering
+    # from something that authoritatively exists and has a quantity.
+    for id in world_state.resource_nodes.keys():
+        var record: Variant = world_state.resource_nodes[id]
+        if not (record is Dictionary):
+            continue
+        if str((record as Dictionary).get("type", "wood")) == "water":
+            continue
+        var island := str((record as Dictionary).get("islandId", "meadow"))
+        if not buckets.has(island):
+            continue
+        var pos := _map_core_pos(island, _core_vec((record as Dictionary).get("position")))
+        (buckets[island] as Array).append(_anchor(pos + Vector3(1.5, 0.0, 1.2), island, "resource", "gather"))
+    if newest_id != "" and buckets.has(newest_island):
+        (buckets[newest_island] as Array).append(
+            _anchor(newest_pos + Vector3(-0.8, 0.0, 1.4), newest_island, "approach", ""))
+    # Plaza, well and market keep people circulating through the centre. These are
+    # STATIC MEADOW DRESSING (see _build_settlement_dressing), so they are meadow's
+    # anchors and nobody else's.
+    var meadow: Array = buckets["meadow"]
+    meadow.append(_anchor(Vector3(0.6, MEADOW_SURFACE, 1.6), "meadow", "plaza", ""))
+    meadow.append(_anchor(Vector3(-2.2, MEADOW_SURFACE, -3.2), "meadow", "plaza", ""))
+    meadow.append(_anchor(Vector3(3.2, MEADOW_SURFACE, -0.6), "meadow", "plaza", ""))
+
+    _island_anchors = buckets
+    var flat: Array[Dictionary] = []
+    for id in buckets.keys():
+        for entry in (buckets[id] as Array):
+            flat.append(entry)
+    _villager_anchors = flat
+
+func _anchor(pos: Vector3, island: String, kind: String, work: String) -> Dictionary:
+    return {"pos": pos, "island": island, "kind": kind, "work": work}
+
+## Deterministic per-villager route: a rotated slice of ITS OWN ISLAND's anchor
+## list, so no two villagers walk an identical path, the world is reproducible,
+## and no route can leave the island the villager stands on.
+func _route_for(index: int) -> Array[Dictionary]:
+    var route: Array[Dictionary] = []
+    if index >= _villager_islands.size():
+        return route
+    var bucket: Variant = _island_anchors.get(_villager_islands[index])
+    if not (bucket is Array) or (bucket as Array).is_empty():
+        return route
+    var anchors: Array = bucket
+    var count := anchors.size()
+    for step in range(mini(3, count)):
+        route.append(anchors[(index * 3 + step * 2 + 1) % count])
+    return route
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+func _core_vec(value: Variant) -> Vector3:
+    if value is Dictionary:
+        return Vector3(float(value.get("x", 0.0)), float(value.get("y", 0.0)), float(value.get("z", 0.0)))
+    if value is Vector3:
+        return value
+    return Vector3.ZERO
+
+func _free_sim(key: String) -> void:
+    var node: Variant = _sim.get(key)
+    # Same freed-operand trap as _update_crops, with a nastier failure: an error
+    # here would abort before the erase below and strand the key in _sim, so the
+    # structure could never be rebuilt.
+    if is_instance_valid(node) and node is Node:
+        (node as Node).queue_free()
+    _sim.erase(key)
+    _sim_sig.erase(key)

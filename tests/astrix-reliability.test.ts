@@ -18,7 +18,22 @@ class SlowProvider implements StewardDecisionProvider {
   readonly id = "slow";
   constructor(private readonly delayMs: number) {}
   async decide(_context: StewardRunContext): Promise<StewardDecision> {
-    await new Promise((resolve) => setTimeout(resolve, this.delayMs));
+    // Sleep until the delay has elapsed ON THE CLOCK THE ORCHESTRATOR MEASURES
+    // WITH. `setTimeout(n)` schedules against libuv's cached loop time, while
+    // DECISION_COMPLETED.durationMs is `Date.now() - decidedAt`; the two are
+    // truncated in different domains, so a single setTimeout(20) is observed as a
+    // 19ms Date.now() delta on this machine in ~1.7% of samples (3000 samples:
+    // 19ms x50, 20ms x1907, 21ms x846, 22ms x141, ...; never below 19, the
+    // one-millisecond signature of the clock split rather than of a slow host).
+    // Test C therefore failed about one run in sixty with "expected 19 to be
+    // greater than or equal to 20". Re-arming until Date.now() agrees makes this
+    // provider honour its stated latency in the units the assertion is written
+    // in: the >= 20 bound is untouched and now genuinely guaranteed instead of
+    // being a coin flip on timer rounding.
+    const started = Date.now();
+    while (Date.now() - started < this.delayMs) {
+      await new Promise((resolve) => setTimeout(resolve, this.delayMs - (Date.now() - started)));
+    }
     return { decision: "idle", toolCalls: [] };
   }
 }
@@ -121,7 +136,16 @@ describe("strategic observation fields", () => {
     expect(snap.harvestableFood).toBe(0);
     expect(snap.growingFood).toBe(0);
     expect(snap.projectedFoodAtWinter).toBe(40 - 24 * 4); // 24 days until winter at 4/day
-    expect(snap.foodPressureLevel).toBe("ok");
+    // CHANGED (was "ok"): genesis has 10 days of food, ZERO farms, ZERO crops and
+    // 24 days until Winter -- projectedFoodAtWinter is -56. "ok" was the label of
+    // a bug: foodPressureLevel looked only at daysOfFoodRemaining and ignored the
+    // very projection printed on the line above, so the steward was told the food
+    // supply was fine while the state said the village cannot reach Winter.
+    // "high" (cannot reach Winter) is the truthful label; the runway is still long
+    // enough to plant, so it is not yet "critical".
+    expect(snap.foodPressureLevel).toBe("high");
+    // Nothing is planted, so the soonest food is a crop sown TODAY: 8 days.
+    expect(snap.daysUntilNextHarvest).toBe(8);
 
     // A planted + matured crop becomes harvestable food.
     const bus = new AstrixGameCommandBus(state);
@@ -130,7 +154,10 @@ describe("strategic observation fields", () => {
     state.tick(DAY_SECONDS * 8);
     snap = state.snapshot();
     expect(snap.harvestableFood).toBe(6);
-    expect(snap.growingFood).toBe(6);
+    expect(snap.growingFood).toBe(6); // the SAME crop, counted once -- not 12
+    expect(snap.daysUntilNextHarvest).toBe(0); // it is harvestable right now
+    // food 40 - 8 days * 4 = 8 left, plus the 6 standing in the field.
+    expect(snap.projectedFoodAtWinter).toBe(8 + 6 - (25 - 9) * 4);
 
     // Food scarcity raises the pressure level (daysOfFoodRemaining <7 -> high, <3 -> critical).
     state.food = 16;
@@ -144,6 +171,75 @@ describe("strategic observation fields", () => {
     snap = state.snapshot();
     expect(snap.season).toBe("winter");
     expect(snap.foodPerDay).toBe(6); // 4 villagers * 1.5
+  });
+
+  it("D1b: a food-deficit state is reported as such (the granary empties before the harvest)", () => {
+    const { state, bus } = fresh();
+    // Reconstructs live turn 3: two farms planted, crops one day old, 24 food.
+    bus.execute({ command: "PLACE_BUILDING", buildingType: "farm", position: { x: 12, y: 0, z: 12 }, islandId: "meadow" });
+    bus.execute({ command: "PLACE_BUILDING", buildingType: "farm", position: { x: 20, y: 0, z: 12 }, islandId: "meadow" });
+    bus.execute({ command: "PLANT_CROP", farmPlotId: "farm-001", cropType: "wheat" });
+    bus.execute({ command: "PLANT_CROP", farmPlotId: "farm-002", cropType: "wheat" });
+    state.tick(DAY_SECONDS); // one day of growth: 12.5% of the 8-day maturity
+    state.food = 24;
+
+    const snap = state.snapshot();
+    expect(snap.crops.every((crop) => crop.growthStage === 0.125)).toBe(true);
+    expect(snap.harvestableFood).toBe(0);
+    expect(snap.growingFood).toBe(12); // two wheat crops at 6 each, counted once
+    expect(snap.daysOfFoodRemaining).toBe(6); // 24 food / 4 per day
+    expect(snap.daysUntilNextHarvest).toBe(7); // 7 more growth days needed
+
+    // THE REGRESSION: 6 days of food and no food for 7 days is starvation, and
+    // the old rule (daysOfFoodRemaining alone, threshold 7) called this "high"
+    // -- and called the strictly worse genesis state "ok". The level must follow
+    // the numbers it is derived from.
+    expect(snap.foodPressureLevel).toBe("critical");
+
+    // The projection is internally consistent: mature crops are NOT counted twice.
+    expect(snap.projectedFoodAtWinter).toBe(24 + 12 - (25 - 2) * 4);
+
+    // Harvesting the crops later removes the gap, and the label follows. (Stock
+    // the granary before ticking so the 7 days pass without starvation skewing
+    // population -- this test is about the label, not about famine mechanics.)
+    state.food = 400;
+    state.tick(DAY_SECONDS * 7);
+    state.food = 24;
+    const ready = state.snapshot();
+    expect(ready.daysUntilNextHarvest).toBe(0);
+    expect(ready.harvestableFood).toBe(12);
+    expect(ready.growingFood).toBe(12); // same crops -- never summed with harvestable
+    expect(ready.foodPressureLevel).toBe("high"); // 6 days of food, but relief is in the field
+
+    // Plenty of food AND standing crops: no hazard, so "ok" still means ok.
+    state.food = 400;
+    expect(state.snapshot().foodPressureLevel).toBe("ok");
+  });
+
+  it("D1c: in Winter nothing can mature, so no harvest date is promised", () => {
+    const { state } = fresh();
+    state.food = 4000; // survive the 25 days without starvation (see D1b)
+    state.tick(DAY_SECONDS * 25); // day 26: winter
+    expect(state.population).toBe(4);
+    state.food = 36;
+
+    const snap = state.snapshot();
+    expect(snap.season).toBe("winter");
+    expect(snap.foodPerDay).toBe(6); // 4 villagers * 1.5
+    // Nothing planted and nothing CAN grow: null, not a number that would read
+    // as "food arrives in 8 days" -- a promise Winter cannot keep.
+    expect(snap.daysUntilNextHarvest).toBeNull();
+    expect(snap.foodPressureLevel).toBe("high"); // 6 days of food, and no production at all
+
+    // A null harvest date must not make everything critical: with a full granary
+    // and no deficit projection there is no hazard to report.
+    state.food = 1000;
+    expect(state.snapshot().daysUntilNextHarvest).toBeNull();
+    expect(state.snapshot().foodPressureLevel).toBe("ok");
+
+    state.food = 6; // one day of winter rations left
+    expect(state.snapshot().daysOfFoodRemaining).toBe(1);
+    expect(state.snapshot().foodPressureLevel).toBe("critical");
   });
 
   it("D2: WORLD_OBSERVED carries the derived survival facts", async () => {
@@ -169,7 +265,11 @@ describe("strategic observation fields", () => {
     expect(data.foodPerDay).toBe(4);
     expect(data.harvestableFood).toBe(0);
     expect(data.projectedFoodAtWinter).toBeDefined();
-    expect(data.foodPressureLevel).toBe("ok");
+    // CHANGED (was "ok"): same genesis state as D1 -- see the justification there.
+    // WORLD_OBSERVED must carry the same truthful level the snapshot computes,
+    // because this event is what the steward actually reasons from.
+    expect(data.foodPressureLevel).toBe("high");
+    expect(data.daysUntilNextHarvest).toBe(8);
   });
 
   it("E: the steward prompt carries the economics, meta-tool rejection, and time-to-production guidance", () => {

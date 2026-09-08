@@ -50,11 +50,29 @@ export interface AstrixStateSnapshot {
   daysOfFoodRemaining: number;
   /** Food that could be produced by harvesting every harvestable crop right now. */
   harvestableFood: number;
-  /** Food from all planted crops if they all mature (future production potential). */
+  /**
+   * Food from ALL planted crops if they all mature (future production
+   * potential), counted once each -- mature crops are included here as well as
+   * in `harvestableFood`, so the two must never be summed.
+   */
   growingFood: number;
-  /** Projection: food + harvestableFood + growingFood - consumption until Winter (assumes all crops mature). */
+  /**
+   * Days until the soonest food can arrive: 0 when something is harvestable
+   * now, otherwise the growth days the nearest planted crop still needs; with
+   * nothing planted, the maturity time of a crop planted TODAY. `null` when no
+   * crop can mature under current conditions (Winter halts all growth).
+   */
+  daysUntilNextHarvest: number | null;
+  /** Projection: food + growingFood - consumption until Winter (assumes every planted crop matures). */
   projectedFoodAtWinter: number;
-  /** "critical" | "high" | "ok" — deterministic from daysOfFoodRemaining. */
+  /**
+   * How much trouble the food supply is in, from the authoritative numbers:
+   *   critical — under 3 days of food, OR the granary empties before the
+   *              soonest possible harvest (starvation is already scheduled).
+   *   high     — under 7 days of food, OR the village cannot reach Winter
+   *              (projectedFoodAtWinter < 0).
+   *   ok       — neither hazard applies.
+   */
   foodPressureLevel: "critical" | "high" | "ok";
   resources: Record<ResourceType, number>;
   biomeHealth: Record<BiomeId, number>;
@@ -90,6 +108,43 @@ export type CropType = keyof typeof CROP_TYPES;
 export const FARM_CROP_CAPACITY = 3;
 /** Initial farmland plots per island (a farm consumes one). */
 export const FARMLAND_CAPACITY: Record<BiomeId, number> = { meadow: 2, frost: 2, dusk: 1 };
+
+/**
+ * AUTHORITATIVE island anchors, in Core coordinates: the centre of the region
+ * each island owns. These are the regions the seeded world already uses
+ * (meadow x10-30 z20-36, frost x44-56 z12-14, dusk x72-84 z32-36) written down
+ * once, in Core, where world topology belongs.
+ *
+ * The Observatory MIRRORS these through its own `core_center` mapping; it does
+ * not define them. Core stays the single source of truth for where things are,
+ * so derived geometry (a bridge span) is computed here and merely rendered
+ * there.
+ */
+export const ISLAND_ANCHORS: Record<BiomeId, AstrixPosition> = {
+  meadow: { x: 17, y: 3.5, z: 20 },
+  frost: { x: 48, y: 4.5, z: 12 },
+  dusk: { x: 76, y: 3.2, z: 32 },
+};
+
+/**
+ * Deterministic bridge position for an island pair: the midpoint of the two
+ * island anchors, order-independent.
+ *
+ * WHY THIS EXISTS: `build_bridge` takes an island PAIR, not coordinates -- the
+ * steward names the topology it wants and never invents world geometry. Before
+ * this, a positionless bridge fell back to { 0, 0, 0 }, so the simulation said
+ * "meadow <-> frost" while the world carried a structure at the origin. The
+ * position is derived, not stored, so it is identical on every restart and
+ * re-render.
+ */
+export function bridgeAnchorFor(a: BiomeId, b: BiomeId): AstrixPosition {
+  const [first, second] = [a, b].slice().sort() as BiomeId[];
+  const pa = ISLAND_ANCHORS[first];
+  const pb = ISLAND_ANCHORS[second];
+  // The deck spans two plateaus of different heights: its midpoint sits at the
+  // mean of the two, which needs no invented constant.
+  return { x: (pa.x + pb.x) / 2, y: (pa.y + pb.y) / 2, z: (pa.z + pb.z) / 2 };
+}
 
 export function seasonForDay(day: number): Season {
   const d = ((day - 1) % YEAR_DAYS) + 1;
@@ -195,6 +250,7 @@ export class AstrixWorldState {
     daysOfFoodRemaining: number;
     harvestableFood: number;
     growingFood: number;
+    daysUntilNextHarvest: number | null;
     projectedFoodAtWinter: number;
     foodPressureLevel: "critical" | "high" | "ok";
   } {
@@ -202,15 +258,40 @@ export class AstrixWorldState {
     const daysOfFoodRemaining = Math.floor(this.food / Math.max(1, foodPerDay));
     let harvestableFood = 0;
     let growingFood = 0;
+    let soonestHarvest = Number.POSITIVE_INFINITY;
     for (const crop of this.crops) {
       const yieldAmount = yieldOf(crop.cropType);
+      // growingFood is the yield of EVERY planted crop, mature ones included --
+      // counted once. harvestableFood is the already-mature subset of the same
+      // food, so the projection below adds growingFood alone.
       growingFood += yieldAmount;
-      if (crop.growthStage >= 1) harvestableFood += yieldAmount;
+      if (crop.growthStage >= 1) {
+        harvestableFood += yieldAmount;
+        soonestHarvest = 0;
+        continue;
+      }
+      const perDay = growthPerDay(crop.cropType, this.season);
+      if (perDay > 0) soonestHarvest = Math.min(soonestHarvest, Math.ceil((1 - crop.growthStage) / perDay));
     }
-    const projectedFoodAtWinter = this.food + harvestableFood + growingFood - daysUntilWinterFor(this.day) * foodPerDay;
+    // With nothing in the ground the soonest food is whatever could be planted
+    // TODAY -- which is how long a decision made now takes to feed anyone. In
+    // Winter nothing grows at all, so no harvest is reachable: null, not a
+    // number that would read as a promise.
+    const plantableToday = growthPerDay("wheat", this.season) > 0 ? CROP_TYPES.wheat.daysToMature : null;
+    const daysUntilNextHarvest = Number.isFinite(soonestHarvest) ? soonestHarvest : plantableToday;
+    const projectedFoodAtWinter = this.food + growingFood - daysUntilWinterFor(this.day) * foodPerDay;
+    // Starvation is already scheduled when the granary empties before the
+    // soonest harvest can land. That is a fact about THIS state, not a forecast
+    // of agent behaviour, so it belongs in the authoritative telemetry: a
+    // village with 7 days of food and an 8-day harvest gap is not "ok".
+    const starvesBeforeHarvest = daysUntilNextHarvest !== null && daysOfFoodRemaining < daysUntilNextHarvest;
     const foodPressureLevel: "critical" | "high" | "ok" =
-      daysOfFoodRemaining < 3 ? "critical" : daysOfFoodRemaining < 7 ? "high" : "ok";
-    return { foodPerDay, daysOfFoodRemaining, harvestableFood, growingFood, projectedFoodAtWinter, foodPressureLevel };
+      daysOfFoodRemaining < 3 || starvesBeforeHarvest
+        ? "critical"
+        : daysOfFoodRemaining < 7 || projectedFoodAtWinter < 0
+          ? "high"
+          : "ok";
+    return { foodPerDay, daysOfFoodRemaining, harvestableFood, growingFood, daysUntilNextHarvest, projectedFoodAtWinter, foodPressureLevel };
   }
 
   snapshot(): AstrixStateSnapshot {

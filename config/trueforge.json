@@ -1,6 +1,6 @@
 {
-  "_comment": "TrueForge standalone HTTP endpoint. Override with TRUEFORGE_URL or TRUEFORGE_API_KEY env vars. decisionTimeoutMs is the fallback threshold the orchestrator enforces per agent decision — 60s so real LLM turns (NIM can queue ~5-25s) aren't prematurely replaced; scripted fallback still kicks in on error or true hangs.",
+  "_comment": "TrueForge standalone HTTP endpoint. Override with TRUEFORGE_URL or TRUEFORGE_API_KEY env vars. decisionTimeoutMs is the fallback threshold the orchestrator enforces per agent decision. A REAL measured steward turn against nvidia/gpt-oss-20b took 65-95s (see ASTRIX_VISUAL_BUILD.md), so 60s guaranteed a timeout on every TrueForge turn; 240s gives real LLM turns headroom while still bounding a true hang. src/server/index.ts applies the same 240s default when ASTRIX_RUNTIME=trueforge and no ASTRIX_DECIDE_TIMEOUT_MS is set.",
   "baseUrl": "http://localhost:8790",
-  "decisionTimeoutMs": 60000,
+  "decisionTimeoutMs": 240000,
   "mcpServerUrl": "http://localhost:8787/mcp"
 }

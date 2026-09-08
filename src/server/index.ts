@@ -13,7 +13,9 @@ import { createHttpServer } from "./http";
 import { trueforgeBackendFactory } from "./trueforgeFactory";
 import { TrueForgeStewardProvider } from "./trueforge";
 import { loadConfig } from "./config";
+import { clockShouldTick, worldClockMode } from "./worldClock";
 import { createAstrixService } from "../astrix/server";
+import type { StewardDecisionProvider } from "../astrix/orchestrator";
 
 const botMode: BotMode = (process.env.BOTS as BotMode) ?? "scripted";
 const port = Number(process.env.PORT ?? 8787);
@@ -37,18 +39,21 @@ const manager = new LobbyManager({
 
 // stdio gets its own McpServer; each HTTP session gets one too (the SDK
 // connects one server to one transport). All share the single LobbyManager.
-// The steward loop's reasoning layer is the TrueForge astrix-steward agent;
-// the loop only runs when POST /astrix/agent/start is called (no autopilot).
+//
+// REASONING LAYER (ASTrix Core independence): Core ships with a local runtime
+// and does NOT require TrueForge. ASTRIX_RUNTIME selects the adapter:
+//   local     (default) -> in-process LocalStewardProvider, zero external deps
+//   trueforge           -> TrueForgeStewardProvider (external LLM harness)
+//   auto                -> trueforge if TRUEFORGE_URL is configured, else local
+// The loop only runs when POST /astrix/agent/start is called (no autopilot).
 const astrix = createAstrixService({
   authToken: process.env.ASTRIX_API_KEY?.trim() || undefined,
-  stewardProvider: new TrueForgeStewardProvider(loadConfig().trueforge, {
-    deadlineMs: numEnv("ASTRIX_DECIDE_TIMEOUT_MS"),
-  }),
+  stewardProvider: selectStewardProvider(),
   // Demo/reproducibility knobs: bounds are still enforced, the env only widens
   // or tightens them for a given run.
   maxTurnsPerRun: numEnv("ASTRIX_MAX_TURNS_PER_RUN"),
   maxActionsPerTurn: numEnv("ASTRIX_MAX_ACTIONS_PER_TURN"),
-  decideTimeoutMs: numEnv("ASTRIX_DECIDE_TIMEOUT_MS"),
+  decideTimeoutMs: decideTimeoutMs(),
 });
 const stdioMcp = createMcpServer(manager, astrix);
 const mcpHttp = createMcpHttpBridge(() => createMcpServer(manager, astrix));
@@ -62,7 +67,38 @@ const httpServer = createHttpServer(manager, port, {
       ? distDir
       : undefined,
 });
-setInterval(() => astrix.tick(1), 1000);
+startWorldClock();
+
+/**
+ * Arm the world clock. The policy (and the starved-deployment bug behind it)
+ * lives in ./worldClock; this only owns the interval and the operator log.
+ *
+ * SCOPE: wiring only. Core's `tick()` is untouched, still advances exactly one
+ * second when called, and is still what every test drives directly.
+ */
+function startWorldClock(): void {
+  const mode = worldClockMode(process.env.ASTRIX_CLOCK);
+  console.error(
+    mode === "always"
+      ? "[astrix] world clock: always — time advances with or without a steward (ASTRIX_CLOCK=always)"
+      : "[astrix] world clock: managed — time advances only while a steward run is live",
+  );
+  let held = false;
+  setInterval(() => {
+    if (!clockShouldTick(mode, astrix.loop.state)) {
+      if (!held) {
+        held = true;
+        console.error(
+          `[astrix] world clock held at day ${astrix.state.snapshot().day} — steward ${astrix.loop.state}`,
+        );
+      }
+      return;
+    }
+    held = false;
+    astrix.tick(1);
+  }, 1000);
+}
+
 // HOST env lets ops rebind the app to 127.0.0.1 behind the Caddy reverse
 // proxy so 8787 is not exposed on the public interface (default: all).
 function numEnv(name: string): number | undefined {
@@ -70,6 +106,49 @@ function numEnv(name: string): number | undefined {
   if (!raw) return undefined;
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+/**
+ * Steward decision budget.
+ *
+ * The 60s default is right for the local runtime (it decides in milliseconds),
+ * but a real TrueForge turn against nvidia/gpt-oss-20b was measured at 95s — so
+ * on that path the default guarantees a timeout on every turn. When TrueForge is
+ * selected and no explicit budget is set, use a TrueForge-appropriate default
+ * instead of silently inheriting a local-runtime number.
+ */
+const TRUEFORGE_DECIDE_TIMEOUT_MS = 240_000;
+function decideTimeoutMs(): number | undefined {
+  const explicit = numEnv("ASTRIX_DECIDE_TIMEOUT_MS");
+  if (explicit) return explicit;
+  if (!wantsTrueForge()) return undefined;
+  console.error(
+    `[astrix] no ASTRIX_DECIDE_TIMEOUT_MS set; using ${TRUEFORGE_DECIDE_TIMEOUT_MS}ms for the TrueForge runtime ` +
+      `(a real LLM turn measured ~95s; the 60s default would time out every turn)`,
+  );
+  return TRUEFORGE_DECIDE_TIMEOUT_MS;
+}
+
+/** True when the configured runtime should talk to the TrueForge harness. */
+function wantsTrueForge(): boolean {
+  const mode = (process.env.ASTRIX_RUNTIME ?? "local").trim().toLowerCase();
+  return mode === "trueforge" || (mode === "auto" && !!process.env.TRUEFORGE_URL?.trim());
+}
+
+/**
+ * Choose the steward reasoning adapter. Returning undefined lets ASTrix Core
+ * install its own LocalStewardProvider — Core never depends on this function.
+ */
+function selectStewardProvider(): StewardDecisionProvider | undefined {
+  if (!wantsTrueForge()) {
+    const mode = (process.env.ASTRIX_RUNTIME ?? "local").trim().toLowerCase();
+    console.error(`[astrix] steward runtime: local (ASTRIX_RUNTIME=${mode}) — TrueForge not required`);
+    return undefined;
+  }
+  console.error(`[astrix] steward runtime: trueforge (${loadConfig().trueforge.baseUrl})`);
+  return new TrueForgeStewardProvider(loadConfig().trueforge, {
+    deadlineMs: decideTimeoutMs(),
+  });
 }
 
 const host = process.env.HOST ?? "0.0.0.0";

@@ -1,7 +1,8 @@
 import http from "node:http";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { AstrixGameCommandBus, type AstrixCommand } from "./commandBus";
 import { AstrixEventLog } from "./events";
+import { LocalStewardProvider } from "./localRuntime";
 import { createAstrixToolRegistry } from "./mcpTools";
 import { AstrixStewardLoop, type StewardDecisionProvider } from "./orchestrator";
 import { AstrixWorldState } from "./state";
@@ -17,9 +18,98 @@ export interface AstrixService {
   handle(req: http.IncomingMessage, res: http.ServerResponse, pathname: string, body?: Record<string, unknown>): Promise<boolean>;
 }
 
+// ---------------------------------------------------------------------------
+// R1 — AUTHORIZATION POLICY FOR CONSEQUENTIAL OPERATIONS
+//
+// Previous behaviour: `if (!authToken) return true` — with ASTRIX_API_KEY unset
+// every write route (including POST /astrix/approval/respond) was open to the
+// public internet. That let an anonymous caller supply the HUMAN approval
+// decision, which defeats the project's central control property.
+//
+// New policy — a write is authorized when EITHER:
+//   (a) a token is configured and the request presents `Authorization: Bearer <token>`, OR
+//   (b) no token is configured AND the request arrives directly on the loopback
+//       interface (local development ergonomics: curl/tests/native Godot work
+//       with no setup).
+//
+// Everything else is 401. Notably: with no token configured a REMOTE request is
+// now REFUSED instead of silently allowed.
+//
+// THE REVERSE-PROXY TRAP (important): this app is deployed behind Caddy, which
+// proxies to 127.0.0.1:8787. Under a proxy `req.socket.remoteAddress` is ALWAYS
+// loopback, so a naive loopback check would treat every public request as local
+// and change nothing. Therefore a request carrying any proxy-forwarding header
+// (`x-forwarded-for`, `x-real-ip`, `forwarded`) is treated as REMOTE regardless
+// of its socket address. Caddy sets `X-Forwarded-For` by default.
+//
+// No new dependency; token comparison is constant-time.
+// ---------------------------------------------------------------------------
+
+/** Consequential (state-changing / authority-bearing) ASTrix routes. */
+export const ASTRIX_WRITE_ROUTES = [
+  "/astrix/command",
+  "/astrix/approval/respond",
+  "/astrix/agent/start",
+  "/astrix/agent/stop",
+  "/astrix/mcp",
+  "/astrix/mcp/tools/call",
+] as const;
+
+export type AuthDecision =
+  | { ok: true; via: "token" | "loopback" }
+  | { ok: false; status: 401; error: string };
+
+/** True when the request arrived directly on loopback and was NOT proxied. */
+export function isDirectLoopback(req: http.IncomingMessage): boolean {
+  const h = req.headers;
+  // Any forwarding header means an intermediary handled this request, so the
+  // socket address is the proxy's, not the caller's. Treat as remote.
+  if (h["x-forwarded-for"] || h["x-real-ip"] || h["forwarded"] || h["x-forwarded-host"]) return false;
+  const addr = req.socket?.remoteAddress ?? "";
+  return addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1" || addr === "";
+}
+
+/** Constant-time string compare (avoids leaking the token via timing). */
+function safeEqual(a: string, b: string): boolean {
+  const av = Buffer.from(a, "utf8");
+  const bv = Buffer.from(b, "utf8");
+  if (av.length !== bv.length) return false;
+  return timingSafeEqual(av, bv);
+}
+
+/**
+ * Authorize a consequential request. Exported so the legacy MCP channel in
+ * src/server/http.ts applies exactly the same rule — one policy, one place.
+ */
+export function authorizeWrite(req: http.IncomingMessage, authToken: string | undefined): AuthDecision {
+  const header = req.headers.authorization;
+  if (authToken) {
+    const expected = `Bearer ${authToken}`;
+    if (typeof header === "string" && safeEqual(header, expected)) return { ok: true, via: "token" };
+    return {
+      ok: false,
+      status: 401,
+      error: "unauthorized: a valid Authorization: Bearer <ASTRIX_API_KEY> header is required",
+    };
+  }
+  if (isDirectLoopback(req)) return { ok: true, via: "loopback" };
+  return {
+    ok: false,
+    status: 401,
+    error:
+      "unauthorized: consequential ASTrix operations are restricted to loopback when ASTRIX_API_KEY is unset. Set ASTRIX_API_KEY on the server and send Authorization: Bearer <key>.",
+  };
+}
+
+
 export interface AstrixServiceOptions {
   authToken?: string;
-  /** TrueForge-backed reasoning layer; the loop executes its decisions. */
+  /**
+   * Reasoning layer for the steward loop. OPTIONAL: when omitted, Core falls
+   * back to the built-in LocalStewardProvider so ASTrix runs with no external
+   * dependency (TrueForge disabled/unavailable/unconfigured). An external
+   * provider (e.g. TrueForgeStewardProvider) is an adapter, never a requirement.
+   */
   stewardProvider?: StewardDecisionProvider;
   maxTurnsPerRun?: number;
   maxActionsPerTurn?: number;
@@ -32,12 +122,16 @@ export function createAstrixService(opts: AstrixServiceOptions = {}): AstrixServ
   const bus = new AstrixGameCommandBus(state);
   const tools = createAstrixToolRegistry(state, bus);
   const events = new AstrixEventLog();
+  // Core is self-sufficient: with no external adapter supplied it reasons with
+  // the local runtime. This is the "ASTrix does not require TrueForge" property
+  // expressed structurally rather than as a config flag.
+  const provider: StewardDecisionProvider = opts.stewardProvider ?? new LocalStewardProvider();
   const loop = new AstrixStewardLoop({
     state,
     bus,
     tools,
     events,
-    provider: opts.stewardProvider,
+    provider,
     maxTurnsPerRun: opts.maxTurnsPerRun,
     maxActionsPerTurn: opts.maxActionsPerTurn,
     decideTimeoutMs: opts.decideTimeoutMs,
@@ -95,8 +189,9 @@ export function createAstrixService(opts: AstrixServiceOptions = {}): AstrixServ
         return true;
       }
       if (pathname === "/astrix/command" && req.method === "POST") {
-        if (!authorized(req, authToken)) {
-          sendJson(res, 401, { success: false, error: "unauthorized" });
+        const auth = authorizeWrite(req, authToken);
+        if (!auth.ok) {
+          sendJson(res, auth.status, { success: false, error: auth.error }, req);
           return true;
         }
         const rawName = String(body.command ?? "").toLowerCase();
@@ -110,8 +205,9 @@ export function createAstrixService(opts: AstrixServiceOptions = {}): AstrixServ
         return true;
       }
       if (pathname === "/astrix/approval/respond" && req.method === "POST") {
-        if (!authorized(req, authToken)) {
-          sendJson(res, 401, { success: false, error: "unauthorized" });
+        const auth = authorizeWrite(req, authToken);
+        if (!auth.ok) {
+          sendJson(res, auth.status, { success: false, error: auth.error }, req);
           return true;
         }
         const approvalId = typeof body.approval_id === "string" ? body.approval_id : "";
@@ -127,8 +223,9 @@ export function createAstrixService(opts: AstrixServiceOptions = {}): AstrixServ
         return true;
       }
       if (pathname === "/astrix/agent/start" && req.method === "POST") {
-        if (!authorized(req, authToken)) {
-          sendJson(res, 401, { success: false, error: "unauthorized" });
+        const auth = authorizeWrite(req, authToken);
+        if (!auth.ok) {
+          sendJson(res, auth.status, { success: false, error: auth.error }, req);
           return true;
         }
         const objective = typeof body.objective === "string" && body.objective.trim() ? body.objective.trim() : undefined;
@@ -137,8 +234,9 @@ export function createAstrixService(opts: AstrixServiceOptions = {}): AstrixServ
         return true;
       }
       if (pathname === "/astrix/agent/stop" && req.method === "POST") {
-        if (!authorized(req, authToken)) {
-          sendJson(res, 401, { success: false, error: "unauthorized" });
+        const auth = authorizeWrite(req, authToken);
+        if (!auth.ok) {
+          sendJson(res, auth.status, { success: false, error: auth.error }, req);
           return true;
         }
         const result = loop.stop();
@@ -157,8 +255,9 @@ export function createAstrixService(opts: AstrixServiceOptions = {}): AstrixServ
         if (req.method === "GET") {
           sendJson(res, 200, { tools: tools.listTools() });
         } else {
-          if (!authorized(req, authToken)) {
-            sendJson(res, 401, { success: false, error: "unauthorized" });
+          if (!authorizeWrite(req, authToken).ok) {
+            const auth = authorizeWrite(req, authToken);
+            sendJson(res, 401, { success: false, error: auth.ok ? "unauthorized" : auth.error }, req);
             return true;
           }
           const name = typeof body.name === "string" ? body.name : typeof body.params === "object" && body.params ? String((body.params as Record<string, unknown>).name ?? "") : "";
@@ -172,8 +271,9 @@ export function createAstrixService(opts: AstrixServiceOptions = {}): AstrixServ
         return true;
       }
       if (pathname === "/astrix/mcp/tools/call" && req.method === "POST") {
-        if (!authorized(req, authToken)) {
-          sendJson(res, 401, { success: false, error: "unauthorized" });
+        const auth = authorizeWrite(req, authToken);
+        if (!auth.ok) {
+          sendJson(res, auth.status, { success: false, error: auth.error }, req);
           return true;
         }
         const name = typeof body.name === "string" ? body.name : "";
@@ -195,12 +295,6 @@ export function sendJson(res: http.ServerResponse, code: number, value: unknown,
     ...(origin ? { "Vary": "Origin" } : {}),
   });
   res.end(JSON.stringify(value));
-}
-
-function authorized(req: http.IncomingMessage, authToken: string | undefined): boolean {
-  if (!authToken) return true; // no legacy token configured -> open (default local/dev mode)
-  const header = req.headers.authorization;
-  return header === `Bearer ${authToken}`;
 }
 
 export function readAstrixBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {

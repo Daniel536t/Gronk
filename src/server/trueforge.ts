@@ -242,6 +242,10 @@ export interface AstrixStewardTurnResult {
   response: unknown;
   /** Parsed structured decision, when the turn completed and was parseable. */
   decision: StewardDecision | null;
+  /** Why the decision could not be parsed (null when it was). */
+  parseError?: string | null;
+  /** True when the decision only parsed after the stray-escape repair pass. */
+  decisionRepaired?: boolean;
 }
 
 /**
@@ -291,13 +295,16 @@ export async function runAstrixStewardTurn(
       break;
     }
     if (state?.status === "done") {
+      const parse = parseAstrixStewardDecisionDetailed((body as any)?.data?.state?.output);
       result = {
         sessionId,
         turnId,
         status: "done",
         latencyMs: 0,
         response: body,
-        decision: parseAstrixStewardDecision((body as any)?.data?.state?.output),
+        decision: parse.decision,
+        parseError: parse.parseError,
+        decisionRepaired: parse.repaired,
       };
       break;
     }
@@ -345,8 +352,8 @@ export function buildStewardPrompt(snapshot: unknown, options: AstrixStewardTurn
     '{ "decision": "<one-line decision>", "recommendation": "<what you recommend>", "reasoning": "<why>", "toolCalls": [{ "tool": "<ASTrix tool>", "args": { ... } }] }',
     "ACT, do not merely observe: observation-only turns accomplish nothing and the village is starving. Inspect once or twice, then choose real mutations (gather, build a farm, plant, harvest mature crops; clear terrain only if genuinely needed — it pauses for human approval).",
     "WORLD RULES: a year is 30 days (Spring 1-8, Summer 9-16, Autumn 17-24, Winter 25-30 — see `season` in the state). Wheat matures in 8 days and STOPS growing in Winter, so plant early and HARVEST mature crops (growth 100%) before winter. Each villager eats 1 food/day (1.5 in Winter). Farmland is limited per island (see `farmland`: a farm consumes one plot, each farm holds up to 3 crops). When no farmland remains, clear_terrain creates new plots on that island (IRREVERSIBLE — pauses for human approval), or build a bridge to farm another island.",
-    "ECONOMICS: every turn compare projected food demand against available and future production. The state provides deterministic derived facts — `foodPerDay` (daily consumption), `daysOfFoodRemaining` (food divided by consumption, ignoring production), `harvestableFood` (harvest these now), `growingFood` (all planted crops if they mature), `projectedFoodAtWinter` (food + harvestable + growing minus consumption until Winter), `foodPressureLevel`. Empty farm plots are wasted production: if survival requires more food, plant every free plot and harvest as soon as crops mature. Never let the village run out of food before the next harvest.",
-    "TIME-TO-PRODUCTION: actions whose benefits arrive later must be started BEFORE the resource deadline. Food reserves are finite (4 villagers eat `foodPerDay` per day) and wheat takes 8 days to mature — so the day you PLANT is not the day you EAT. Maintain a forward food forecast across the crop-maturity window: if `daysOfFoodRemaining` is small relative to crop maturation time, you are already on the brink. Establish sufficient food production capacity EARLY — a farm built today yields nothing for ~8 days, so building it when food is nearly gone is too late. Plan against the future (winter, `projectedFoodAtWinter`), not merely today's balance.",
+    "ECONOMICS: every turn compare projected food demand against available and future production. The state provides deterministic derived facts — `foodPerDay` (daily consumption), `daysOfFoodRemaining` (food divided by consumption, ignoring production), `harvestableFood` (harvest these now), `growingFood` (every planted crop if it matures -- mature crops included, so never add it to `harvestableFood`), `daysUntilNextHarvest` (days until the soonest food can arrive; null when nothing can mature, as in Winter), `projectedFoodAtWinter` (food + growingFood minus consumption until Winter), `foodPressureLevel` (critical when under 3 days of food OR the granary empties before `daysUntilNextHarvest`; high when under 7 days OR `projectedFoodAtWinter` is negative). Empty farm plots are wasted production: if survival requires more food, plant every free plot and harvest as soon as crops mature. Never let the village run out of food before the next harvest.",
+    "TIME-TO-PRODUCTION: actions whose benefits arrive later must be started BEFORE the resource deadline. Food reserves are finite (4 villagers eat `foodPerDay` per day) and wheat takes 8 days to mature — so the day you PLANT is not the day you EAT. Maintain a forward food forecast across the crop-maturity window: if `daysOfFoodRemaining` is below `daysUntilNextHarvest` the village starves before the next harvest lands -- that is what `foodPressureLevel: critical` means. Establish sufficient food production capacity EARLY — a farm built today yields nothing for ~8 days, so building it when food is nearly gone is too late. Plan against the future (winter, `projectedFoodAtWinter`), not merely today's balance.",
     "If nothing needs doing, return toolCalls: [] — that is a valid idle decision.",
     `Authoritative world state:\n${JSON.stringify(snapshot)}`,
   );
@@ -360,6 +367,25 @@ export function buildStewardPrompt(snapshot: unknown, options: AstrixStewardTurn
  * caller can fail observably instead of guessing.
  */
 export function parseAstrixStewardDecision(output: unknown): StewardDecision | null {
+  return parseAstrixStewardDecisionDetailed(output).decision;
+}
+
+/** A decision parse plus the reason it failed, so callers can report it. */
+export interface StewardDecisionParse {
+  decision: StewardDecision | null;
+  /** Why no decision could be read. Null on success. */
+  parseError: string | null;
+  /** True when the decision only parsed after the stray-escape repair pass. */
+  repaired: boolean;
+}
+
+/**
+ * Same as parseAstrixStewardDecision, but surfaces WHY parsing failed instead
+ * of collapsing every cause into a bare null. The reason reaches the operator
+ * through DECISION_COMPLETED, so the next parse failure is diagnosable from
+ * the event log alone rather than from msgpack in TrueForge's database.
+ */
+export function parseAstrixStewardDecisionDetailed(output: unknown): StewardDecisionParse {
   const o = output as { content?: unknown; tool_calls?: { function?: { name?: string; arguments?: string } }[] } | null | undefined;
   for (const tc of o?.tool_calls ?? []) {
     const name = tc?.function?.name;
@@ -367,16 +393,21 @@ export function parseAstrixStewardDecision(output: unknown): StewardDecision | n
       const parsed = tryParseArguments(tc.function?.arguments);
       if (parsed) {
         const decision = normalizeStewardDecision(parsed);
-        if (decision) return decision;
+        if (decision) return { decision, parseError: null, repaired: false };
       }
     }
   }
-  const extracted = extractJsonObject(contentToText(o?.content));
-  if (extracted) {
-    const decision = normalizeStewardDecision(extracted);
-    if (decision) return decision;
+  const extraction = extractJsonObjectDetailed(contentToText(o?.content));
+  if (extraction.value) {
+    const decision = normalizeStewardDecision(extraction.value);
+    if (decision) return { decision, parseError: null, repaired: extraction.repaired };
+    return {
+      decision: null,
+      parseError: "parsed a JSON object but it carried neither a `decision` string nor any `toolCalls`",
+      repaired: extraction.repaired,
+    };
   }
-  return null;
+  return { decision: null, parseError: extraction.error, repaired: false };
 }
 
 /** Normalize TrueForge content (string, or an array of text blocks) to text. */
@@ -407,18 +438,98 @@ function tryParseArguments(raw: string | undefined): Record<string, unknown> | n
   }
 }
 
-/** Find the first JSON object in a text blob (tolerates prose + fences). */
-export function extractJsonObject(text: string): Record<string, unknown> | null {
-  if (!text) return null;
+/** One JSON-object extraction attempt, including WHY it failed. */
+export interface JsonExtraction {
+  value: Record<string, unknown> | null;
+  /** JSON.parse's own message when extraction failed — never swallowed. */
+  error: string | null;
+  /** True when the candidate only parsed after the stray-escape repair pass. */
+  repaired: boolean;
+}
+
+/**
+ * Remove `\n`, `\r` and `\t` ESCAPE SEQUENCES that appear OUTSIDE string
+ * literals, and nothing else.
+ *
+ * WHY THIS EXISTS: gpt-oss-20b emits them as element separators inside JSON
+ * arrays -- `"toolCalls":[{"tool":"build_bridge",...},\n{"tool":"build",...}]`
+ * -- where a literal backslash-n between two array elements is simply invalid
+ * JSON. A whole 15-call plan was discarded over punctuation (turn 2 of the
+ * 2026-09-05 live run, see artifacts/forensics/).
+ *
+ * This is deliberately NOT a general "make malformed JSON valid" sanitizer:
+ * escapes inside strings are copied byte for byte (so `reasoning` text keeps
+ * its real newlines), and every other kind of malformation -- unbalanced
+ * braces, trailing commas, unquoted keys -- still fails to parse.
+ */
+export function repairStrayEscapes(candidate: string): string {
+  let out = "";
+  let inString = false;
+  for (let i = 0; i < candidate.length; i += 1) {
+    const ch = candidate[i];
+    if (inString) {
+      out += ch;
+      if (ch === "\\") {
+        // Inside a string an escape pair is DATA: copy both characters as-is.
+        i += 1;
+        if (i < candidate.length) out += candidate[i];
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      out += ch;
+      continue;
+    }
+    const next = candidate[i + 1];
+    if (ch === "\\" && (next === "n" || next === "r" || next === "t")) {
+      i += 1; // drop exactly this stray two-character escape sequence
+      continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
+function tryParseObject(candidate: string): { value: Record<string, unknown> | null; error: string | null } {
+  try {
+    const parsed = JSON.parse(candidate);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return { value: parsed as Record<string, unknown>, error: null };
+    }
+    return { value: null, error: `top-level JSON value is ${Array.isArray(parsed) ? "an array" : typeof parsed}, not an object` };
+  } catch (error) {
+    return { value: null, error: (error as Error).message };
+  }
+}
+
+/**
+ * Find the first JSON object in a text blob (tolerates prose + fences), and
+ * report the parse error when there isn't one. Parsing is attempted on the raw
+ * candidate FIRST; only if that fails is exactly ONE repair pass applied.
+ */
+export function extractJsonObjectDetailed(text: string): JsonExtraction {
+  if (!text) return { value: null, error: "model output was empty", repaired: false };
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
-  if (start < 0 || end <= start) return null;
-  try {
-    const parsed = JSON.parse(text.slice(start, end + 1));
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
-  } catch {
-    return null;
-  }
+  if (start < 0 || end <= start) return { value: null, error: "no JSON object delimiters ({ ... }) in model output", repaired: false };
+  const candidate = text.slice(start, end + 1);
+
+  const first = tryParseObject(candidate);
+  if (first.value) return { value: first.value, error: null, repaired: false };
+
+  const repaired = repairStrayEscapes(candidate);
+  if (repaired === candidate) return { value: null, error: first.error, repaired: false };
+  const second = tryParseObject(repaired);
+  if (second.value) return { value: second.value, error: null, repaired: true };
+  return { value: null, error: `${first.error} (stray-escape repair also failed: ${second.error})`, repaired: false };
+}
+
+/** Find the first JSON object in a text blob (tolerates prose + fences). */
+export function extractJsonObject(text: string): Record<string, unknown> | null {
+  return extractJsonObjectDetailed(text).value;
 }
 
 function normalizeStewardDecision(raw: Record<string, unknown>): StewardDecision | null {
@@ -445,6 +556,20 @@ function normalizeStewardDecision(raw: Record<string, unknown>): StewardDecision
 }
 
 /**
+ * Why a steward turn produced no usable decision, as the loop will see it.
+ *
+ * The "no parseable decision" phrase is load-bearing: AstrixStewardLoop matches
+ * on it to classify failureKind="parse", the only failure it retries. The real
+ * JSON.parse message is appended so the cause reaches DECISION_COMPLETED
+ * instead of being swallowed. Exported so tests assert on the SAME string the
+ * provider throws rather than a copy of it.
+ */
+export function stewardTurnFailureMessage(result: Pick<AstrixStewardTurnResult, "status" | "decision" | "parseError">): string {
+  const why = result.decision ? "" : `no parseable decision in output${result.parseError ? ` -- ${result.parseError}` : ""}`;
+  return `steward turn ${result.status ?? "incomplete"}: ${why}`;
+}
+
+/**
  * TrueForge-backed StewardDecisionProvider for the ASTrix execution loop.
  * TrueForge decides/reasons; the loop safely executes. Each decide() drives
  * one steward turn via the audited session/turn API and parses the decision.
@@ -466,9 +591,7 @@ export class TrueForgeStewardProvider implements StewardDecisionProvider {
       { objective: context.objective, memory, agentName: this.opts.agentName, retryHint: context.retryHint },
     );
     if (result.status !== "done" || !result.decision) {
-      throw new TrueForgeBackendError(
-        `steward turn ${result.status ?? "incomplete"}: ${result.decision ? "" : "no parseable decision in output"}`,
-      );
+      throw new TrueForgeBackendError(stewardTurnFailureMessage(result));
     }
     return result.decision;
   }
