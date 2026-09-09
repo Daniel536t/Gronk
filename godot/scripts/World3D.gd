@@ -343,6 +343,7 @@ func _process(delta: float) -> void:
     _update_water(delta)
     _update_crops(delta)
     _update_smoke(delta)
+    _update_proposal_markers()
     _update_clouds(delta)
     _update_camera(delta)
     for i in range(_vegetation.size()):
@@ -1788,6 +1789,7 @@ func _on_agent_status_received(status: Dictionary) -> void:
         _world_live = live
         _broadcast_world_live()
     _derive_steward_focus(status)
+    _sync_proposal_markers(status)
 
 ## Push the authoritative clock gate to every figure whose animation would
 ## otherwise imply the world is progressing.
@@ -1898,6 +1900,119 @@ func _focus_from_action(action: Dictionary) -> Array:
             if node_pos.size() == 2:
                 return [node_pos[0], "GATHER · " + str(node_pos[1]).to_upper()]
     return []
+
+# ===========================================================================
+# PROPOSAL MARKERS — the visible difference between PROPOSED and ACTUAL.
+#
+# When the Steward proposes a consequential action, the human must see WHAT
+# part of the world the proposal is about WITHOUT the world changing. These
+# markers are translucent pink beacons (pink is the approval UI's own colour
+# and appears nowhere in the 3D world), gently pulsing, at the authoritative
+# endpoints of the proposal. A proposed bridge is two beacons and open water;
+# an actual bridge is a deck. The distinction is unmistakable on purpose:
+# AI intent is not world authority.
+#
+# Data: status.pendingApproval in any known shape (flat summary with
+# sourceIsland/destinationIsland, fixture shape with impact.islandA/islandB,
+# or nested action record with MCP args). Shapes that carry no resolvable
+# target yield no markers — honestly, like the steward focus.
+# Presentation only: markers never touch state, never execute anything.
+# ===========================================================================
+var _proposal_markers: Array[Node3D] = []
+
+const PROPOSAL_PINK := Color(1.0, 0.56, 0.64, 0.42)
+
+func _sync_proposal_markers(status: Dictionary) -> void:
+    _clear_proposal_markers()
+    var pending: Variant = status.get("pendingApproval")
+    if not (pending is Dictionary):
+        return
+    var spots: Array[Vector3] = []
+    var radii: Array[float] = []
+    var pd := pending as Dictionary
+    var a := str(pd.get("sourceIsland", ""))
+    var b := str(pd.get("destinationIsland", ""))
+    var impact: Variant = pd.get("impact")
+    if (a == "" or b == "") and impact is Dictionary:
+        if a == "":
+            a = str((impact as Dictionary).get("islandA", ""))
+        if b == "":
+            b = str((impact as Dictionary).get("islandB", ""))
+    if ISLANDS.has(a) and ISLANDS.has(b):
+        var span := _bridge_endpoints(a, b)
+        spots = [span[0], span[1]]
+        radii = [1.4, 1.4]
+    elif ISLANDS.has(a) and pd.get("position") is Dictionary:
+        spots = [_map_core_pos(a, _core_vec(pd.get("position")))]
+        radii = [1.4]
+    elif impact is Dictionary and (impact as Dictionary).get("position") is Dictionary and ISLANDS.has(a):
+        spots = [_map_core_pos(a, _core_vec((impact as Dictionary).get("position")))]
+        radii = [clampf(float((impact as Dictionary).get("radius", 2.0)), 1.0, 6.0)]
+    else:
+        var nested: Variant = pd.get("action")
+        if nested is Dictionary:
+            var nargs: Variant = (nested as Dictionary).get("args")
+            if (nested as Dictionary).get("tool") == "build_bridge" and nargs is Dictionary:
+                # A proposed bridge is about its TWO endpoints, not a midpoint
+                # dot: resolve the span so both shores are marked.
+                var nia := str((nargs as Dictionary).get("island_a", ""))
+                var nib := str((nargs as Dictionary).get("island_b", ""))
+                if ISLANDS.has(nia) and ISLANDS.has(nib):
+                    var nspan := _bridge_endpoints(nia, nib)
+                    spots = [nspan[0], nspan[1]]
+                    radii = [1.4, 1.4]
+            if spots.is_empty():
+                # Other tools (or arg-less records): resolve through the same
+                # focus path rather than duplicating its logic. Records with no
+                # resolvable target yield nothing, honestly.
+                var resolved := _focus_from_action(nested)
+                if resolved.size() == 2 and resolved[0] is Vector3:
+                    spots = [resolved[0]]
+                    radii = [1.4]
+    for i in range(spots.size()):
+        _proposal_beacon(spots[i], radii[i])
+
+## One beacon: a translucent pink disc on the ground + a short light pillar.
+## Nothing in the world shares this colour or shape, so it cannot be mistaken
+## for terrain, a building, a crop, or a bridge.
+func _proposal_beacon(pos: Vector3, radius: float) -> void:
+    var beacon := Node3D.new()
+    beacon.name = "ProposalBeacon"
+    beacon.position = pos
+    var disc := AstrixMesh.cylinder_on("BeaconDisc", radius, radius, 0.1,
+        Vector3(0.0, 0.15, 0.0), PROPOSAL_PINK, 16)
+    disc.material_override = _proposal_material()
+    disc.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+    beacon.add_child(disc)
+    var pillar := AstrixMesh.box("BeaconPillar", Vector3(0.22, 3.2, 0.22),
+        Vector3(0.0, 1.75, 0.0), PROPOSAL_PINK)
+    pillar.material_override = _proposal_material()
+    pillar.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+    beacon.add_child(pillar)
+    add_child(beacon)
+    _proposal_markers.append(beacon)
+
+func _proposal_material() -> StandardMaterial3D:
+    var mat := StandardMaterial3D.new()
+    mat.albedo_color = PROPOSAL_PINK
+    mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+    mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+    return mat
+
+func _clear_proposal_markers() -> void:
+    for m in _proposal_markers:
+        if is_instance_valid(m):
+            m.queue_free()
+    _proposal_markers.clear()
+
+func _update_proposal_markers() -> void:
+    # Gentle pulse so the beacons read as ATTENTION rather than geometry.
+    # Proposal UI, not simulation state: pulses whenever a proposal is open,
+    # including under a held clock (the wait for the human is real).
+    var s := 1.0 + sin(_time * 2.2) * 0.08
+    for m in _proposal_markers:
+        if is_instance_valid(m):
+            m.scale = Vector3(s, 1.0, s)
 
 ## [world position, island id] for an authoritative building, or [].
 func _building_position(world_state: Node, building_id: String) -> Array:

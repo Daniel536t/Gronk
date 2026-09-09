@@ -468,20 +468,20 @@ func _detect_consequences(world: Dictionary) -> void:
         _log("[color=#c9a0ff]SEASON → %s[/color]" % season.to_upper())
         if season == "winter":
             _log("[color=#dce7f2]❄ WINTER — crops stop growing[/color]")
-            _consequence = "Winter arrived — crop growth halted"
+            _set_consequence("Winter arrived — crop growth halted")
     if int(_prev["buildings"]) >= 0 and buildings > int(_prev["buildings"]):
         _log("[color=#8fd3c7]STRUCTURE BUILT[/color] (%d total)" % buildings)
-        _consequence = "Structure constructed"
+        _set_consequence("Structure constructed")
         _advance_approval_stage("VERIFIED")
     if int(_prev["crops"]) >= 0 and crops > int(_prev["crops"]):
         _log("[color=#8fd3c7]CROP PLANTED[/color] (%d growing)" % crops)
-        _consequence = "Food production increased"
+        _set_consequence("Food production increased")
     if int(_prev["pop"]) >= 0 and pop < int(_prev["pop"]):
         _log("[color=#ffd166]FOOD SHORTAGE[/color] %d lost" % (int(_prev["pop"]) - pop))
-        _consequence = "Population fell — food ran out"
+        _set_consequence("Population fell — food ran out")
     elif int(_prev["food"]) >= 0 and food > int(_prev["food"]) + 4:
         _log("[color=#8fd3c7]HARVEST[/color] food %d → %d" % [int(_prev["food"]), food])
-        _consequence = "Harvest complete — food increased"
+        _set_consequence("Harvest complete — food increased")
 
     _prev = {"day": day, "food": food, "pop": pop, "season": season,
              "buildings": buildings, "crops": crops}
@@ -518,10 +518,11 @@ func _on_agent_status(status: Dictionary) -> void:
         for event in events:
             if not (event is Dictionary):
                 continue
-            var type_name := str(event.get("type", "")).replace("_", " ")
+            var raw_type := str(event.get("type", ""))
+            var type_name := raw_type.replace("_", " ")
             var data: Variant = event.get("data", {})
             var detail := _event_detail(data)
-            feed.append("[color=#7f8da3]%s[/color] %s" % [type_name, detail])
+            feed.append("[color=%s]%s[/color] %s" % [_event_class_color(raw_type), type_name, detail])
         if not feed.is_empty():
             _lines = feed
 
@@ -535,6 +536,22 @@ func _on_agent_status(status: Dictionary) -> void:
         _render_world(_world)
 
     _render_agent(state, turn, objective)
+
+## Event class colours: the feed maps Core's EXISTING event types into causal
+## classes (governance pink, executed/verified green, failure red) so the
+## lifecycle reads at a glance. No new event types, no invented pipeline.
+static func _event_class_color(raw_type: String) -> String:
+    match raw_type:
+        "APPROVAL_REQUIRED", "APPROVAL_GRANTED", "APPROVAL_REJECTED":
+            return "#ff8fa3"
+        "ACTION_SUCCEEDED", "VERIFICATION_SUCCEEDED":
+            return "#8fd3c7"
+        "ACTION_FAILED", "VERIFICATION_FAILED", "TURN_FAILED", "DECISION_RETRY":
+            return "#f4a261"
+        "TURN_COMPLETED", "PLAN_CREATED", "DECISION_COMPLETED":
+            return "#9fd6f0"
+        _:
+            return "#7f8da3"
 
 ## The one legible fact from an event's payload.
 ##
@@ -617,7 +634,8 @@ func _render_agent(state: String = "", turn: int = -1, objective: String = "") -
         body += "%s[color=#ffd166]WORLD CLOCK HELD[/color] [color=#8a97ad]— %s[/color]" % [
             "\n" if body != "" else "", why]
     if _consequence != "":
-        body += "\n[color=#8a97ad]CONSEQUENCE[/color] %s" % _consequence
+        var fresh := "[color=#8fd3c7]● NEW[/color] " if _consequence_fresh_until != 0 else ""
+        body += "\n[color=#8a97ad]CONSEQUENCE[/color] %s%s" % [fresh, _consequence]
     if _agent_objective != "":
         body += "\n[color=#5f6d84]%s[/color]" % _agent_objective
     _agent_action.text = body
@@ -656,6 +674,20 @@ func _log(line: String) -> void:
     if _lines.size() > 24:
         _lines.remove_at(0)
     _render_feed()
+
+## A fresh consequence carries a NEW marker for ~12s so a changed world state
+## catches the eye once instead of blending into the panel. Wall-clock time:
+## it marks when the OBSERVER learned of the change, not simulation time.
+var _consequence_fresh_until := 0
+
+func _set_consequence(text: String) -> void:
+    _consequence = text
+    _consequence_fresh_until = Time.get_ticks_msec() + 12000
+
+func _process(_delta: float) -> void:
+    if _consequence_fresh_until != 0 and Time.get_ticks_msec() >= _consequence_fresh_until:
+        _consequence_fresh_until = 0
+        _render_agent()
 
 func _on_command_completed(command_name: String, result: Dictionary) -> void:
     var ok := bool(result.get("ok", result.get("success", false)))
@@ -802,7 +834,7 @@ func _on_reject() -> void:
         return
     GameClient.respond_to_astrix_approval(_pending_id, "reject")
     _log("[color=#ff8fa3]REJECTED by human[/color] %s" % _pending_id)
-    _consequence = "Proposal rejected — steward must adapt"
+    _set_consequence("Proposal rejected — steward must adapt")
     _pending_id = ""
     _approval_stage = ""
     _approval_panel.visible = false
