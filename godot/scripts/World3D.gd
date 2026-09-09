@@ -833,6 +833,8 @@ func _build_island(id: String, data: Dictionary) -> void:
     _seasonal_mesh(knoll, _grass_season_kind(grass_kind), -0.05)
 
     _build_island_rim(group, id, centre, radius, top, rock_color, bool(data["beach"]))
+    _build_island_strata(group, id, centre, radius, top, rock_color)
+    _build_island_shelves(group, id, centre, radius, top)
     _build_island_floor(group, id, centre, radius, top)
 
 func _grass_color(kind: String) -> Color:
@@ -888,6 +890,80 @@ func _build_island_rim(group: Node3D, id: String, centre: Vector3, radius: Vecto
         sand.scale.z = 0.55
         sand.rotation.y = -0.7
         group.add_child(sand)
+
+# ===========================================================================
+# ISLAND SCULPT — strata terraces + rim shelves.
+#
+# The reference dioramas read as sculpted because their cliffs are LAYERED
+# (visible strata shelves stepping down to the water) and their rims are broken
+# (grass shelves at different heights, never one perfect disc). The island core
+# stays a smooth column; these sit ON it, outside the 72% buildable interior,
+# so no authoritative building can ever intersect them and the island topology
+# Core owns is untouched.
+# ===========================================================================
+
+## Two stepped strata rings on the cliff face: lighter stone shelves jutting out
+## below the soil band, with deterministic boulder outcrops for breakup.
+func _build_island_strata(group: Node3D, id: String, centre: Vector3, radius: Vector2,
+        top: float, rock_color: Color) -> void:
+    var r := AstrixMesh.rng((hash(id) & 0x7fffffff) + 517)
+    # Shelf heights: fractions of the way from the grass top down to the water.
+    # Strata read as SHADOWED rock ledges: darker than the cliff face, never
+    # lighter — a pale ring renders as snow/foam and breaks the island's mass.
+    var shelves := [
+        {"t": 0.45, "out": 1.03, "tone": 0.10},
+        {"t": 0.72, "out": 1.07, "tone": 0.22},
+    ]
+    for s in shelves:
+        var shelf_y: float = lerpf(top, WATER_LEVEL, float(s["t"]))
+        var ring := AstrixMesh.cylinder_on("Strata", radius.x * float(s["out"]),
+            radius.x * float(s["out"]) * 1.03, 0.4,
+            Vector3(centre.x, shelf_y - 0.4, centre.z),
+            rock_color.darkened(float(s["tone"])), 11)
+        ring.scale.z = radius.y / radius.x
+        ring.rotation.y = 0.31
+        group.add_child(ring)
+    # Boulder outcrops gripping the upper shelf: 3 per island, deterministic.
+    for i in range(3):
+        var a := TAU * (float(i) / 3.0) + r.randf() * 0.5 + float(hash(id) & 0xff) * 0.01
+        var dir := Vector3(cos(a), 0.0, sin(a))
+        var rad := AstrixMesh.ellipse_radius(radius * 1.02, dir)
+        var shelf_y2: float = lerpf(top, WATER_LEVEL, 0.45)
+        var outcrop := AstrixAssets.rock(int(r.randi()), 0.9 + r.randf() * 0.5, rock_color.darkened(0.12))
+        outcrop.position = Vector3(centre.x + dir.x * rad, shelf_y2 + 0.1, centre.z + dir.z * rad)
+        group.add_child(outcrop)
+
+## Grass shelves on the rim: stepped mini-plateaus that break the perfect disc.
+## Angles are hand-picked per island to stay clear of bridge heads, beaches and
+## the farm belt; all sit at 0.80-0.88 radius, outside the buildable interior.
+func _build_island_shelves(group: Node3D, id: String, centre: Vector3, radius: Vector2, top: float) -> void:
+    var angles: Array[float] = [1.75, 2.97, 5.24]
+    match id:
+        "frost":
+            angles = [1.05, 4.01, 5.59]
+        "dusk":
+            angles = [2.62, 4.19, 5.76]
+    var r := AstrixMesh.rng((hash(id) & 0x7fffffff) + 917)
+    var grass_kind := str(ISLANDS[id]["grass"])
+    for i in range(angles.size()):
+        var dir := Vector3(cos(angles[i]), 0.0, sin(angles[i]))
+        var dist := 0.84 * (0.97 + r.randf() * 0.06)
+        var pos := Vector3(centre.x + dir.x * radius.x * dist, top - 0.55, centre.z + dir.z * radius.y * dist)
+        var shelf := AstrixMesh.box_on("GrassShelf", Vector3(3.4 + r.randf() * 0.8, 0.55, 2.6 + r.randf() * 0.6),
+            pos, _grass_color(grass_kind))
+        shelf.rotation.y = -angles[i] + (r.randf() - 0.5) * 0.3
+        group.add_child(shelf)
+        _seasonal_mesh(shelf, _grass_season_kind(grass_kind), 0.02)
+        # One piece of dressing per shelf so it reads as ground, not a plinth.
+        if r.randf() < 0.6:
+            var b := AstrixAssets.bush(1200 + hash(id) & 0xffff + i)
+            (b["root"] as Node3D).position = pos + Vector3((r.randf() - 0.5) * 1.6, 0.55, (r.randf() - 0.5) * 1.2)
+            group.add_child(b["root"])
+            _register_foliage(b["foliage"])
+        else:
+            var rk := AstrixAssets.rock(1400 + hash(id) & 0xffff + i, 0.7)
+            rk.position = pos + Vector3((r.randf() - 0.5) * 1.6, 0.55, (r.randf() - 0.5) * 1.2)
+            group.add_child(rk)
 
 func _build_island_floor(group: Node3D, id: String, centre: Vector3, radius: Vector2, top: float) -> void:
     var body := StaticBody3D.new()
@@ -981,6 +1057,15 @@ func _path_between(from_pos: Vector3, to_pos: Vector3, width: float, surface: fl
     path.rotation.y = atan2(delta.x, delta.z)
     return path
 
+## A winding path through 3+ waypoints: chained slabs with a slight width taper
+## so the route narrows as it leaves the village heart. Same cheap boxes as a
+## straight path — the organic read comes from the bends, not new geometry.
+## Presentation only: no navigation, no traffic, no pathfinding, no state.
+func _path_polyline(group: Node3D, points: Array[Vector3], width: float, surface: float) -> void:
+    for i in range(points.size() - 1):
+        var taper := width * (1.0 - 0.12 * float(i) / maxf(1.0, float(points.size() - 2)))
+        group.add_child(_path_between(points[i], points[i + 1], taper, surface))
+
 func _build_settlement_dressing() -> void:
     var s := MEADOW_SURFACE
     var group := Node3D.new()
@@ -995,27 +1080,58 @@ func _build_settlement_dressing() -> void:
     group.add_child(AstrixMesh.box_on("PlazaTrim", Vector3(7.7, 0.1, 6.7),
         Vector3(0.0, s + GROUND_PLAZA_Y - 0.015, -1.5), AstrixPalette.PATH_DARK))
 
-    # Path network. Every path RUNS BETWEEN two real places (plaza -> farm belt,
+    # Path network. Winding polylines, never straight slabs: every route bends
+    # at least once the way a walked path does, and narrows as it leaves the
+    # plaza. Every route still RUNS BETWEEN two real places (plaza -> farm belt,
     # plaza -> houses, plaza -> bridge head, plaza -> beach) instead of
     # dead-ending in open grass.
     var bridge_head := _rim_point("meadow", "frost", 0.84)
-    for spec in [
-        # plaza -> farm belt (south, camera-facing)
-        {"from": Vector3(0.0, 0.0, 1.0), "to": Vector3(0.0, 0.0, 8.0), "w": 2.4},
-        # plaza -> houses (north)
-        {"from": Vector3(0.0, 0.0, -4.0), "to": Vector3(-1.5, 0.0, -9.0), "w": 2.2},
-        # plaza -> bridge head (north-east)
-        {"from": Vector3(3.0, 0.0, -2.0), "to": Vector3(bridge_head.x, 0.0, bridge_head.z), "w": 2.2},
-        # plaza -> beach/dock (south-east)
-        {"from": Vector3(2.5, 0.0, 1.5), "to": Vector3(8.0, 0.0, 7.5), "w": 1.9},
-        # farm belt spur (west)
-        {"from": Vector3(-2.0, 0.0, 5.5), "to": Vector3(-8.5, 0.0, 5.0), "w": 1.8},
-    ]:
-        group.add_child(_path_between(spec["from"] as Vector3, spec["to"] as Vector3, float(spec["w"]), s))
+    _path_polyline(group, [Vector3(0.0, 0.0, 1.0), Vector3(0.9, 0.0, 3.6), Vector3(-0.5, 0.0, 6.0), Vector3(0.0, 0.0, 8.0)], 2.4, s)
+    _path_polyline(group, [Vector3(0.0, 0.0, -4.0), Vector3(-1.3, 0.0, -6.6), Vector3(-1.5, 0.0, -9.0)], 2.2, s)
+    _path_polyline(group, [Vector3(3.0, 0.0, -2.0), Vector3(6.2, 0.0, -4.2), Vector3(bridge_head.x, 0.0, bridge_head.z)], 2.2, s)
+    _path_polyline(group, [Vector3(2.5, 0.0, 1.5), Vector3(5.6, 0.0, 4.1), Vector3(8.0, 0.0, 7.5)], 1.9, s)
+    _path_polyline(group, [Vector3(-2.0, 0.0, 5.5), Vector3(-5.2, 0.0, 6.3), Vector3(-8.5, 0.0, 5.0)], 1.8, s)
+    # Bridge landing: a small stone pad where the village path meets the bridge
+    # head, flanked by two waystones — the bridge reads as ARRIVED AT rather
+    # than sprouting from grass. Static geography (rim point), not topology.
+    var landing := AstrixMesh.cylinder_on("BridgeLanding", 1.7, 1.9, 0.14,
+        Vector3(bridge_head.x, s + 0.02, bridge_head.z), AstrixPalette.PATH_DARK, 10)
+    group.add_child(landing)
+    var head_dir := (bridge_head - Vector3(3.0, 0.0, -2.0))
+    head_dir.y = 0.0
+    head_dir = head_dir.normalized()
+    var side_dir := Vector3(-head_dir.z, 0.0, head_dir.x)
+    for sign in [-1.0, 1.0]:
+        var stone := AstrixAssets.rock(6100 + int(sign * 3.0 + 9.0), 0.8)
+        stone.position = Vector3(bridge_head.x, s, bridge_head.z) - head_dir * 1.2 + side_dir * sign * 1.9
+        group.add_child(_clearable_prop(stone))
+    # Frost frontier trail: a narrow rocky footpath from the frost bridge head
+    # toward the island heart. Sparse and narrow — a frontier trail, not a road.
+    var frost_head := _rim_point("frost", "meadow", 0.84)
+    var frost_centre: Vector3 = ISLANDS["frost"]["center"]
+    _path_polyline(group, [frost_head, frost_head * 0.6 + frost_centre * 0.4 + Vector3(0.8, 0.0, 0.6),
+        frost_centre + Vector3(-1.5, 0.0, 1.0)], 1.3, FROST_SURFACE)
 
     var well := AstrixAssets.well()
     well.position = Vector3(0.0, s, -1.5)
     group.add_child(well)
+    # Village-heart edging: a broken ring of low stones around the plaza trim
+    # so the centre reads as a deliberate gathering space with a soft boundary.
+    # Broken (gaps on the path exits) — a closed ring would read as a pen.
+    var edge_r := AstrixMesh.rng(777)
+    for i in range(10):
+        if i % 5 == 2:
+            continue    # gaps where the farm-belt and house paths leave
+        var a := TAU * float(i) / 10.0 + 0.2
+        var stone := AstrixMesh.blob("PlazaStone", 0.22 + edge_r.randf() * 0.1,
+            Vector3(cos(a) * 4.3, s + 0.05, -1.5 + sin(a) * 3.8),
+            AstrixPalette.STONE_WALL.darkened(edge_r.randf() * 0.12), 6, 3)
+        stone.scale.y = 0.6
+        group.add_child(_clearable_prop(stone))
+    var plaza_bench := AstrixAssets.bench(913)
+    plaza_bench.position = Vector3(-2.9, s, 0.6)
+    plaza_bench.rotation.y = 0.5
+    group.add_child(_clearable_prop(plaza_bench))
 
     # Market stalls lining the plaza edge (not scattered across it), rotated to
     # face inward so the square reads as a market.
@@ -1112,10 +1228,17 @@ func _build_vegetation() -> void:
 
     # Hero tree: one landmark with more detail than anything else, the way the
     # reference anchors its settlement. North-west, so it never occludes.
-    var hero := AstrixAssets.tree_broadleaf(1, 2.3)
+    # Grown into a small ancient grove: the hero plus two companions at its
+    # feet, so the landmark has mass instead of standing alone.
+    var hero := AstrixAssets.tree_broadleaf(1, 2.6)
     (hero["root"] as Node3D).position = Vector3(-9.0, s, -8.0)
     group.add_child(_clearable_prop(hero["root"]))
     _register_foliage(hero["foliage"])
+    for gi in range(2):
+        var companion := AstrixAssets.tree_broadleaf(700 + gi, 1.1 + float(gi) * 0.2)
+        (companion["root"] as Node3D).position = Vector3(-11.5 + float(gi) * 4.2, s, -6.2 + float(gi) * 1.1)
+        group.add_child(_clearable_prop(companion["root"]))
+        _register_foliage(companion["foliage"])
 
     # Treeline along the north and west rim (away from the camera and away from
     # the farm belt, which occupies the south).
@@ -1936,18 +2059,76 @@ func _build_structure(type_name: String, id: String, pos: Vector3, island: Strin
             var crow := AstrixAssets.scarecrow(seed_value + 3)
             crow.position = Vector3(2.3, 0.0, 0.6)
             group.add_child(crow)
+            # Corner posts only — no rails. Rails read as boardwalk; short posts
+            # read as a worked field boundary.
+            var rows_n := float(maxi(3, crop_count))
+            for cx in [-2.15, 2.15]:
+                for cz in [-(rows_n * 1.25 + 1.0) * 0.5 - 0.25, (rows_n * 1.25 + 1.0) * 0.5 + 0.25]:
+                    group.add_child(AstrixMesh.box_on("FieldPost", Vector3(0.12, 0.55, 0.12),
+                        Vector3(cx, 0.0, cz), AstrixPalette.TIMBER.darkened(0.1)))
             _plant_rows(group, plot["rows"], world_state, id)
         "storage":
             var silo := AstrixAssets.storage(seed_value)
             group.add_child(silo)
         _:
-            var house := AstrixAssets.house(seed_value)
+            # Two house languages on the same street: the variant follows the
+            # house's rank in the sorted authoritative id list, so it is stable
+            # across rebuilds and a two-house village always shows both. The
+            # COUNT stays authoritative; only the street gains variety.
+            var house_ids: Array[String] = []
+            for bid in world_state.buildings.keys():
+                var b: Variant = world_state.buildings[bid]
+                if b is Dictionary and str(b.get("type", "")) == "house":
+                    house_ids.append(str(bid))
+            house_ids.sort()
+            var rank := maxi(house_ids.find(id), 0)
+            var house := AstrixAssets.house(seed_value) if rank % 2 == 0 else AstrixAssets.house_timber(seed_value)
             group.add_child(house)
             _register_snow_in(house)
             _register_windows_in(house)
             _register_smoke_in(house)
             _windows_lit = false   # force the next light update to repaint them
+            _dress_house(group, seed_value, island)
     return group
+
+## House dressing: 2 micro-props tucked against the walls, deterministic per
+## building id. Static storytelling (firewood, barrel, crates, bench, herbs) —
+## no merchants, no logistics, nothing that implies a simulated economy.
+func _dress_house(group: Node3D, seed_value: int, island: String) -> void:
+    if island != "meadow":
+        return    # outpost islands stay sparse; the village is on Meadow
+    # Doorstep spur: a short path from the house toward the plaza, so the house
+    # reads as CONNECTED rather than dropped on grass. Built in group-local
+    # space (group origin is the house position), so it follows wherever Core
+    # actually placed the house.
+    var to_plaza := Vector3(0.0, 0.0, -1.5) - group.position
+    to_plaza.y = 0.0
+    if to_plaza.length() > 0.5:
+        to_plaza = to_plaza.normalized()
+        var spur := AstrixMesh.box_on("Doorstep", Vector3(1.1, 0.09, 2.6),
+            to_plaza * 2.2, AstrixPalette.PATH.darkened(0.05))
+        spur.rotation.y = atan2(to_plaza.x, to_plaza.z)
+        group.add_child(_clearable_prop(spur))
+    var r := AstrixMesh.rng(seed_value + 31337)
+    var spots := [Vector3(1.9, 0.0, 1.2), Vector3(-1.9, 0.0, 0.4), Vector3(0.6, 0.0, -1.7)]
+    var first := int(r.randi()) % 5
+    var second := (first + 2 + int(r.randi()) % 2) % 5
+    var picks := [first, second]
+    for i in range(2):
+        var prop: Node3D
+        match picks[i]:
+            0:
+                prop = AstrixAssets.firewood_stack(seed_value + i)
+            1:
+                prop = AstrixAssets.barrel(seed_value + i)
+            2:
+                prop = AstrixAssets.crate_stack(seed_value + i)
+            3:
+                prop = AstrixAssets.bench(seed_value + i)
+            _:
+                prop = AstrixAssets.herb_garden(seed_value + i)
+        prop.position = spots[(first + i * 2) % 3]
+        group.add_child(_clearable_prop(prop))
 
 ## Crops rendered from authoritative crops[] — one crop = one planted row at its
 ## real growthStage. Row order is deterministic (sorted crop id) so a crop keeps

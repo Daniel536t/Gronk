@@ -94,6 +94,78 @@ static func house(seed_value: int) -> Node3D:
     return root
 
 
+## TIMBER-FRAME HOUSE — the ref2 village language: cream plastered walls with a
+## dark timber skeleton, layered shingle roof, shuttered windows. Same footprint
+## and naming contracts as house() (Window* for the dusk-glow registry, Smoke*
+## for the smoke registry, SnowCap* for winter) so World3D treats both variants
+## identically. Which variant a house gets is deterministic per building id —
+## the COUNT of houses stays authoritative, only the street gains variety.
+static func house_timber(seed_value: int) -> Node3D:
+    var root := Node3D.new()
+    root.name = "HouseTimber"
+    var r := AstrixMesh.rng(seed_value)
+    var w := 2.7 + r.randf() * 0.6
+    var d := 2.3 + r.randf() * 0.5
+    var wall_h := 1.9 + r.randf() * 0.35
+
+    root.add_child(AstrixMesh.box_on("Footing", Vector3(w + 0.26, 0.2, d + 0.26), Vector3.ZERO, AstrixPalette.STONE_WALL))
+    root.add_child(AstrixMesh.box_on("Walls", Vector3(w, wall_h, d), Vector3(0.0, 0.18, 0.0), AstrixPalette.WALL))
+    # Timber skeleton: corner posts + top/bottom beams on the front face.
+    for px in [-w * 0.5 + 0.06, w * 0.5 - 0.06]:
+        root.add_child(AstrixMesh.box("PostBeam", Vector3(0.13, wall_h, 0.05),
+            Vector3(px, 0.18 + wall_h * 0.5, d * 0.5 + 0.01), AstrixPalette.BARK_DARK))
+    for by in [0.18 + 0.1, 0.18 + wall_h - 0.1]:
+        root.add_child(AstrixMesh.box("BeamBand", Vector3(w + 0.02, 0.12, 0.05),
+            Vector3(0.0, by, d * 0.5 + 0.01), AstrixPalette.BARK_DARK))
+
+    # Layered shingle roof: deep eaved main gable + smaller cap gable.
+    var roof_h := 1.0 + r.randf() * 0.2
+    root.add_child(AstrixMesh.gable("Roof", Vector3(w + 0.6, roof_h, d + 0.6),
+        Vector3(0.0, 0.18 + wall_h, 0.0), AstrixPalette.TIMBER))
+    root.add_child(AstrixMesh.gable("RoofCap", Vector3(w * 0.45, roof_h * 0.55, d * 0.45),
+        Vector3(0.0, 0.18 + wall_h + roof_h * 0.62, 0.0), AstrixPalette.TIMBER.darkened(0.18)))
+    var cap := AstrixMesh.gable("SnowCapRoof", Vector3(w + 0.66, roof_h * 0.5, d + 0.66),
+        Vector3(0.0, 0.18 + wall_h + roof_h * 0.45, 0.0), AstrixPalette.SNOW)
+    cap.visible = false
+    root.add_child(cap)
+
+    # Door with stone step + timber lintel.
+    root.add_child(AstrixMesh.box_on("Step", Vector3(0.8, 0.1, 0.4),
+        Vector3(0.0, 0.18, d * 0.5 + 0.2), AstrixPalette.STONE_WALL))
+    root.add_child(AstrixMesh.box_on("Door", Vector3(0.5, 0.95, 0.08),
+        Vector3(0.0, 0.18, d * 0.5), AstrixPalette.TIMBER.darkened(0.15)))
+    root.add_child(AstrixMesh.box("Lintel", Vector3(0.8, 0.12, 0.1),
+        Vector3(0.0, 0.18 + 1.05, d * 0.5 + 0.02), AstrixPalette.BARK_DARK))
+    # Shuttered windows: dark inset + red shutters either side.
+    for wx in [-w * 0.28, w * 0.28]:
+        root.add_child(AstrixMesh.box("Window", Vector3(0.4, 0.4, 0.07),
+            Vector3(wx, 0.18 + wall_h * 0.62, d * 0.5), Color("2f3a44")))
+        for sx in [-0.3, 0.3]:
+            root.add_child(AstrixMesh.box("Shutter", Vector3(0.16, 0.44, 0.04),
+                Vector3(wx + sx, 0.18 + wall_h * 0.62, d * 0.5 + 0.02), AstrixPalette.BARN.darkened(0.1)))
+
+    # Chimney with pot + smoke (Smoke* names feed the smoke registry).
+    var cx := -w * 0.3
+    var chimney_h := roof_h + 0.7
+    root.add_child(AstrixMesh.box_on("Chimney", Vector3(0.3, chimney_h, 0.3),
+        Vector3(cx, 0.18 + wall_h * 0.55, -d * 0.16), AstrixPalette.STONE_WALL))
+    var pot_y := 0.18 + wall_h * 0.55 + chimney_h + 0.1
+    root.add_child(AstrixMesh.box("ChimneyPot", Vector3(0.2, 0.22, 0.2),
+        Vector3(cx, pot_y, -d * 0.16), AstrixPalette.ROOF_DARK))
+    for i in range(4):
+        var puff := AstrixMesh.blob("Smoke", 0.3 + float(i) * 0.15,
+            Vector3(cx + float(i) * 0.28, pot_y + 0.5 + float(i) * 0.8, -d * 0.16 - float(i) * 0.2),
+            Color(0.95, 0.96, 0.98, 0.75 - float(i) * 0.13), 7, 4)
+        puff.scale.y = 0.82
+        root.add_child(puff)
+    # Door lantern: kindles with the windows at dusk (same registry).
+    var lamp := AstrixMesh.box("WindowPorch", Vector3(0.16, 0.2, 0.12),
+        Vector3(0.45, 0.18 + 1.0, d * 0.5 + 0.05), Color("ffe9a8"))
+    lamp.material_override = AstrixPalette.glow(Color("ffe9a8"), 1.1)
+    root.add_child(lamp)
+    return root
+
+
 ## BARN / FARM BUILDING — unmistakably agricultural: red board walls, big double
 ## doors, hay-loft opening under the ridge, lean-to shelter, hay bales.
 static func barn(seed_value: int) -> Node3D:
@@ -673,6 +745,75 @@ static func fence_run(length: float, seed_value: int) -> Node3D:
         root.add_child(post)
     for h in [0.3, 0.56]:
         root.add_child(AstrixMesh.box("Rail", Vector3(0.06, 0.07, length), Vector3(0.0, h, 0.0), AstrixPalette.TIMBER_LIT))
+    return root
+
+
+## HOUSE-DRESSING MICRO-PROPS — purely presentational storytelling around an
+## authoritative house: firewood, water barrel, crate stack, bench, herb garden.
+## Small, low, tucked against walls. Never a merchant, never logistics.
+static func firewood_stack(seed_value: int) -> Node3D:
+    var root := Node3D.new()
+    root.name = "Firewood"
+    var r := AstrixMesh.rng(seed_value)
+    root.rotation.y = r.randf() * TAU
+    for row in range(3):
+        var n := 4 - row
+        for i in range(n):
+            var log := AstrixMesh.cylinder_on("Log", 0.11, 0.11, 0.7,
+                Vector3(float(i) * 0.24 - float(n) * 0.12 + 0.12, 0.11 + float(row) * 0.2, 0.0),
+                AstrixPalette.BARK.darkened(0.08 + r.randf() * 0.1), 7)
+            log.rotation_degrees.x = 90.0
+            log.position.y = 0.11 + float(row) * 0.2
+            root.add_child(log)
+    return root
+
+
+static func barrel(seed_value: int) -> Node3D:
+    var root := Node3D.new()
+    root.name = "Barrel"
+    var r := AstrixMesh.rng(seed_value)
+    root.rotation.y = r.randf() * TAU
+    root.add_child(AstrixMesh.cylinder_on("Body", 0.3, 0.34, 0.7, Vector3.ZERO, AstrixPalette.TIMBER_LIT, 9))
+    for h in [0.18, 0.52]:
+        root.add_child(AstrixMesh.cylinder_on("Hoop", 0.345, 0.345, 0.06, Vector3(0.0, h, 0.0), AstrixPalette.ROCK_DARK, 9))
+    return root
+
+
+static func crate_stack(seed_value: int) -> Node3D:
+    var root := Node3D.new()
+    root.name = "Crates"
+    var r := AstrixMesh.rng(seed_value)
+    root.add_child(AstrixMesh.box_on("CrateA", Vector3(0.55, 0.55, 0.55), Vector3.ZERO, AstrixPalette.TIMBER_LIT))
+    var top := AstrixMesh.box_on("CrateB", Vector3(0.45, 0.45, 0.45), Vector3(0.05, 0.55, -0.03), AstrixPalette.TIMBER)
+    top.rotation.y = (r.randf() - 0.5) * 0.4
+    root.add_child(top)
+    return root
+
+
+static func bench(seed_value: int) -> Node3D:
+    var root := Node3D.new()
+    root.name = "Bench"
+    var r := AstrixMesh.rng(seed_value)
+    root.rotation.y = r.randf() * TAU
+    root.add_child(AstrixMesh.box_on("Seat", Vector3(1.1, 0.09, 0.35), Vector3(0.0, 0.32, 0.0), AstrixPalette.TIMBER_LIT))
+    for side in [-0.45, 0.45]:
+        root.add_child(AstrixMesh.box_on("Leg", Vector3(0.09, 0.32, 0.3), Vector3(side, 0.0, 0.0), AstrixPalette.TIMBER))
+    return root
+
+
+static func herb_garden(seed_value: int) -> Node3D:
+    var root := Node3D.new()
+    root.name = "HerbGarden"
+    var r := AstrixMesh.rng(seed_value)
+    root.add_child(AstrixMesh.box_on("Bed", Vector3(1.4, 0.22, 0.9), Vector3.ZERO, AstrixPalette.SOIL_TILLED))
+    for side in [-1.0, 1.0]:
+        root.add_child(AstrixMesh.box_on("Edge", Vector3(1.5, 0.26, 0.1),
+            Vector3(0.0, 0.0, side * 0.45), AstrixPalette.STONE_WALL))
+    for i in range(5):
+        var herb := AstrixMesh.blob("Herb", 0.13 + r.randf() * 0.06,
+            Vector3(-0.55 + float(i) * 0.27, 0.3, (r.randf() - 0.5) * 0.4),
+            AstrixPalette.BUSH.lightened(0.1 + r.randf() * 0.12), 6, 3)
+        root.add_child(herb)
     return root
 
 
