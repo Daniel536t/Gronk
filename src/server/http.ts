@@ -69,8 +69,17 @@ function serveStatic(
   const resolved = normalize(join(staticDir, pathname));
   if (!resolved.startsWith(normalize(staticDir))) return false;
   if (!existsSync(resolved) || !statSync(resolved).isFile()) return false;
+  // Deployment lesson (Sep 2026): the Godot Web artifacts are overwritten in
+  // place on every export (index.pck keeps its name), and with no cache
+  // headers browsers held the previous build indefinitely — the public site
+  // looked stale while the server already served the new bytes. `no-cache`
+  // forces revalidation on every load; Last-Modified gives the validator.
+  // NOTE: takes effect on next server (re)start; the running process keeps
+  // serving with the old header set until then.
   res.writeHead(200, {
     "Content-Type": MIME[extname(resolved)] ?? "application/octet-stream",
+    "Cache-Control": "no-cache",
+    "Last-Modified": statSync(resolved).mtime.toUTCString(),
   });
   res.end(readFileSync(resolved));
   return true;

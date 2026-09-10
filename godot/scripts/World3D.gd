@@ -329,9 +329,12 @@ func _ready() -> void:
     _build_water()
     for id in ISLANDS.keys():
         _build_island(id, ISLANDS[id])
+    _build_distant_isles()
+    _build_waterfalls()
     _build_settlement_dressing()
     _build_vegetation()
     _build_clouds()
+    _build_fireflies()
     _build_player()
     _build_camera()
     _build_systems()
@@ -344,6 +347,7 @@ func _process(delta: float) -> void:
     _update_crops(delta)
     _update_smoke(delta)
     _update_proposal_markers()
+    _update_fireflies()
     _update_clouds(delta)
     _update_camera(delta)
     for i in range(_vegetation.size()):
@@ -380,6 +384,16 @@ func _build_environment() -> void:
     env.tonemap_exposure = 1.0
     env.tonemap_white = 2.0
     env.glow_enabled = false
+    # Aerial perspective: the world is small and the ocean is vast, so distance
+    # needs atmosphere. Subtle blue depth fog (never dense enough to hide an
+    # island) fuses the horizon and gives the far water its luminous depth.
+    env.fog_enabled = true
+    env.fog_light_color = Color("bcd8f0")
+    env.fog_light_energy = 0.5
+    env.fog_sun_scatter = 0.1
+    env.fog_density = 0.0007
+    env.fog_sky_affect = 0.25
+    env.fog_height_density = 0.0
     holder.environment = env
     add_child(holder)
 
@@ -754,6 +768,92 @@ func _update_clouds(_delta: float) -> void:
         cloud.position.z = base.z + cos(_time * 0.04 + float(i) * 1.1) * 1.5
 
 # ===========================================================================
+# DISTANT GEOGRAPHY + WATERFALLS
+#
+# The horizon used to be empty water: the world ended at the third island.
+# Three far islets (pure environment — no Core counterpart, no simulation,
+# like clouds) give the ocean scale, and waterfalls falling off the island
+# rims prove the world FLOATS: water leaves the world here.
+# ===========================================================================
+
+## Three tiny far islands on the horizon. Deliberately simple silhouettes
+## (grass cap + cliff + root + one tree): they are depth cues, not destinations.
+func _build_distant_isles() -> void:
+    var group := Node3D.new()
+    group.name = "DistantIsles"
+    add_child(group)
+    var r := AstrixMesh.rng(90210)
+    var spots := [
+        {"pos": Vector3(-25.0, 0.0, 20.0), "s": 0.5, "grass": AstrixPalette.GRASS_DARK},
+        {"pos": Vector3(44.0, 0.0, -32.0), "s": 0.4, "grass": AstrixPalette.FROST_GRASS},
+        {"pos": Vector3(-60.0, 0.0, 10.0), "s": 0.62, "grass": AstrixPalette.DUSK_GRASS},
+    ]
+    for i in range(spots.size()):
+        var spec: Dictionary = spots[i]
+        var c: Vector3 = spec["pos"]
+        var s: float = spec["s"]
+        var isle := Node3D.new()
+        isle.name = "FarIsle_%d" % i
+        isle.position = c
+        var rad := 7.0 * s
+        isle.add_child(AstrixMesh.cylinder_on("Cap", rad, rad * 1.04, 1.2,
+            Vector3.ZERO, spec["grass"], 9))
+        isle.add_child(AstrixMesh.cylinder_on("Cliff", rad * 0.96, rad * 0.5, 4.0,
+            Vector3(0.0, -5.2, 0.0), AstrixPalette.ROCK.darkened(0.2), 8))
+        isle.add_child(AstrixMesh.cylinder_on("Root", rad * 0.45, 0.2, 6.0,
+            Vector3(0.0, -11.2, 0.0), AstrixPalette.ROCK.darkened(0.35), 7))
+        var tree := AstrixAssets.tree_broadleaf(3100 + i, 1.3)
+        (tree["root"] as Node3D).position = Vector3((r.randf() - 0.5) * 3.0, 1.2, (r.randf() - 0.5) * 3.0)
+        isle.add_child(tree["root"])
+        group.add_child(isle)
+
+## Waterfalls: Meadow's spring spills off the western rim, Dusk weeps off its
+## southern rim. A translucent cascade + foam burst at the base + a drifting
+## mist puff. Static geometry (no scrolling shader — the ocean's own motion
+## sells the water); if it reads as glass in the render, it gets cut.
+func _build_waterfalls() -> void:
+    var group := Node3D.new()
+    group.name = "Waterfalls"
+    add_child(group)
+    _waterfall(group, "meadow", 3.32, 1.6)
+    _waterfall(group, "dusk", 4.45, 1.1)
+
+func _waterfall(group: Node3D, island_id: String, angle: float, width: float) -> void:
+    var data: Dictionary = ISLANDS[island_id]
+    var centre: Vector3 = data["center"]
+    var radius: Vector2 = data["radius"]
+    var top: float = data["top"]
+    var dir := Vector3(cos(angle), 0.0, sin(angle))
+    var edge := Vector3(centre.x + dir.x * radius.x * 0.97, top, centre.z + dir.z * radius.y * 0.97)
+    var fall_h := top - WATER_LEVEL + 0.4
+    var cascade := AstrixMesh.box("Cascade", Vector3(width, fall_h, 0.28),
+        Vector3(edge.x + dir.x * 0.5, edge.y - fall_h * 0.5, edge.z + dir.z * 0.5),
+        Color(0.75, 0.9, 1.0, 0.62))
+    var cmat := StandardMaterial3D.new()
+    cmat.albedo_color = Color(0.75, 0.9, 1.0, 0.62)
+    cmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+    cmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+    cascade.material_override = cmat
+    cascade.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+    group.add_child(cascade)
+    # Foam burst where the fall lands.
+    var r := AstrixMesh.rng(hash(island_id) & 0x7fffffff)
+    for i in range(4):
+        var foam := AstrixMesh.blob("FallFoam", 0.5 + r.randf() * 0.4,
+            Vector3(edge.x + dir.x * (1.2 + r.randf() * 1.6), WATER_LEVEL + 0.1,
+                edge.z + dir.z * (1.2 + r.randf() * 1.6)),
+            Color(0.93, 0.97, 1.0, 0.85), 7, 3)
+        foam.scale.y = 0.35
+        foam.material_override = AstrixPalette.unshaded(Color(0.93, 0.97, 1.0))
+        foam.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+        group.add_child(foam)
+    # A notch in the rim where the water leaves: dark wet stone channel.
+    var notch := AstrixMesh.box("Spillway", Vector3(width + 0.7, 0.16, 1.6),
+        Vector3(edge.x - dir.x * 0.6, top + 0.02, edge.z - dir.z * 0.6), AstrixPalette.ROCK_DARK)
+    notch.rotation.y = atan2(dir.x, dir.z) + PI * 0.5
+    group.add_child(notch)
+
+# ===========================================================================
 # ISLANDS
 #
 # Each island is a CONTINUOUS column: submerged plinth -> stone cliff -> soil
@@ -835,6 +935,7 @@ func _build_island(id: String, data: Dictionary) -> void:
 
     _build_island_rim(group, id, centre, radius, top, rock_color, bool(data["beach"]))
     _build_island_strata(group, id, centre, radius, top, rock_color)
+    _build_island_root(group, id, centre, radius, top, rock_color)
     _build_island_shelves(group, id, centre, radius, top)
     _build_island_floor(group, id, centre, radius, top)
 
@@ -933,6 +1034,53 @@ func _build_island_strata(group: Node3D, id: String, centre: Vector3, radius: Ve
         var outcrop := AstrixAssets.rock(int(r.randi()), 0.9 + r.randf() * 0.5, rock_color.darkened(0.12))
         outcrop.position = Vector3(centre.x + dir.x * rad, shelf_y2 + 0.1, centre.z + dir.z * rad)
         group.add_child(outcrop)
+
+## THE ROOT — the answer to "a green disc floating in a blue void". Beneath
+## every island hangs an inverted mountain: a tapering rock spire descending
+## into the luminous deep, with clinging shards. Islands stop being platforms
+## and become the sunlit crowns of ancient geological bodies. Purely
+## environmental (Core owns the surface topology; nothing lives below), but it
+## is what sells the floating world from every camera angle.
+func _build_island_root(group: Node3D, id: String, centre: Vector3, radius: Vector2,
+        top: float, rock_color: Color) -> void:
+    var r := AstrixMesh.rng((hash(id) & 0x7fffffff) + 2718)
+    var base_y := WATER_LEVEL - 4.0
+    # Main spire: wide where it meets the cliff, tapering to a point deep below.
+    # cylinder_on(top_r, bottom_r, h, pos): top radius large, bottom tiny.
+    var depth := 9.0 + radius.x * 0.35
+    var spire := AstrixMesh.cylinder_on("Root", radius.x * 0.72, 0.4, depth,
+        Vector3(centre.x, base_y - depth, centre.z), rock_color.darkened(0.3), 9)
+    spire.scale.z = radius.y / radius.x
+    spire.rotation.y = 0.44
+    group.add_child(spire)
+    # A lighter collar where root meets cliff: makes the join read as one body.
+    var collar := AstrixMesh.cylinder_on("RootCollar", radius.x * 0.86, radius.x * 0.7, 1.6,
+        Vector3(centre.x, base_y - 1.6, centre.z), rock_color.darkened(0.14), 9)
+    collar.scale.z = radius.y / radius.x
+    collar.rotation.y = 0.44
+    group.add_child(collar)
+    # Clinging shards: 3 tilted splinters at deterministic angles.
+    for i in range(3):
+        var a := TAU * float(i) / 3.0 + r.randf() * 0.8
+        var dir := Vector3(cos(a), 0.0, sin(a))
+        var shard := AstrixMesh.cone_on("Shard", 0.5 + r.randf() * 0.4, 2.6 + r.randf() * 1.4,
+            Vector3(centre.x + dir.x * radius.x * 0.62, base_y - 1.0 - r.randf() * 2.0, centre.z + dir.z * radius.y * 0.62),
+            rock_color.darkened(0.22), 5)
+        shard.rotation_degrees = Vector3((r.randf() - 0.5) * 36.0, r.randf() * 180.0, 165.0 + (r.randf() - 0.5) * 30.0)
+        group.add_child(shard)
+    if id == "dusk":
+        # Dusk's strangeness has a source: pale crystals growing UNDER the
+        # island, catching the deep light. Environmental echo of the
+        # authoritative crystal node on top — never a resource itself.
+        for i in range(4):
+            var a2 := TAU * float(i) / 4.0 + 0.5
+            var dir2 := Vector3(cos(a2), 0.0, sin(a2))
+            var gem := AstrixMesh.cone_on("UnderCrystal", 0.28, 1.1 + r.randf() * 0.7,
+                Vector3(centre.x + dir2.x * radius.x * 0.5, base_y - 0.6 - r.randf() * 1.5, centre.z + dir2.z * radius.y * 0.5),
+                AstrixPalette.CRYSTAL, 5)
+            gem.material_override = AstrixPalette.glow(AstrixPalette.CRYSTAL, 0.55)
+            gem.rotation_degrees = Vector3(160.0 + (r.randf() - 0.5) * 24.0, r.randf() * 180.0, (r.randf() - 0.5) * 20.0)
+            group.add_child(gem)
 
 ## Grass shelves on the rim: stepped mini-plateaus that break the perfect disc.
 ## Angles are hand-picked per island to stay clear of bridge heads, beaches and
@@ -1213,6 +1361,19 @@ func _build_settlement_dressing() -> void:
         var crystal := AstrixAssets.crystal(200 + i)
         crystal.position = Vector3(dusk.x - 2.0 + float(i) * 2.0, DUSK_SURFACE, dusk.z - 1.5 + float(i))
         group.add_child(_clearable_prop(crystal))
+    # Frost sea-stack: a low basalt fang breaking the water just off the
+    # northern rim — a hint of the frontier's severity, deliberately SMALLER
+    # than the island it guards (a taller stack read as a concrete pillar and
+    # competed with the watchtower). Offshore so no building can land on it.
+    var frost_r: Vector2 = ISLANDS["frost"]["radius"]
+    var stack_dir := Vector3(cos(1.75), 0.0, sin(1.75))
+    var stack_pos := frost + Vector3(stack_dir.x * frost_r.x * 1.45, 0.0, stack_dir.z * frost_r.y * 1.45)
+    var stack := Node3D.new()
+    stack.name = "FrostSeaStack"
+    stack.position = Vector3(stack_pos.x, WATER_LEVEL - 1.6, stack_pos.z)
+    stack.add_child(AstrixMesh.cylinder_on("Fang", 0.85, 0.18, 5.0, Vector3.ZERO, AstrixPalette.FROST_ROCK.darkened(0.12), 7))
+    stack.add_child(AstrixMesh.cylinder_on("FangCap", 0.95, 0.85, 0.45, Vector3(0.0, 5.0, 0.0), AstrixPalette.SNOW, 7))
+    group.add_child(stack)
 
 # ===========================================================================
 # VEGETATION
@@ -2014,6 +2175,43 @@ func _update_proposal_markers() -> void:
         if is_instance_valid(m):
             m.scale = Vector3(s, 1.0, s)
 
+# ===========================================================================
+# DUSK FIREFLIES — the island's strange light. A dozen slow-drifting glow
+# motes over Dusk's violet ground. Pure atmosphere (Core has no insects, no
+# nightlife, no light state): they assert nothing except "this place is odd".
+# Unshaded so they read at any hour; tiny so they never compete with the
+# proposal beacons' pink.
+# ===========================================================================
+var _fireflies: Array[Node3D] = []
+var _firefly_bases: Array[Vector3] = []
+
+func _build_fireflies() -> void:
+    var group := Node3D.new()
+    group.name = "Fireflies"
+    add_child(group)
+    var r := AstrixMesh.rng(61616)
+    var dusk: Vector3 = ISLANDS["dusk"]["center"]
+    for i in range(12):
+        var mote := AstrixMesh.blob("Mote", 0.09, Vector3.ZERO, Color("d8f79a"), 6, 4)
+        mote.material_override = AstrixPalette.glow(Color("d8f79a"), 1.6)
+        mote.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+        var base := dusk + Vector3((r.randf() - 0.5) * 13.0, DUSK_SURFACE + 0.8 + r.randf() * 1.6, (r.randf() - 0.5) * 12.0)
+        mote.position = base
+        group.add_child(mote)
+        _fireflies.append(mote)
+        _firefly_bases.append(base)
+
+func _update_fireflies() -> void:
+    for i in range(_fireflies.size()):
+        var mote: Node3D = _fireflies[i]
+        if not is_instance_valid(mote):
+            continue
+        var base: Vector3 = _firefly_bases[i] if i < _firefly_bases.size() else mote.position
+        mote.position = base + Vector3(
+            sin(_time * 0.35 + float(i) * 1.93) * 1.4,
+            sin(_time * 0.5 + float(i) * 2.71) * 0.5,
+            cos(_time * 0.3 + float(i) * 1.17) * 1.4)
+
 ## [world position, island id] for an authoritative building, or [].
 func _building_position(world_state: Node, building_id: String) -> Array:
     if world_state == null or building_id == "":
@@ -2186,18 +2384,22 @@ func _build_structure(type_name: String, id: String, pos: Vector3, island: Strin
             var silo := AstrixAssets.storage(seed_value)
             group.add_child(silo)
         _:
-            # Two house languages on the same street: the variant follows the
-            # house's rank in the sorted authoritative id list, so it is stable
-            # across rebuilds and a two-house village always shows both. The
-            # COUNT stays authoritative; only the street gains variety.
-            var house_ids: Array[String] = []
-            for bid in world_state.buildings.keys():
-                var b: Variant = world_state.buildings[bid]
-                if b is Dictionary and str(b.get("type", "")) == "house":
-                    house_ids.append(str(bid))
-            house_ids.sort()
-            var rank := maxi(house_ids.find(id), 0)
-            var house := AstrixAssets.house(seed_value) if rank % 2 == 0 else AstrixAssets.house_timber(seed_value)
+            # Two house languages on the meadow street (rank-stable), and a
+            # frontier stone cottage for any house Core places off-Meadow.
+            # The COUNT stays authoritative in all cases; only the architectural
+            # language follows the island culture.
+            var house: Node3D
+            if island != "meadow":
+                house = AstrixAssets.house_stone(seed_value)
+            else:
+                var house_ids: Array[String] = []
+                for bid in world_state.buildings.keys():
+                    var b: Variant = world_state.buildings[bid]
+                    if b is Dictionary and str(b.get("type", "")) == "house":
+                        house_ids.append(str(bid))
+                house_ids.sort()
+                var rank := maxi(house_ids.find(id), 0)
+                house = AstrixAssets.house(seed_value) if rank % 2 == 0 else AstrixAssets.house_timber(seed_value)
             group.add_child(house)
             _register_snow_in(house)
             _register_windows_in(house)

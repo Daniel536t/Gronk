@@ -166,6 +166,57 @@ static func house_timber(seed_value: int) -> Node3D:
     return root
 
 
+## STONE COTTAGE — the frontier language for houses on Frost (or wherever Core
+## one day places a house off-Meadow): rubble-stone walls, heavy slate roof,
+## deep-set windows, big chimney. Same naming contracts (Window*/SnowCap*/Smoke*).
+## Which houses use it is decided by ISLAND, never by count: Meadow keeps its
+## two street languages; an off-Meadow house reads as frontier-dwelling.
+static func house_stone(seed_value: int) -> Node3D:
+    var root := Node3D.new()
+    root.name = "HouseStone"
+    var r := AstrixMesh.rng(seed_value)
+    var w := 2.6 + r.randf() * 0.5
+    var d := 2.2 + r.randf() * 0.5
+    var wall_h := 1.7 + r.randf() * 0.3
+
+    root.add_child(AstrixMesh.box_on("Footing", Vector3(w + 0.3, 0.24, d + 0.3), Vector3.ZERO, AstrixPalette.ROCK_DARK))
+    root.add_child(AstrixMesh.box_on("Walls", Vector3(w, wall_h, d), Vector3(0.0, 0.22, 0.0), AstrixPalette.STONE_WALL))
+    # Buttress corners: the silhouette that says "built against weather".
+    for px in [-w * 0.5, w * 0.5]:
+        for pz in [-d * 0.5, d * 0.5]:
+            root.add_child(AstrixMesh.box_on("Buttress", Vector3(0.3, wall_h * 0.8, 0.3),
+                Vector3(px, 0.22, pz), AstrixPalette.ROCK_DARK))
+    # Heavy slate roof, low pitch, deep eaves.
+    var roof_h := 0.8 + r.randf() * 0.15
+    root.add_child(AstrixMesh.gable("Roof", Vector3(w + 0.7, roof_h, d + 0.7),
+        Vector3(0.0, 0.22 + wall_h, 0.0), AstrixPalette.ROCK_DARK.lightened(0.12)))
+    var cap := AstrixMesh.gable("SnowCapRoof", Vector3(w + 0.76, roof_h * 0.5, d + 0.76),
+        Vector3(0.0, 0.22 + wall_h + roof_h * 0.45, 0.0), AstrixPalette.SNOW)
+    cap.visible = false
+    root.add_child(cap)
+    # Deep-set windows with stone lintels; door with a heavy frame.
+    for wx in [-w * 0.26, w * 0.26]:
+        root.add_child(AstrixMesh.box("Window", Vector3(0.34, 0.36, 0.1),
+            Vector3(wx, 0.22 + wall_h * 0.6, d * 0.5), Color("2f3a44")))
+        root.add_child(AstrixMesh.box("Lintel", Vector3(0.5, 0.09, 0.12),
+            Vector3(wx, 0.22 + wall_h * 0.6 + 0.24, d * 0.5 + 0.01), AstrixPalette.ROCK_DARK))
+    root.add_child(AstrixMesh.box_on("Door", Vector3(0.52, 0.9, 0.09),
+        Vector3(0.0, 0.22, d * 0.5), AstrixPalette.BARK_DARK))
+    # Broad stone chimney with smoke.
+    var cx := w * 0.28
+    var chimney_h := roof_h + 0.8
+    root.add_child(AstrixMesh.box_on("Chimney", Vector3(0.42, chimney_h, 0.42),
+        Vector3(cx, 0.22 + wall_h * 0.5, -d * 0.15), AstrixPalette.STONE_WALL.darkened(0.1)))
+    var pot_y := 0.22 + wall_h * 0.5 + chimney_h + 0.08
+    for i in range(4):
+        var puff := AstrixMesh.blob("Smoke", 0.3 + float(i) * 0.15,
+            Vector3(cx + float(i) * 0.28, pot_y + 0.5 + float(i) * 0.8, -d * 0.15 - float(i) * 0.2),
+            Color(0.95, 0.96, 0.98, 0.75 - float(i) * 0.13), 7, 4)
+        puff.scale.y = 0.82
+        root.add_child(puff)
+    return root
+
+
 ## BARN / FARM BUILDING — unmistakably agricultural: red board walls, big double
 ## doors, hay-loft opening under the ridge, lean-to shelter, hay bales.
 static func barn(seed_value: int) -> Node3D:
