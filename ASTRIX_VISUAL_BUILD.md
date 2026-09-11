@@ -409,3 +409,34 @@ of these probes.
   exactly; the HUD figure remains authoritative.
 - The Dusk island is deliberately outside the observatory frame. It is visible in
   `ARCHIPELAGO` mode only.
+
+---
+
+## 16. Reimagination pass — "The Bowl, the Bastion, and the Shatter"
+
+The three-island *topology* is authoritative (Core's `BiomeId`, island list,
+bridge pairs, connectivity) and was kept: merging landmasses would falsify what
+a bridge claims. Everything the topology does not fix was re-authored so the
+world has a memory hook: **a white needle with gold rings over gold terraces,
+chained by gated bridges to a snowy crag and a haunted violet rock.**
+
+| Change | Why | Truth note |
+|---|---|---|
+| Meridian Spire on the plaza knoll (dais + needle + 2 gold torus rings + violet tip + 4 banners) | the world had no landmark; 10-second memory test failed | ancient monument, environmental like the watchtower; claims no function |
+| Meadow farm belt set into 2 dry-stone terrace steps + irrigation rill + spring basin | farms read as stamped plots; now agriculture relates to terrain | ornamental dressing like paths/well; no irrigation state claimed |
+| Frost raised 4.2 → 5.4 + basalt-column palisade + winter cornice; watchtower → taller Beacon | Frost read as a second Meadow; now the high alpine Bastion | presentation heights only; all mapping/bridge/camera math derives from `ISLANDS` |
+| Dusk deepened a full violet step + shard rim + broken arch ruin + crystal veins + 3 bobbing splinters | old Dusk read as unfinished snow | ruin/splinters are weather/mystery on wall-clock (cloud precedent); veins echo but never are the resource node |
+| Bridge gates (pylons + lintel + lantern + cloths) at all 4 heads incl. unbridged meadow↔dusk | crossings were planks sprouting from grass | static geography at rim 0.80; stands with or without Core's bridge |
+| Stone causeway lanterns along the Frost road | infrastructure should read as mattering after dark | kindle from authoritative `time`, like the plaza lamps |
+| 5 harbour gulls over the channel | sky life; proves navigable water alongside the moored boats | wall-clock wildlife (cloud precedent); boats stay moored — Core has no transport |
+| Drowned Giant reef behind Dusk | horizon-scale mystery | kept LOW after a tall version filled the frame top as a grey void-slab; visible mainly in portrait overview |
+
+Two bugs this pass, both general lessons:
+
+1. **Gate yaw.** The span runs along local X while paths/bridges run along local
+   Z, so a gate needs the *same* yaw as a path (`atan2(dx,dz)`), not +90°.
+   Reasoned wrong once; the render showed pylons fore-and-aft and the math was
+   rechecked against `_path_between` and the bridge builder.
+2. **Distant-mass scale discipline.** At ortho size ~56, a 24-wide mass 20 units
+   past Dusk fills the frame top as a featureless slab. Background masses must
+   stay low (reef, not continent) or far enough to be haze.

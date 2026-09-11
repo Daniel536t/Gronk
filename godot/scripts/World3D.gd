@@ -46,10 +46,10 @@ const ISLANDS := {
         "grass": "grass", "rock": AstrixPalette.ROCK, "beach": true,
     },
     "frost": {
-        # Far enough out for a REAL bridge span: centre distance 29.5 minus the
-        # two rim radii leaves an ~8-unit water gap. At the previous 21,-9 the
-        # gap was 1.8 units and the bridge rendered as a stub jetty.
-        "center": Vector3(26.0, 0.0, -14.0), "radius": Vector2(8.0, 7.0), "top": 4.2,
+        # THE BASTION: the high alpine crag. Raised well above the Meadow so the
+        # archipelago reads as three elevations, not three pancakes — the bridge
+        # visibly climbs to it, and its snow/beacon crown the skyline.
+        "center": Vector3(26.0, 0.0, -14.0), "radius": Vector2(8.0, 7.0), "top": 5.4,
         "core_center": Vector2(48.0, 12.0), "core_scale": Vector2(0.8, 0.8),
         "core_flip": Vector2(-1.0, -1.0),
         "grass": "frost", "rock": AstrixPalette.FROST_ROCK, "beach": false,
@@ -66,7 +66,7 @@ const ISLANDS := {
 }
 
 const MEADOW_SURFACE := 3.0
-const FROST_SURFACE := 4.2
+const FROST_SURFACE := 5.4
 const DUSK_SURFACE := 2.4
 
 ## Full world extent including water margin — drives seabed size and camera fit.
@@ -207,7 +207,12 @@ const OVERVIEW_MARGIN_PORTRAIT := 3.0
 ## Pitch is preserved exactly: |(20,20)| horizontal against 22 up is the same
 ## ~37.9deg tilt every other mode uses.
 const OVERVIEW_REACH := 28.284
-const OVERVIEW_HEIGHT := 22.0
+## Lowered from 22.0: at ~38° elevation the camera looks DOWN on the islands
+## and everything below the rim line (roots, waterfalls, cliff faces — the
+## whole floating-world drama) is hidden behind the grass caps. At ~28° the
+## opening frame shows the islands AS floating mountains while the settlement
+## stays readable. The frame solver compensates foreshortening automatically.
+const OVERVIEW_HEIGHT := 15.5
 const OVERVIEW_TARGET_Y := 1.4
 
 ## Zoom multiplies whichever mode's base size is active; pan slides the target
@@ -335,6 +340,7 @@ func _ready() -> void:
     _build_vegetation()
     _build_clouds()
     _build_fireflies()
+    _build_gulls()
     _build_player()
     _build_camera()
     _build_systems()
@@ -348,6 +354,8 @@ func _process(delta: float) -> void:
     _update_smoke(delta)
     _update_proposal_markers()
     _update_fireflies()
+    _update_splinters()
+    _update_gulls()
     _update_clouds(delta)
     _update_camera(delta)
     for i in range(_vegetation.size()):
@@ -806,6 +814,37 @@ func _build_distant_isles() -> void:
         (tree["root"] as Node3D).position = Vector3((r.randf() - 0.5) * 3.0, 1.2, (r.randf() - 0.5) * 3.0)
         isle.add_child(tree["root"])
         group.add_child(isle)
+    # THE DROWNED GIANT — a dark half-sunken reef behind Dusk. Pure mystery and
+    # scale: no Core counterpart, no simulation, like clouds. Dark slate fangs
+    # and a low broken back (no green crown, unlike every living isle).
+    #
+    # SCALE DISCIPLINE: this sits just ~20 units past Dusk's rim, so at the
+    # archipelago ortho height anything tall and wide fills the frame top as a
+    # grey void-slab (it did). It therefore stays LOW — a reef breaching the
+    # surface, never a continent: mass top +0.5, tallest fang +4.
+    var levi := Node3D.new()
+    levi.name = "Leviathan"
+    # Behind Dusk as seen from the +X+Z cameras, with 10u of open water so it
+    # stays a separate, unreachable mass no building can land on.
+    levi.position = Vector3(-30.0, 0.0, -52.0)
+    levi.rotation.y = 0.6
+    var levi_rock := AstrixPalette.ROCK_DARK.darkened(0.25)
+    levi.add_child(AstrixMesh.box("Mass", Vector3(20.0, 3.0, 8.0), Vector3(0.0, -2.5, 0.0), levi_rock))
+    var peak1 := AstrixMesh.cone_on("Peak1", 2.2, 4.0, Vector3(-4.5, 0.5, 0.0), levi_rock, 7)
+    levi.add_child(peak1)
+    var peak2 := AstrixMesh.cone_on("Peak2", 1.6, 3.0, Vector3(4.0, 0.5, 1.0), levi_rock, 6)
+    levi.add_child(peak2)
+    group.add_child(levi)
+    # A ring of small basalt fangs scattered offshore — the archipelago's
+    # drowned kin. Offshore, so no building can ever land on them.
+    var fang_spots := [Vector3(44.0, 0.0, 6.0), Vector3(-30.0, 0.0, -12.0), Vector3(6.0, 0.0, 26.0)]
+    for i in range(fang_spots.size()):
+        var fang := Node3D.new()
+        fang.name = "SeaFang_%d" % i
+        fang.position = Vector3((fang_spots[i] as Vector3).x, WATER_LEVEL - 1.2, (fang_spots[i] as Vector3).z)
+        var fh := 3.0 + r.randf() * 1.5
+        fang.add_child(AstrixMesh.cylinder_on("Fang", 0.7, 0.15, fh, Vector3.ZERO, AstrixPalette.BASALT.darkened(0.05), 6))
+        group.add_child(fang)
 
 ## Waterfalls: Meadow's spring spills off the western rim, Dusk weeps off its
 ## southern rim. A translucent cascade + foam burst at the base + a drifting
@@ -938,6 +977,11 @@ func _build_island(id: String, data: Dictionary) -> void:
     _build_island_root(group, id, centre, radius, top, rock_color)
     _build_island_shelves(group, id, centre, radius, top)
     _build_island_floor(group, id, centre, radius, top)
+    # Reimagination sculpt: each island's geology declares its identity.
+    if id == "frost":
+        _build_frost_crown(group, centre, radius, top)
+    elif id == "dusk":
+        _build_dusk_shatter(group, centre, radius, top)
 
 func _grass_color(kind: String) -> Color:
     match kind:
@@ -1125,6 +1169,94 @@ func _build_island_floor(group: Node3D, id: String, centre: Vector3, radius: Vec
     body.add_child(shape)
     group.add_child(body)
 
+# ===========================================================================
+# REIMAGINATION SCULPT — each island's geology declares its identity.
+#
+# Meadow needs no sculpt here: its terraces live in the settlement dressing
+# (they must align with the farm belt, not the island rim). Frost becomes the
+# Bastion (basalt palisade + winter cornice) and Dusk becomes the Shatter
+# (jagged shards, a broken arch, crystal veins, floating splinters). All of it
+# is environmental — Core owns the surface topology; nothing lives in the rock.
+# ===========================================================================
+
+## Frost crown: a palisade of basalt columns gripping the upper cliff + a snow
+## cornice ringing the rim in winter. The columns stand at ~1.0 radius on the
+## cliff face (outside the 72% buildable interior), the cornice just above the
+## grass cap. Together they make the Bastion severe in every season.
+func _build_frost_crown(group: Node3D, centre: Vector3, radius: Vector2, top: float) -> void:
+    var r := AstrixMesh.rng(5150)
+    var count := 10
+    for i in range(count):
+        var a := TAU * float(i) / float(count) + 0.31 + r.randf() * 0.1
+        var dir := Vector3(cos(a), 0.0, sin(a))
+        var rad := AstrixMesh.ellipse_radius(radius * 1.0, dir)
+        var h := 1.6 + r.randf() * 1.1
+        var col := AstrixAssets.basalt_column(5100 + i, h)
+        # Columns rise from the cliff face: base below the grass cap, crown above.
+        col.position = Vector3(centre.x + dir.x * rad, top - h * 0.55, centre.z + dir.z * rad)
+        group.add_child(col)
+    # Winter cornice: snow slabs overhanging the rim. Winter-only, like the caps.
+    for i in range(8):
+        var a2 := TAU * float(i) / 8.0 + 0.15
+        var dir2 := Vector3(cos(a2), 0.0, sin(a2))
+        var rad2 := AstrixMesh.ellipse_radius(radius * 0.99, dir2)
+        var slab := AstrixMesh.blob("Cornice", 0.75 + r.randf() * 0.3,
+            Vector3(centre.x + dir2.x * rad2, top + 0.12, centre.z + dir2.z * rad2),
+            AstrixPalette.SNOW, 7, 3)
+        slab.scale.y = 0.3
+        group.add_child(_snow_cap(slab))
+
+## Dusk shatter: jagged shards instead of round boulders on the rim, a broken
+## arch ruin on the north slope, crystal veins along a fracture line, and three
+## splinters floating above the island (wall-clock bob, like clouds — pure
+## atmosphere, Core has no sky state).
+func _build_dusk_shatter(group: Node3D, centre: Vector3, radius: Vector2, top: float) -> void:
+    var r := AstrixMesh.rng(7771)
+    for i in range(6):
+        var a := TAU * float(i) / 6.0 + 0.5 + r.randf() * 0.2
+        var dir := Vector3(cos(a), 0.0, sin(a))
+        var rad := AstrixMesh.ellipse_radius(radius * 0.97, dir)
+        var shard := AstrixAssets.dusk_shard(7700 + i, 0.9 + r.randf() * 0.5)
+        shard.position = Vector3(centre.x + dir.x * rad, top - 0.1, centre.z + dir.z * rad)
+        group.add_child(shard)
+    # The broken arch stands on the north slope at 0.8 radius — outside the
+    # buildable interior, so no authoritative structure can land on it.
+    var ruin_dir := Vector3(cos(4.4), 0.0, sin(4.4))
+    var ruin := AstrixAssets.ruin_arch(7799)
+    ruin.position = Vector3(
+        centre.x + ruin_dir.x * radius.x * 0.8, top, centre.z + ruin_dir.z * radius.y * 0.8)
+    group.add_child(ruin)
+    # Crystal veins along a diagonal fracture: environmental echo of the
+    # authoritative crystal node, never a resource itself.
+    for i in range(4):
+        var t := -1.5 + float(i) * 1.0
+        var vein := AstrixMesh.cone_on("Vein", 0.14, 0.4 + r.randf() * 0.3,
+            Vector3(centre.x + t, top, centre.z + t * 0.6), AstrixPalette.CRYSTAL, 5)
+        vein.material_override = AstrixPalette.glow(AstrixPalette.CRYSTAL, 0.5)
+        vein.rotation_degrees.z = (r.randf() - 0.5) * 30.0
+        group.add_child(vein)
+    # Floating splinters above the island.
+    var splinters := Node3D.new()
+    splinters.name = "DuskSplinters"
+    group.add_child(splinters)
+    var offsets := [Vector3(-3.0, 4.4, 1.0), Vector3(2.5, 5.2, -2.0), Vector3(0.5, 3.7, 3.2)]
+    for i in range(offsets.size()):
+        var splinter := AstrixMesh.box("Splinter_%d" % i,
+            Vector3(0.6 + r.randf() * 0.35, 0.5 + r.randf() * 0.3, 0.55 + r.randf() * 0.3),
+            Vector3.ZERO, AstrixPalette.DUSK_ROCK.darkened(0.1))
+        splinter.rotation_degrees = Vector3(18.0 + r.randf() * 22.0, r.randf() * 60.0, 24.0 + r.randf() * 18.0)
+        splinter.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+        var holder := Node3D.new()
+        holder.name = "SplinterHolder_%d" % i
+        holder.position = Vector3(centre.x, top, centre.z) + offsets[i]
+        holder.add_child(splinter)
+        var gem := AstrixMesh.cone_on("SplinterGem", 0.14, 0.4, Vector3(0.0, -0.6, 0.0),
+            AstrixPalette.CRYSTAL, 5)
+        gem.material_override = AstrixPalette.glow(AstrixPalette.CRYSTAL, 0.6)
+        holder.add_child(gem)
+        splinters.add_child(holder)
+        _splinters.append({"node": holder, "base": holder.position, "phase": float(i) * 2.1})
+
 func _surface_of(id: String) -> float:
     return float(ISLANDS.get(id, ISLANDS["meadow"])["top"])
 
@@ -1215,6 +1347,61 @@ func _path_polyline(group: Node3D, points: Array[Vector3], width: float, surface
         var taper := width * (1.0 - 0.12 * float(i) / maxf(1.0, float(points.size() - 2)))
         group.add_child(_path_between(points[i], points[i + 1], taper, surface))
 
+## A gate arch at the bridge head from one island toward another. Oriented so
+## its lintel spans the walked line: pylons flank the path, the lantern hangs
+## over it. Static geography at rim 0.80 — outside the buildable interior.
+func _place_gate(group: Node3D, from_id: String, to_id: String, seed_value: int) -> void:
+    var pos := _rim_point(from_id, to_id, 0.80)
+    var from_c: Vector3 = ISLANDS[from_id]["center"]
+    var to_c: Vector3 = ISLANDS[to_id]["center"]
+    var dir := to_c - from_c
+    dir.y = 0.0
+    dir = dir.normalized()
+    var gate := AstrixAssets.gate_arch(seed_value)
+    gate.position = pos
+    # The span (local X, pylon to pylon) must lie ACROSS the walked line: with
+    # yaw = atan2(dx,dz) local +Z runs along the path (the same convention as
+    # _path_between and the bridge deck), so local X spans it. A +90° offset
+    # here would turn the gate sideways, pylons fore-and-aft of the walker.
+    gate.rotation.y += atan2(dir.x, dir.z)
+    group.add_child(gate)
+    _register_snow_in(gate)
+    for cloth in gate.find_children("BannerCloth", "MeshInstance3D", true, false):
+        _vegetation.append(cloth)
+
+## One terrace step: dry-stone retaining wall segments (with gaps) + a tilled
+## tread strip on the south face. Ground-level dressing farms settle into.
+func _terrace_run(group: Node3D, z: float, spans: Array, surface: float) -> void:
+    for span in spans:
+        var x0 := float(span[0])
+        var x1 := float(span[1])
+        var cx := (x0 + x1) * 0.5
+        var length := x1 - x0
+        group.add_child(AstrixMesh.box_on("TerraceWall", Vector3(length, 0.75, 0.6),
+            Vector3(cx, surface, z), AstrixPalette.STONE_WALL))
+        group.add_child(AstrixMesh.box("TerraceCap", Vector3(length, 0.12, 0.72),
+            Vector3(cx, surface + 0.81, z), AstrixPalette.ROCK_DARK))
+        group.add_child(AstrixMesh.box_on("TerraceTread", Vector3(length, 0.14, 1.5),
+            Vector3(cx, surface, z + 1.05), AstrixPalette.SOIL_TILLED))
+
+## Irrigation rill + spring basin west of the farm belt.
+func _build_rill(group: Node3D, surface: float) -> void:
+    var x := -3.2
+    var z0 := -2.0
+    var z1 := 8.0
+    var length := z1 - z0
+    var mid := (z0 + z1) * 0.5
+    for side in [-1.0, 1.0]:
+        group.add_child(AstrixMesh.box_on("RillEdge", Vector3(0.25, 0.3, length),
+            Vector3(x + side * 0.32, surface, mid), AstrixPalette.STONE_WALL))
+    var water := AstrixMesh.box_on("RillWater", Vector3(0.4, 0.1, length),
+        Vector3(x, surface + 0.06, mid), AstrixPalette.WATER_SHALLOW)
+    group.add_child(water)
+    group.add_child(AstrixMesh.cylinder_on("SpringBasin", 0.75, 0.85, 0.45,
+        Vector3(x, surface, z0 - 0.6), AstrixPalette.STONE_WALL, 10))
+    group.add_child(AstrixMesh.cylinder_on("SpringWater", 0.6, 0.6, 0.1,
+        Vector3(x, surface + 0.36, z0 - 0.6), AstrixPalette.WATER_SHALLOW, 10))
+
 func _build_settlement_dressing() -> void:
     var s := MEADOW_SURFACE
     var group := Node3D.new()
@@ -1228,6 +1415,51 @@ func _build_settlement_dressing() -> void:
         Vector3(0.0, s + GROUND_PLAZA_Y, -1.5), AstrixPalette.PATH))
     group.add_child(AstrixMesh.box_on("PlazaTrim", Vector3(7.7, 0.1, 6.7),
         Vector3(0.0, s + GROUND_PLAZA_Y - 0.015, -1.5), AstrixPalette.PATH_DARK))
+
+    # THE MERIDIAN SPIRE — the world's memory hook. Rises from the old knoll at
+    # the plaza's west edge: a pale needle with gold rings and a violet tip.
+    # An ancient monument (environmental, like the watchtower): it claims no
+    # function and reads no state. Four banner poles ring its dais.
+    var knoll_pos := Vector3(-4.06, s + 0.42, -3.9)
+    var spire := AstrixAssets.meridian_spire()
+    spire.position = knoll_pos
+    group.add_child(spire)
+    _register_snow_in(spire)
+    var banner_angles := [0.6, 2.2, 3.7, 5.3]
+    var banner_colors := [AstrixPalette.ROOF, AstrixPalette.ROOF_CIVIC]
+    for i in range(banner_angles.size()):
+        var pole := AstrixAssets.banner_pole(8100 + i, banner_colors[i % 2])
+        pole.position = knoll_pos + Vector3(cos(banner_angles[i]) * 3.3, 0.03, sin(banner_angles[i]) * 3.3)
+        group.add_child(pole)
+        for cloth in pole.find_children("BannerCloth", "MeshInstance3D", true, false):
+            _vegetation.append(cloth)
+
+    # TERRACED FARM BELT — the Bowl's signature. Two dry-stone retaining walls
+    # step the southern slope, with tilled treads on their south faces, so the
+    # authoritative farms nestle into worked terraces instead of stamped plots
+    # on flat grass. Gaps where the walked path crosses (steps, not blockage).
+    _terrace_run(group, 2.6, [[-4.0, -1.0], [2.0, 12.0]], s)
+    _terrace_run(group, 8.8, [[-4.0, -1.5], [1.0, 12.0]], s)
+    # Irrigation rill: stone-edged channel with a spring basin at its head,
+    # running down to the terraces. Ornamental dressing (like the well), not a
+    # water-system claim — Core has no irrigation state.
+    _build_rill(group, s)
+
+    # Lantern-lit causeway to the bridge gate: two lamps along the walked route
+    # so the way to Frost reads as a road that matters after dark.
+    for spec in [{"pos": Vector3(5.0, 0.0, -3.4), "seed": 8111}, {"pos": Vector3(8.2, 0.0, -6.0), "seed": 8112}]:
+        var lamp := AstrixAssets.lantern()
+        lamp.position = (spec["pos"] as Vector3) + Vector3(0.0, s, 0.0)
+        group.add_child(_clearable_prop(lamp))
+
+    # BRIDGE GATES — stone pylons + timber lintel + hanging lantern at every
+    # real bridge head, plus the meadow/dusk heads that await a steward's
+    # proposal. A crossing becomes a threshold; an unbuilt span already has an
+    # address, which is exactly where a proposal beacon will land.
+    _place_gate(group, "meadow", "frost", 8121)
+    _place_gate(group, "frost", "meadow", 8122)
+    _place_gate(group, "meadow", "dusk", 8123)
+    _place_gate(group, "dusk", "meadow", 8124)
 
     # Path network. Winding polylines, never straight slabs: every route bends
     # at least once the way a walked path does, and narrows as it leaves the
@@ -1328,33 +1560,35 @@ func _build_settlement_dressing() -> void:
             AstrixPalette.CROP_HARVEST.darkened(0.15), 9))
     group.add_child(_clearable_prop(pen))
 
-    # Frost island: a stone watchtower so the island has a landmark instead of
-    # a bare grey box (review flagged the old cairn as placeholder geometry).
+    # Frost island: the BEACON — a taller watchtower for the raised Bastion, its
+    # brazier dish visible for miles and kindling at dusk from the same
+    # authoritative `time` the lamps use. A manned watchtower is the only
+    # "activity" this landmark can honestly claim: Core has no garrison, no
+    # patrol and no watch state, so nothing here moves.
     var frost: Vector3 = ISLANDS["frost"]["center"]
     var tower := Node3D.new()
-    tower.name = "FrostWatchtower"
+    tower.name = "FrostBeacon"
     tower.position = Vector3(frost.x - 3.0, FROST_SURFACE, frost.z + 2.5)
-    tower.add_child(AstrixMesh.cylinder_on("TowerBase", 1.05, 1.25, 0.4, Vector3.ZERO, AstrixPalette.FROST_ROCK, 10))
-    tower.add_child(AstrixMesh.cylinder_on("TowerShaft", 0.8, 0.9, 2.6, Vector3(0.0, 0.4, 0.0), AstrixPalette.STONE_WALL, 10))
+    tower.add_child(AstrixMesh.cylinder_on("TowerBase", 1.1, 1.35, 0.5, Vector3.ZERO, AstrixPalette.BASALT, 10))
+    tower.add_child(AstrixMesh.cylinder_on("TowerShaft", 0.72, 0.9, 4.2, Vector3(0.0, 0.5, 0.0), AstrixPalette.STONE_WALL, 10))
+    tower.add_child(AstrixMesh.cylinder_on("TowerCorbel", 0.98, 0.72, 0.3, Vector3(0.0, 4.7, 0.0), AstrixPalette.FROST_ROCK, 10))
     # Crenellations round the top: unmistakably built, unmistakably a tower.
     for i in range(8):
         var a := TAU * float(i) / 8.0
-        tower.add_child(AstrixMesh.box_on("Merlon", Vector3(0.26, 0.4, 0.26),
-            Vector3(cos(a) * 0.85, 3.0, sin(a) * 0.85), AstrixPalette.FROST_ROCK))
-    tower.add_child(AstrixMesh.cylinder_on("TowerDeck", 1.0, 1.0, 0.16, Vector3(0.0, 3.0, 0.0), AstrixPalette.STONE_WALL, 10))
-    tower.add_child(AstrixMesh.box("TowerDoor", Vector3(0.4, 0.75, 0.06), Vector3(0.0, 0.78, 0.86), AstrixPalette.TIMBER))
-    # Brazier on the deck, registered with the settlement's window lights so it
-    # kindles at dusk from the SAME authoritative `time` the lamps use. A manned
-    # watchtower is the only "activity" this landmark can honestly claim: Core has
-    # no garrison, no patrol and no watch state, so nothing here moves.
-    var brazier := AstrixMesh.box("TowerBrazier", Vector3(0.36, 0.3, 0.36),
-        Vector3(0.0, 3.26, 0.0), Color("2f3a44"))
+        tower.add_child(AstrixMesh.box_on("Merlon", Vector3(0.26, 0.45, 0.26),
+            Vector3(cos(a) * 0.82, 5.0, sin(a) * 0.82), AstrixPalette.FROST_ROCK))
+    tower.add_child(AstrixMesh.cylinder_on("TowerDeck", 0.95, 0.95, 0.18, Vector3(0.0, 5.0, 0.0), AstrixPalette.STONE_WALL, 10))
+    tower.add_child(AstrixMesh.box("TowerDoor", Vector3(0.4, 0.75, 0.06), Vector3(0.0, 0.88, 0.92), AstrixPalette.TIMBER))
+    # Brazier dish on the deck, registered with the settlement's window lights.
+    tower.add_child(AstrixMesh.cylinder_on("BeaconDish", 0.55, 0.35, 0.3, Vector3(0.0, 5.18, 0.0), AstrixPalette.BASALT, 10))
+    var brazier := AstrixMesh.box("BeaconFire", Vector3(0.42, 0.34, 0.42),
+        Vector3(0.0, 5.48, 0.0), Color("2f3a44"))
     tower.add_child(brazier)
     _window_lights.append(brazier)
     _windows_lit = false   # force the next light update to evaluate it
     group.add_child(tower)
     group.add_child(_snow_cap(AstrixMesh.box("TowerSnow", Vector3(1.9, 0.12, 1.9),
-        Vector3(frost.x - 3.0, FROST_SURFACE + 3.2, frost.z + 2.5), AstrixPalette.SNOW)))
+        Vector3(frost.x - 3.0, FROST_SURFACE + 5.2, frost.z + 2.5), AstrixPalette.SNOW)))
     # Dusk island: crystal formation — the arcane accent, contained to one place.
     var dusk: Vector3 = ISLANDS["dusk"]["center"]
     for i in range(3):
@@ -2212,6 +2446,72 @@ func _update_fireflies() -> void:
             sin(_time * 0.5 + float(i) * 2.71) * 0.5,
             cos(_time * 0.3 + float(i) * 1.17) * 1.4)
 
+# ===========================================================================
+# DUSK SPLINTERS + HARBOUR GULLS — sky life. Both run on wall-clock time even
+# while the world clock is held, exactly like wind, water and clouds: they are
+# weather and wildlife, never simulation state (Core has no sky, no birds, no
+# floating rock — the splinters are the Shatter's mystery, not its inventory).
+# ===========================================================================
+var _splinters: Array[Dictionary] = []
+var _gulls: Array[Dictionary] = []
+
+func _update_splinters() -> void:
+    for entry in _splinters:
+        var node: Variant = entry.get("node")
+        if not is_instance_valid(node) or not (node is Node3D):
+            continue
+        var holder := node as Node3D
+        var base: Vector3 = entry.get("base", holder.position)
+        var phase := float(entry.get("phase", 0.0))
+        holder.position = base + Vector3(
+            sin(_time * 0.22 + phase) * 0.35,
+            sin(_time * 0.31 + phase * 1.7) * 0.4,
+            cos(_time * 0.18 + phase) * 0.35)
+        holder.rotation.y += 0.0006
+
+func _build_gulls() -> void:
+    var group := Node3D.new()
+    group.name = "Gulls"
+    add_child(group)
+    var r := AstrixMesh.rng(31337)
+    var centre := Vector3(13.0, 0.0, -1.0)
+    for i in range(5):
+        var gull: Dictionary = AstrixAssets.gull()
+        var root := gull["root"] as Node3D
+        group.add_child(root)
+        _gulls.append({
+            "node": root,
+            "wings": gull["wings"],
+            "cx": centre.x + (r.randf() - 0.5) * 4.0,
+            "cz": centre.z + (r.randf() - 0.5) * 4.0,
+            "radius": 5.0 + r.randf() * 4.5,
+            "height": 6.5 + r.randf() * 3.0,
+            "speed": 0.22 + r.randf() * 0.16,
+            "phase": r.randf() * TAU,
+        })
+
+func _update_gulls() -> void:
+    for entry in _gulls:
+        var node: Variant = entry.get("node")
+        if not is_instance_valid(node) or not (node is Node3D):
+            continue
+        var gull := node as Node3D
+        var t := _time * float(entry.get("speed", 0.3)) + float(entry.get("phase", 0.0))
+        var rad := float(entry.get("radius", 6.0))
+        var cx := float(entry.get("cx", 13.0))
+        var cz := float(entry.get("cz", -1.0))
+        var pos := Vector3(cx + cos(t) * rad, float(entry.get("height", 8.0)) + sin(_time * 0.5 + t) * 0.4,
+            cz + sin(t) * rad)
+        gull.position = pos
+        # Face along the direction of travel.
+        var vel := Vector3(-sin(t), 0.0, cos(t))
+        gull.rotation.y = atan2(vel.x, vel.z)
+        var flap := sin(_time * 7.0 + float(entry.get("phase", 0.0)) * 3.0) * 0.55
+        var wings: Variant = entry.get("wings")
+        if wings is Array and (wings as Array).size() == 2:
+            ((wings as Array)[0] as MeshInstance3D).rotation.z = 0.15 + flap
+            ((wings as Array)[1] as MeshInstance3D).rotation.z = -0.15 - flap
+
 ## [world position, island id] for an authoritative building, or [].
 func _building_position(world_state: Node, building_id: String) -> Array:
     if world_state == null or building_id == "":
@@ -2817,7 +3117,9 @@ func _rebuild_anchors(world_state: Node) -> void:
     # anchors and nobody else's.
     var meadow: Array = buckets["meadow"]
     meadow.append(_anchor(Vector3(0.6, MEADOW_SURFACE, 1.6), "meadow", "plaza", ""))
-    meadow.append(_anchor(Vector3(-2.2, MEADOW_SURFACE, -3.2), "meadow", "plaza", ""))
+    # Second anchor sits north of the plaza: the Meridian Spire's dais now owns
+    # the old west-plaza standing point.
+    meadow.append(_anchor(Vector3(-0.5, MEADOW_SURFACE, -4.9), "meadow", "plaza", ""))
     meadow.append(_anchor(Vector3(3.2, MEADOW_SURFACE, -0.6), "meadow", "plaza", ""))
 
     _island_anchors = buckets

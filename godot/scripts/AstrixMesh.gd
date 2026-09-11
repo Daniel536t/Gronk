@@ -85,6 +85,21 @@ static func gable(name_hint: String, size: Vector3, pos: Vector3, color: Color) 
     node.material_override = AstrixPalette.flat(color)
     return node
 
+## Flat ring (armillary bands, well rims, dais trim). Centre-anchored at `pos`.
+static func torus_on(name_hint: String, radius: float, thickness: float,
+        pos: Vector3, color: Color) -> MeshInstance3D:
+    var node := MeshInstance3D.new()
+    node.name = name_hint
+    var mesh := TorusMesh.new()
+    mesh.inner_radius = maxf(0.02, radius - thickness)
+    mesh.outer_radius = radius + thickness
+    mesh.rings = 12
+    mesh.ring_segments = 24
+    node.mesh = mesh
+    node.position = pos
+    node.material_override = AstrixPalette.flat(color)
+    return node
+
 ## Flat horizontal quad lying on the ground (paths, plot floors, foam dashes).
 ## `render_priority` lets callers force a deterministic draw order so coplanar
 ## ground decals can never z-fight (see World3D's GROUND LAYER convention).

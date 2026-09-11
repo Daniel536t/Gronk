@@ -23,8 +23,8 @@ class_name AstrixPalette
 # WATER
 # ---------------------------------------------------------------------------
 const WATER := Color("2e7cd2")
-const WATER_DEEP := Color("1f5aa8")
-const WATER_SHALLOW := Color("5aa8e4")
+const WATER_DEEP := Color("1c5196")
+const WATER_SHALLOW := Color("4f9cd8")
 const FOAM := Color("eaf3ff")
 
 # ---------------------------------------------------------------------------
@@ -49,10 +49,15 @@ const PATH_DARK := Color("8f7854")
 const FROST_GRASS := Color("b8d6c8")
 const FROST_ROCK := Color("8fa2ad")
 const SNOW := Color("eef4f8")
+## Basalt: the Bastion's volcanic skeleton. Near-black blue-grey, used for
+## Frost's column palisade and gate foundations — the darkest built tone.
+const BASALT := Color("3d444e")
 
 # Dusk biome: the ASTrix arcane signature, contained to one island.
-const DUSK_GRASS := Color("8f7ab8")
-const DUSK_ROCK := Color("6b5a8a")
+# Deepened a full step in the reimagination pass: the old violet was so pale it
+# read as unfinished snow, not as "strange island".
+const DUSK_GRASS := Color("7763a8")
+const DUSK_ROCK := Color("5d4c78")
 const CRYSTAL := Color("b98bf0")
 
 # ---------------------------------------------------------------------------
@@ -102,7 +107,7 @@ const CLOAK_WINTER := Color("7d8697")
 const SEASONS := {
     "spring": {
         "grass": Color("74c93a"), "grass_dark": Color("47892a"),
-        "frost_grass": Color("8fb89e"), "dusk_grass": Color("9c88c4"),
+        "frost_grass": Color("8fb89e"), "dusk_grass": Color("8571b6"),
         "conifer": Color("4f9c40"),
         "foliage": Color("6fb843"), "foliage_light": Color("9ed64c"),
         "sky_top": Color("4a94e4"), "sky_horizon": Color("bcd8f0"),
@@ -112,7 +117,7 @@ const SEASONS := {
     },
     "summer": {
         "grass": Color("6bc42e"), "grass_dark": Color("40801e"),
-        "frost_grass": Color("93bfa4"), "dusk_grass": Color("8f7ab8"),
+        "frost_grass": Color("93bfa4"), "dusk_grass": Color("7763a8"),
         "conifer": Color("4f8c36"),
         "foliage": Color("58a83f"), "foliage_light": Color("8ec73a"),
         "sky_top": Color("3f8ee0"), "sky_horizon": Color("cfe4ef"),
@@ -125,7 +130,7 @@ const SEASONS := {
         # (a8b23a) turned the whole meadow yellow and killed the contrast
         # against every canopy. The warmth belongs in the foliage, not the field.
         "grass": Color("74a336"), "grass_dark": Color("4d7226"),
-        "frost_grass": Color("7fa068"), "dusk_grass": Color("7e6b9f"),
+        "frost_grass": Color("7fa068"), "dusk_grass": Color("6a5790"),
         "conifer": Color("5a8c3c"),
         "foliage": Color("c96f28"), "foliage_light": Color("e09a34"),
         "sky_top": Color("4d8ccc"), "sky_horizon": Color("e6c9a0"),
@@ -137,7 +142,7 @@ const SEASONS := {
         # Winter must be unmistakable: snow on, vegetation grey-green, low
         # cold sun, steel water. This is the food-pressure season.
         "grass": Color("d8e4ea"), "grass_dark": Color("a8bcc8"),
-        "frost_grass": Color("b9d2dc"), "dusk_grass": Color("aaa0c2"),
+        "frost_grass": Color("b9d2dc"), "dusk_grass": Color("9a90b8"),
         "conifer": Color("6e8a90"),
         "foliage": Color("7e94a0"), "foliage_light": Color("9fb2bc"),
         "sky_top": Color("7e9ec0"), "sky_horizon": Color("dce6ee"),

@@ -1125,3 +1125,193 @@ static func dock(length: float, seed_value: int) -> Node3D:
         for side in [-0.42, 0.42]:
             root.add_child(AstrixMesh.box_on("Piling", Vector3(0.16, 1.6, 0.16), Vector3(side, -1.55, t2), AstrixPalette.TIMBER.darkened(0.2)))
     return root
+
+
+# ===========================================================================
+# THE MERIDIAN SPIRE — ASTrix's memory hook. (Reimagination pass.)
+#
+# A pale-stone needle on triple drums, banded with two gold armillary rings and
+# tipped with a violet crystal: the white-gold-violet vertical that every camera
+# frame is composed around. Purely an ancient monument (environmental, like the
+# watchtower and the crystals): it claims no function and reads no state.
+# Origin at dais ground contact. ~9 units tall against 2.15-unit villagers.
+# ===========================================================================
+static func meridian_spire() -> Node3D:
+    var root := Node3D.new()
+    root.name = "MeridianSpire"
+    # Triple dais drums: the civic geometry is circular, unlike every house.
+    var drum_r := [2.3, 1.9, 1.5]
+    var y := 0.0
+    for i in range(3):
+        root.add_child(AstrixMesh.cylinder_on("Dais_%d" % i, drum_r[i], drum_r[i] + 0.12, 0.3,
+            Vector3(0.0, y, 0.0), AstrixPalette.STONE_WALL if i % 2 == 0 else AstrixPalette.WALL_SHADE, 14))
+        y += 0.3
+    # Needle: four tapering cream segments with stone bands between.
+    var segs := [
+        {"r0": 1.05, "r1": 0.85, "h": 1.7},
+        {"r0": 0.85, "r1": 0.65, "h": 1.6},
+        {"r0": 0.65, "r1": 0.45, "h": 1.5},
+        {"r0": 0.45, "r1": 0.25, "h": 1.3},
+    ]
+    var ring_heights: Array[float] = []
+    for i in range(segs.size()):
+        var s: Dictionary = segs[i]
+        root.add_child(AstrixMesh.cylinder_on("Needle_%d" % i, float(s["r1"]), float(s["r0"]), float(s["h"]),
+            Vector3(0.0, y, 0.0), AstrixPalette.WALL, 10))
+        y += float(s["h"])
+        if i == 1:
+            ring_heights.append(y - 0.4)
+        if i == 2:
+            ring_heights.append(y - 0.3)
+        if i < 3:
+            root.add_child(AstrixMesh.cylinder_on("Band_%d" % i, float(s["r1"]) + 0.07, float(s["r1"]) + 0.07, 0.16,
+                Vector3(0.0, y - 0.02, 0.0), AstrixPalette.STONE_WALL, 10))
+    # Two gold armillary rings, tilted like an orrery. Flat gold (no glow):
+    # emissive accents are reserved for state signals.
+    var ring_r := [1.3, 0.95]
+    for i in range(2):
+        var ring := AstrixMesh.torus_on("Ring_%d" % i, ring_r[i], 0.07,
+            Vector3(0.0, ring_heights[i], 0.0), AstrixPalette.THATCH)
+        ring.rotation_degrees = Vector3(18.0 if i == 0 else -14.0, 0.0, 12.0 if i == 0 else -20.0)
+        root.add_child(ring)
+    # Violet tip: the echo of Dusk that says what the monument studies.
+    var tip := AstrixMesh.cone_on("Tip", 0.3, 1.0, Vector3(0.0, y, 0.0), AstrixPalette.CRYSTAL, 6)
+    tip.material_override = AstrixPalette.glow(AstrixPalette.CRYSTAL, 0.55)
+    root.add_child(tip)
+    # Winter collar, shaped by whoever built the needle.
+    var collar := AstrixMesh.cylinder_on("SnowCapCollar", 1.12, 1.12, 0.12,
+        Vector3(0.0, 0.9 + 1.7, 0.0), AstrixPalette.SNOW, 10)
+    collar.visible = false
+    root.add_child(collar)
+    return root
+
+
+## Banner pole: stone footing, timber pole, crossbar, hanging cloth.
+## The cloth is named BannerCloth so World3D can sway it with the wind pass.
+static func banner_pole(seed_value: int, color: Color) -> Node3D:
+    var root := Node3D.new()
+    root.name = "BannerPole"
+    var r := AstrixMesh.rng(seed_value)
+    root.rotation.y = r.randf() * TAU
+    root.add_child(AstrixMesh.cylinder_on("Foot", 0.3, 0.36, 0.25, Vector3.ZERO, AstrixPalette.STONE_WALL, 8))
+    root.add_child(AstrixMesh.cylinder_on("Pole", 0.06, 0.08, 2.6, Vector3(0.0, 0.25, 0.0), AstrixPalette.TIMBER, 7))
+    root.add_child(AstrixMesh.box("Crossbar", Vector3(0.7, 0.07, 0.07), Vector3(0.28, 2.7, 0.0), AstrixPalette.TIMBER))
+    var cloth := AstrixMesh.box("BannerCloth", Vector3(0.52, 0.85, 0.05),
+        Vector3(0.28, 2.24, 0.0), color)
+    root.add_child(cloth)
+    # Stone ball finial: finishes the silhouette against the sky.
+    root.add_child(AstrixMesh.blob("Finial", 0.1, Vector3(0.0, 2.95, 0.0), AstrixPalette.STONE_WALL, 7, 3))
+    return root
+
+
+## Bridge gate: paired stone pylons + timber lintel + hanging lantern + cloths.
+## Stands at a bridge head so a crossing reads as ARRIVED AT, not sprouting
+## from grass. Static geography (rim points), never topology: it stands whether
+## or not Core has yet built the bridge it frames.
+static func gate_arch(seed_value: int) -> Node3D:
+    var root := Node3D.new()
+    root.name = "GateArch"
+    var r := AstrixMesh.rng(seed_value)
+    root.rotation.y = (r.randf() - 0.5) * 0.2
+    for side in [-1.0, 1.0]:
+        root.add_child(AstrixMesh.box_on("Pylon", Vector3(0.55, 2.7, 0.55),
+            Vector3(side * 1.55, 0.0, 0.0), AstrixPalette.STONE_WALL))
+        root.add_child(AstrixMesh.box("PylonCap", Vector3(0.7, 0.18, 0.7),
+            Vector3(side * 1.55, 2.79, 0.0), AstrixPalette.ROCK_DARK))
+        var spike := AstrixMesh.cone_on("Spike", 0.2, 0.5,
+            Vector3(side * 1.55, 2.88, 0.0), AstrixPalette.BASALT, 6)
+        root.add_child(spike)
+        var cloth := AstrixMesh.box("BannerCloth", Vector3(0.4, 0.7, 0.05),
+            Vector3(side * 1.55, 2.0, 0.32), AstrixPalette.ROOF if side < 0.0 else AstrixPalette.ROOF_CIVIC)
+        root.add_child(cloth)
+    root.add_child(AstrixMesh.box("Lintel", Vector3(3.9, 0.34, 0.66),
+        Vector3(0.0, 2.95, 0.0), AstrixPalette.TIMBER))
+    var lintel_snow := AstrixMesh.box("SnowCapLintel", Vector3(3.95, 0.1, 0.7),
+        Vector3(0.0, 3.15, 0.0), AstrixPalette.SNOW)
+    lintel_snow.visible = false
+    root.add_child(lintel_snow)
+    # Hanging lantern: always-on glow glass, like the plaza lamps.
+    root.add_child(AstrixMesh.box("Chain", Vector3(0.05, 0.4, 0.05),
+        Vector3(0.0, 2.55, 0.0), AstrixPalette.ROCK_DARK))
+    var glass := AstrixMesh.box("GateGlass", Vector3(0.3, 0.36, 0.3),
+        Vector3(0.0, 2.2, 0.0), Color("ffe9a8"))
+    glass.material_override = AstrixPalette.glow(Color("ffe9a8"), 1.1)
+    root.add_child(glass)
+    root.add_child(AstrixMesh.box("GateCap", Vector3(0.4, 0.08, 0.4),
+        Vector3(0.0, 2.42, 0.0), AstrixPalette.ROCK_DARK))
+    return root
+
+
+## Basalt column: the Bastion's volcanic skeleton. 6-sided, near-black.
+static func basalt_column(seed_value: int, height: float) -> Node3D:
+    var root := Node3D.new()
+    root.name = "BasaltColumn"
+    var r := AstrixMesh.rng(seed_value)
+    root.rotation.y = r.randf() * TAU
+    var rad := 0.32 + r.randf() * 0.2
+    root.add_child(AstrixMesh.cylinder_on("Shaft", rad * 0.92, rad, height,
+        Vector3.ZERO, AstrixPalette.BASALT, 6))
+    root.add_child(AstrixMesh.cylinder_on("Cap", rad * 1.02, rad * 0.94, 0.18,
+        Vector3(0.0, height, 0.0), AstrixPalette.BASALT.lightened(0.15), 6))
+    return root
+
+
+## Dusk shard: a tilted splinter of dark violet rock with a faint crystal at
+## its foot. The Shatter's rim is broken, not bouldered.
+static func dusk_shard(seed_value: int, scale_mult: float = 1.0) -> Node3D:
+    var root := Node3D.new()
+    root.name = "DuskShard"
+    var r := AstrixMesh.rng(seed_value)
+    root.rotation.y = r.randf() * TAU
+    var h := (1.6 + r.randf() * 1.2) * scale_mult
+    var blade := AstrixMesh.cone_on("Blade", 0.5 * scale_mult, h,
+        Vector3.ZERO, AstrixPalette.DUSK_ROCK.darkened(0.15), 5)
+    blade.rotation_degrees.z = (r.randf() - 0.5) * 36.0
+    root.add_child(blade)
+    var gem := AstrixMesh.cone_on("Vein", 0.12, 0.5 * scale_mult,
+        Vector3((r.randf() - 0.5) * 0.6, 0.0, (r.randf() - 0.5) * 0.6),
+        AstrixPalette.CRYSTAL, 5)
+    gem.material_override = AstrixPalette.glow(AstrixPalette.CRYSTAL, 0.5)
+    root.add_child(gem)
+    return root
+
+
+## Broken arch: two leaning pillars + the lintel fallen beside them. Ancient,
+## environmental storytelling (weathering, mystery) — it claims no function,
+## keeps no state, shelters nothing.
+static func ruin_arch(seed_value: int) -> Node3D:
+    var root := Node3D.new()
+    root.name = "RuinArch"
+    var r := AstrixMesh.rng(seed_value)
+    root.rotation.y = r.randf() * TAU
+    for side in [-1.0, 1.0]:
+        var pillar := AstrixMesh.box_on("Pillar", Vector3(0.7, 3.1 + float(side) * 0.3, 0.7),
+            Vector3(side * 1.5, 0.0, 0.0), AstrixPalette.DUSK_ROCK.darkened(0.08))
+        pillar.rotation_degrees.z = side * -7.0
+        root.add_child(pillar)
+        root.add_child(AstrixMesh.box("PillarCap", Vector3(0.85, 0.2, 0.85),
+            Vector3(side * 1.72, 3.1 + float(side) * 0.3, 0.0), AstrixPalette.DUSK_ROCK.darkened(0.25)))
+    var fallen := AstrixMesh.box("FallenLintel", Vector3(3.2, 0.65, 0.75),
+        Vector3(0.4, 0.33, 1.9), AstrixPalette.DUSK_ROCK.darkened(0.12))
+    fallen.rotation_degrees.y = 18.0
+    root.add_child(fallen)
+    return root
+
+
+## Gull: harbour bird. Body + two named wings so World3D can flap them.
+## Environmental sky life (like clouds): asserts nothing about the simulation.
+static func gull() -> Dictionary:
+    var root := Node3D.new()
+    root.name = "Gull"
+    var body := AstrixMesh.blob("Body", 0.16, Vector3.ZERO, Color("f4f6f8"), 7, 3)
+    body.scale = Vector3(1.4, 0.8, 0.9)
+    body.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+    root.add_child(body)
+    var wings: Array[MeshInstance3D] = []
+    for side in [-1.0, 1.0]:
+        var wing := AstrixMesh.box("Wing", Vector3(0.62, 0.05, 0.24),
+            Vector3(side * 0.4, 0.08, 0.0), Color("e8edf2"))
+        wing.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+        root.add_child(wing)
+        wings.append(wing)
+    return {"root": root, "wings": wings}
