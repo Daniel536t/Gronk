@@ -237,7 +237,28 @@ export class AstrixWorldState {
   }
 
   nextEntityId(prefix: string): string {
-    return `${prefix}-${String(this.nextId++).padStart(3, "0")}`;
+    // Identity integrity (trust-boundary hardening): generated ids must never
+    // collide with seeded ones. The seed contains `house-001` while the
+    // counter used to start at 1, so the first built house ALSO became
+    // `house-001` — two buildings sharing one id. Every id-based lookup
+    // (verification, farmPlotId references, bridge records) resolves by first
+    // match, so a collision silently binds records to the wrong entity. Skip
+    // taken ids instead of assuming the namespace is empty.
+    let id: string;
+    do {
+      id = `${prefix}-${String(this.nextId++).padStart(3, "0")}`;
+    } while (this.isIdTaken(id));
+    return id;
+  }
+
+  private isIdTaken(id: string): boolean {
+    return (
+      this.buildings.some((b) => b.id === id) ||
+      this.crops.some((c) => c.id === id) ||
+      this.bridges.some((b) => b.id === id) ||
+      this.resourceNodes.some((n) => n.id === id) ||
+      this.pendingApprovals.some((a) => a.id === id)
+    );
   }
 
   /**

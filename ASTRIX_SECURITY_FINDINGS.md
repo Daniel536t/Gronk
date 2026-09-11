@@ -220,11 +220,20 @@ and the structural gate plus the immutable approval binding still hold.
 
 | # | Finding | Severity | Confirmed by | Fixed |
 |---|---|---|---|---|
-| 1 | `POST /mcp` unauthenticated + public | HIGH | live `initialize` handshake, HTTP 200 | no |
-| 2 | `ASTRIX_API_KEY` unset → gate fails open | HIGH | `pm2 env` has no key; `server.ts:201` | no |
-| 3 | Godot never sends the bearer token | LOW / blocking | `GameClient.gd:156` source | no |
+| 1 | `POST /mcp` unauthenticated + public | HIGH | live `initialize` handshake, HTTP 200 | **yes — R1 policy** (`src/server/http.ts:18`, same `authorizeWrite`; live `POST /mcp` without token → 401) |
+| 2 | `ASTRIX_API_KEY` unset → gate fails open | HIGH | `pm2 env` has no key; old `server.ts:201` | **yes — R1 policy** (token-or-direct-loopback + proxy-header guard, `src/astrix/server.ts:84`; live `POST /astrix/command` without token → 401) |
+| 3 | Godot never sends the bearer token | LOW / blocking | `GameClient.gd:156` source | **yes** — runtime-resolved key transmitted as `Authorization: Bearer %s` (`GameClient.gd:249`), pinned by R2 tests |
 | 4 | Open read surface | INFO | route table, `server.ts:86-172` | accepted |
 | 5 | No rate limiting | MEDIUM | source inspection | no |
 
-The live pm2 process has **not** been restarted and still runs the pre-Core-extraction
-wiring; none of the above changed during this milestone.
+> Remediation note (trust-boundary hardening pass): findings 1–3 were fixed by
+> code that postdates this document's analysis (the R1 `authorizeWrite` policy
+> and the Godot credential path). The analysis above is preserved as written —
+> it correctly describes the old `authorized()` (`if (!authToken) return true`)
+> — but its "Fixed: no" column and any claim that the gate "fails open" no
+> longer describe the running system. `ASTRIX_CORE_ARCHITECTURE.md` §19 is the
+> current statement of the boundary. The live pm2 process was verified serving
+> the new policy (remote unauthenticated writes refused).
+>
+> The live pm2 process has **not** been restarted and still runs the pre-Core-extraction
+> wiring; none of the above changed during this milestone.

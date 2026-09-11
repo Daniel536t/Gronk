@@ -117,6 +117,10 @@ func _ready() -> void:
     var bus := get_node_or_null("/root/GameCommandBus")
     if bus:
         bus.command_completed.connect(_on_command_completed)
+        # Server-side rejections (cost, capacity, connectivity, bounds) arrive
+        # here: the client owns no game values, so Core's verdict is the only
+        # affordability/validity signal, and it must stay visible, never silent.
+        bus.command_failed.connect(_on_command_failed)
     _render_world({})
     _render_agent()
 
@@ -475,7 +479,9 @@ func _detect_consequences(world: Dictionary) -> void:
         _advance_approval_stage("VERIFIED")
     if int(_prev["crops"]) >= 0 and crops > int(_prev["crops"]):
         _log("[color=#8fd3c7]CROP PLANTED[/color] (%d growing)" % crops)
-        _set_consequence("Food production increased")
+        # A seedling is not production: yield exists only after growth and
+        # harvest, so the consequence names the planted fact, not its future.
+        _set_consequence("Crop planted (%d growing)" % crops)
     if int(_prev["pop"]) >= 0 and pop < int(_prev["pop"]):
         _log("[color=#ffd166]FOOD SHORTAGE[/color] %d lost" % (int(_prev["pop"]) - pop))
         _set_consequence("Population fell — food ran out")
@@ -692,6 +698,9 @@ func _process(_delta: float) -> void:
 func _on_command_completed(command_name: String, result: Dictionary) -> void:
     var ok := bool(result.get("ok", result.get("success", false)))
     _log("[color=#ffd166]TOOL[/color] %s → %s" % [command_name, "OK" if ok else "REJECTED"])
+
+func _on_command_failed(error: String) -> void:
+    _log("[color=#ffd166]TOOL[/color] → [color=#ff8fa3]REJECTED[/color] %s" % error)
 
 func _on_write_authority(has_authority: bool) -> void:
     _has_authority = has_authority

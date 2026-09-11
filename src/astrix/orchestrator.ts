@@ -456,7 +456,14 @@ export class AstrixStewardLoop {
         }
 
         this._lastOutcome = summarizeOutcome(this._actions, turn);
-        this.emit("TURN_COMPLETED", { turn, actionsExecuted: acted });
+        // actionsExecuted counts actions that actually EXECUTED (SUCCEEDED),
+        // never mere attempts: SKIPPED/FAILED/REJECTED records are real
+        // outcomes of the turn but claiming them as executed would be a false
+        // whole-turn-success signal to anyone reading the event log.
+        const executedThisTurn = this._actions.filter(
+          (a) => a.turn === turn && a.executionState === "SUCCEEDED",
+        ).length;
+        this.emit("TURN_COMPLETED", { turn, actionsExecuted: executedThisTurn });
         if (acted === 0) break; // idle turn — the steward has nothing to do
       }
       this._state = this._stopped ? "STOPPED" : "COMPLETED";

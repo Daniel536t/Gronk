@@ -264,3 +264,45 @@ describe("R2 — Godot credential path", () => {
     }
   });
 });
+
+describe("R3 — Godot owns no game values and no resource ledger", () => {
+  // Trust-boundary hardening: the Observatory must never maintain a competing
+  // source of truth (cost tables, local inventory) that can disagree with Core
+  // and — once an external settlement layer exists — get attested as fact.
+  const busSource = readFileSync("godot/scripts/GameCommandBus.gd", "utf8");
+  const playerSource = readFileSync("godot/scripts/Player3D.gd", "utf8");
+
+  it("GameCommandBus defines no cost table, no affordability gate, no world bounds", () => {
+    expect(busSource).not.toMatch(/BUILD_COSTS\s*:=/);
+    expect(busSource).not.toMatch(/func _can_afford/);
+    expect(busSource).not.toMatch(/func _valid_location/);
+    // No hardcoded island claim: the island hint derives from renderer geography.
+    expect(busSource).not.toContain('"island_id": "meadow"');
+    expect(busSource).toContain("func island_hint_at(");
+  });
+
+  it("GameCommandBus reads island geography live instead of copying it", () => {
+    // A copied island table is the same drift vector as a copied cost table.
+    expect(busSource).toContain('preload("res://scripts/World3D.gd")');
+    expect(busSource).not.toMatch(/Vector3\(0\.0, 0\.0, 0\.0\), "radius"/);
+  });
+
+  it("Player3D keeps no inventory and credits nothing on gather", () => {
+    expect(playerSource).not.toMatch(/var inventory/);
+    expect(playerSource).not.toContain("add_resource");
+    expect(playerSource).not.toContain("inventory_changed");
+    // gather_nearest dispatches and reports dispatch; ownership is Core's.
+    expect(playerSource).toContain("func gather_nearest(");
+  });
+
+  it("server rejections stay visible in the Observatory feed", () => {
+    const consoleSource = readFileSync("godot/scripts/AgentConsole.gd", "utf8");
+    expect(consoleSource).toContain("bus.command_failed.connect(_on_command_failed)");
+    expect(consoleSource).toContain("func _on_command_failed(");
+  });
+
+  it("consequence language names facts, not futures", () => {
+    const consoleSource = readFileSync("godot/scripts/AgentConsole.gd", "utf8");
+    expect(consoleSource).not.toContain("Food production increased");
+  });
+});

@@ -208,6 +208,13 @@ export class AstrixGameCommandBus {
   private gather(command: AstrixCommand, irreversible: boolean): AstrixCommandResult {
     const node = this.state.resourceNodes.find((candidate: AstrixResourceNode) => candidate.id === command.resourceId || candidate.type === command.resourceType && candidate.quantity > 0);
     if (!node) return { success: false, command: command.command, irreversible, error: "resource node not found" };
+    // INVARIANT (trust-boundary hardening): a gather that moves nothing is a
+    // FAILURE, never a success. An exact-ID match can select a depleted node
+    // (the quantity guard above only filters type-matched candidates), and
+    // reporting `gathered: 0` as success would emit a false-success event that
+    // verification then passes vacuously. Depleted means the request is valid
+    // but the transition is impossible — FAILED, NOT_VERIFIED, world untouched.
+    if (node.quantity <= 0) return { success: false, command: command.command, irreversible, error: "resource depleted" };
     // Connectivity (design spec chain #3): the settlement lives on Meadow; other
     // islands' resources are unreachable until a bridge connects them.
     if (!this.islandReachableFromMeadow(node.islandId)) {

@@ -146,6 +146,12 @@ this explicitly, and it is why the steward can reason without being scripted.
 `tick(deltaSeconds)` (`:155`) applies `advanceDay()` once **per crossed day
 boundary**, so a multi-day jump consumes food for every day rather than one.
 
+**Identity integrity:** `nextEntityId()` skips ids already present in any entity
+collection, so generated ids can never collide with seeded ones (the seed holds
+`house-001`; the counter used to restart at 1 and mint a second `house-001`,
+binding id-lookups to the wrong entity). Every id-based reference —
+verification, `farmPlotId`, bridge records — therefore names one entity.
+
 ---
 
 ## 3. CommandBus — the mutation boundary
@@ -159,6 +165,12 @@ Shape: `execute()` → `validate()` → gate check → mutate → `emitState()`.
 capacity (`:158`), crop capacity (`:167`), crop maturity (`:210`), and
 connectivity via `islandReachableFromMeadow()` (`:252`) for both `build` and
 `gather`.
+
+**No-success-without-transition invariant:** a gather that moves nothing is a
+FAILURE, never a success. An exact-ID match can select a depleted node, and the
+old code reported `gathered: 0` as success — a false-success event that
+verification then passed vacuously. Now `gather()` fails depleted nodes
+(`"resource depleted"`), so FAILED ⇒ NOT_VERIFIED with a byte-identical world.
 
 **Audited claim — the bus is the sole mutation path.** A repo-wide grep for
 assignments/pushes/splices against `state.<field>` outside `commandBus.ts` and
@@ -219,6 +231,18 @@ Bounds: `DEFAULT_MAX_TURNS=5`, `DEFAULT_MAX_ACTIONS_PER_TURN=10`,
 `DEFAULT_DECIDE_TIMEOUT_MS=60_000` (`:119-121`). An idle turn (zero actions) ends
 the run (`:462`). Risk: `HIGH_RISK_TOOLS={clear_terrain,build_bridge}` (`:126`),
 read-only tools are low, everything else medium (`riskOf` `:130`).
+
+**Turn semantics are intentionally non-atomic.** A failed action does not abort
+its turn: each action is proposed, executed and verified independently, and the
+turn completes with a mixed record (e.g. one SUCCEEDED/VERIFIED plus one
+FAILED/NOT_VERIFIED, the world holding exactly the succeeded effects). There is
+no whole-turn transaction and none is wanted — partial progress is the honest
+representation of a steward that tried two things and landed one. Two
+consequences follow: (1) `TURN_COMPLETED.actionsExecuted` counts actions that
+actually reached SUCCEEDED, never attempts, so the event cannot claim a success
+the world does not contain; (2) the idle-break counts *proposed* calls, so a
+turn of pure SKIPPED (unknown tools) does not end the run — a known edge,
+documented here rather than changed.
 
 Per-action lifecycle is tracked in `AstrixActionRecord` (`:48`) with separate
 `executionState` and `verificationState` — see §9.
@@ -362,6 +386,15 @@ VERIFIED/VERIFICATION_FAILED/NOT_VERIFIED).
 Read-only tools are marked `NOT_VERIFIED` rather than falsely verified
 (`:647`). Tested: no action is ever `VERIFIED` without `SUCCEEDED`, and no
 `FAILED` action is `VERIFIED` (canonical-run integration test).
+
+**Negative verification is proven with the real verifier, not a mock.** A
+regression test commits a genuine `PLACE_BUILDING` through the production bus,
+then removes the building out-of-band (simulating a world that fails to hold
+its mutation) before verification runs: execution stays SUCCEEDED while the
+production `checkVerification()` returns false, yielding
+`VERIFICATION_FAILED` and no `VERIFICATION_SUCCEEDED` event. EXECUTED ≠
+VERIFIED is therefore a property of the reality check, not of test doubles
+(`tests/astrix-execution-loop.test.ts`, FIX 4).
 
 ---
 
@@ -543,22 +576,31 @@ adapter under `src/server/` or a new `src/adapters/`, never in `src/astrix/`.
 
 ## 19. Security boundaries
 
-Two surfaces, and the posture **changed** with the local runtime:
+Write routes are gated by one policy, one place: `authorizeWrite()`
+(`src/astrix/server.ts:84`, shared with the legacy MCP channel in
+`src/server/http.ts:18`):
+
+- token configured → exact `Authorization: Bearer <ASTRIX_API_KEY>` (constant-time compare) or 401;
+- no token → **direct loopback only**; any proxy-forwarding header
+  (`x-forwarded-for`, `x-real-ip`, `forwarded`) marks the request remote and it
+  is refused. (Deployed behind Caddy, the socket is always loopback, so without
+  this rule the check would be vacuous — the code documents this trap.)
 
 | Surface | Auth | Note |
 |---|---|---|
-| `POST /astrix/command`, `/astrix/approval/respond`, `/astrix/agent/start`, `/astrix/agent/stop`, `POST /astrix/mcp`, `POST /astrix/mcp/tools/call` | `ASTRIX_API_KEY` bearer (`astrix/server.ts:200`) | **fails open when the env var is unset** (`:201`) |
-| `GET /astrix/state`, `/astrix/events`, `/astrix/agent/status`, `/astrix/log`, `GET /astrix/mcp*` | none | read-only |
-| `POST /mcp` (legacy MCP channel) | **none by design** (`src/server/http.ts:20-26`) | reasoning was "same-host network isolation" |
+| `POST /astrix/command`, `/astrix/approval/respond`, `/astrix/agent/start`, `/astrix/agent/stop`, `POST /astrix/mcp`, `POST /astrix/mcp/tools/call`, legacy `POST /mcp` | `authorizeWrite` | **no longer fails open**: no token + non-loopback → 401 (live-verified) |
+| `GET /astrix/state`, `/astrix/events`, `/astrix/agent/status`, `/astrix/log`, `GET /astrix/mcp*`, `GET /mcp` (SSE) | none | read-only; carry no tool invocation |
 
-The `POST /mcp` justification **no longer holds**: the app is published via Caddy,
-and because Core now reasons locally it needs **no inbound TrueForge access at
-all**. Full analysis, exposure, and remediation in
-`ASTRIX_SECURITY_FINDINGS.md`. Not fixed in this milestone by instruction.
+> Supersedes the older claim in this section and in
+> `ASTRIX_SECURITY_FINDINGS.md` that the gate "fails open when the env var is
+> unset": that was true of the previous `authorized()` (`if (!authToken) return
+> true`) and was remediated by the R1 policy above. Findings 1–3 of that
+> document are closed (Finding 3 with them: Godot now transmits
+> `Authorization: Bearer %s` from a runtime-resolved key, `GameClient.gd:249`).
 
 Structural safety that does *not* depend on auth: the approval gate is in the
-bus, so even an unauthenticated caller that reaches a mutating tool cannot
-execute `clear_terrain`/`build_bridge` without a human resolving an approval.
+bus, so even an authenticated caller cannot execute `clear_terrain` /
+`build_bridge` without a human resolving an approval.
 
 ---
 
@@ -584,7 +626,9 @@ blockchain dependency exists in the repo (verified by the token scan in §18).
 A second extension axis exists but is **NOT IMPLEMENTED**: settlement/attestation
 adapters would consume the *event log* rather than replace the provider — i.e.
 they observe `APPROVAL_GRANTED` / `VERIFICATION_SUCCEEDED` and anchor them
-externally. That keeps Core authoritative and the adapter downstream. Provisioned
+externally. That keeps Core authoritative and the adapter downstream. The exact
+receipt schema (approval/command/state hashes, entity references) is separate
+design work and is deliberately not sketched here. Provisioned
 but unused subagents (`astrix-agriculture`, `astrix-construction`,
 `astrix-ecology`) and the `SUBAGENT_REQUESTED`/`SUBAGENT_RESULT` event types are
 likewise **NOT IMPLEMENTED** — declared, never driven.

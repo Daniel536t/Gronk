@@ -5,8 +5,6 @@ class_name AstrixPlayer3D
 ## the existing GameClient and is intentionally not rewritten here.
 
 signal swimming_changed(is_swimming: bool)
-signal inventory_changed(inventory: Dictionary)
-signal gathered(resource_id: String)
 
 @export var move_speed: float = 7.0
 @export var run_multiplier: float = 1.5
@@ -14,7 +12,6 @@ signal gathered(resource_id: String)
 @export var deceleration: float = 24.0
 @export var water_level: float = -0.05
 
-var inventory: Dictionary = {"wood": 0, "stone": 0, "food": 0, "water": 0, "crystal": 0}
 var is_swimming: bool = false
 
 var _visual: Node3D
@@ -66,13 +63,15 @@ func _physics_process(delta: float) -> void:
     _update_swimming(delta)
     _animate(delta, desired)
 
-func add_resource(resource_id: String, amount: int = 1) -> void:
-    if not inventory.has(resource_id) or amount <= 0:
-        return
-    inventory[resource_id] = int(inventory[resource_id]) + amount
-    inventory_changed.emit(inventory.duplicate(true))
-    gathered.emit(resource_id)
-
+## Gather from the nearest resource node.
+##
+## TRUST RULE (hardened): this function keeps NO inventory and credits NOTHING.
+## An earlier version optimistically added the node's whole stock to a local
+## ledger on request dispatch — a competing resource truth that disagreed with
+## Core (which yields exactly 1 per action, only on success) and was never
+## reconciled. The Observatory owns no quantities: the authoritative stock is
+## Core's `resources`, rendered by the world and the HUD from snapshots. The
+## return value reports dispatch only (`pending`), never ownership.
 func gather_nearest(max_distance: float = 2.5) -> Dictionary:
     var nearest: ResourceNode3D
     var nearest_distance := max_distance
@@ -84,10 +83,10 @@ func gather_nearest(max_distance: float = 2.5) -> Dictionary:
                 nearest_distance = distance
     if not nearest:
         return {"ok": false, "error": "no resource nearby"}
-    var result := nearest.gather()
-    if bool(result.get("ok", false)):
-        add_resource(nearest.resource_id, nearest.amount)
-    return result
+    # Dispatch only. Ownership changes only when the server confirms, and the
+    # confirmation path (ResourceNode3D._on_command_succeeded) updates the
+    # WORLD, never a local ledger.
+    return nearest.gather()
 
 func _update_swimming(delta: float) -> void:
     var should_swim := global_position.y <= water_level

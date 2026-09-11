@@ -50,11 +50,15 @@ interface SetupOptions {
   decisions?: StewardDecision[];
   loopOverrides?: Partial<Omit<AstrixStewardLoopOptions, "state" | "bus" | "tools" | "events">>;
   LoopClass?: typeof AstrixStewardLoop;
+  /** Replace the command bus (e.g. to simulate the world failing to hold a
+   *  mutation). The state/tools/events still belong to the real Core. */
+  bus?: AstrixGameCommandBus;
+  state?: AstrixWorldState;
 }
 
 function setup(options: SetupOptions = {}) {
-  const state = new AstrixWorldState();
-  const bus = new AstrixGameCommandBus(state);
+  const state = options.state ?? new AstrixWorldState();
+  const bus = options.bus ?? new AstrixGameCommandBus(state);
   const tools = createAstrixToolRegistry(state, bus);
   const events = new AstrixEventLog();
   const provider = options.decisions ? new FakeProvider(options.decisions) : undefined;
@@ -447,5 +451,100 @@ describe("approval observability (P1): the human can see what they are authorizi
     // so the poller printed "gather null" and no reader could tell what happened.
     expect(gather.args).toEqual({ resource_type: "wood" });
     expect(JSON.stringify(actions)).not.toContain("nope");
+  });
+});
+
+describe("trust boundary: no success without a state transition (FIX 1 loop-level)", () => {
+  it("a gather on a depleted node fails verification instead of verifying vacuously", async () => {
+    const state = new AstrixWorldState();
+    state.resourceNodes.find((n) => n.id === "tree-meadow-001")!.quantity = 0;
+    const { loop, events } = setup({
+      state,
+      decisions: [{ decision: "gather", toolCalls: [{ tool: "gather", args: { resource_id: "tree-meadow-001" } }] }],
+    });
+    loop.start();
+    await waitTerminal(loop);
+
+    const action = loop.actions.find((a) => a.tool === "gather")!;
+    expect(action.executionState).toBe("FAILED");
+    expect(action.verificationState).toBe("NOT_VERIFIED");
+    const types = eventTypes(events);
+    expect(types).toContain("ACTION_FAILED");
+    expect(types).not.toContain("ACTION_SUCCEEDED");
+    expect(types).not.toContain("VERIFICATION_SUCCEEDED");
+    expect(state.resources.wood).toBe(30);
+  });
+});
+
+describe("trust boundary: EXECUTED != VERIFIED against the real verifier (FIX 4)", () => {
+  it("a sabotaged mutation executes successfully but fails real verification", async () => {
+    const state = new AstrixWorldState();
+    const bus = new AstrixGameCommandBus(state);
+    // The world fails to hold the mutation AFTER the bus commits it: this uses
+    // the production verifier and real state, so only a genuine reality check
+    // can catch it. (A mocked verifier would prove nothing.)
+    const realExecute = bus.execute.bind(bus);
+    bus.execute = (command: Parameters<AstrixGameCommandBus["execute"]>[0]) => {
+      const result = realExecute(command);
+      if (result.success && command.command === "PLACE_BUILDING") {
+        const id = (result as { buildingId?: string }).buildingId;
+        const index = state.buildings.findIndex((b) => b.id === id);
+        if (index >= 0) state.buildings.splice(index, 1);
+      }
+      return result;
+    };
+    const { loop, events } = setup({
+      state,
+      bus,
+      decisions: [
+        {
+          decision: "expand",
+          toolCalls: [{ tool: "build", args: { building_type: "house", position: { x: 5, y: 0, z: 5 }, island_id: "meadow" } }],
+        },
+      ],
+    });
+    loop.start();
+    await waitTerminal(loop);
+
+    const action = loop.actions.find((a) => a.tool === "build")!;
+    // Execution genuinely succeeded (the bus committed) — but the effect is
+    // gone, so verification must fail. Collapsing these would be false success.
+    expect(action.executionState).toBe("SUCCEEDED");
+    expect(action.verificationState).toBe("VERIFICATION_FAILED");
+    const types = eventTypes(events);
+    expect(types).toContain("ACTION_SUCCEEDED");
+    expect(types).toContain("VERIFICATION_FAILED");
+    expect(types).not.toContain("VERIFICATION_SUCCEEDED");
+  });
+});
+
+describe("turn semantics: partial progress is intentional and explicit (FIX 5)", () => {
+  it("one turn with a success and a failure records both; the world holds only the success", async () => {
+    const { state, events, loop } = setup({
+      decisions: [
+        {
+          decision: "mixed turn",
+          toolCalls: [
+            { tool: "gather", args: { resource_id: "tree-meadow-001" } },
+            { tool: "plant", args: { farm_plot_id: "no-such-farm", crop_type: "wheat" } },
+          ],
+        },
+      ],
+    });
+    loop.start();
+    await waitTerminal(loop);
+
+    expect(loop.state).toBe("COMPLETED");
+    const [first, second] = loop.actions;
+    expect(first.executionState).toBe("SUCCEEDED");
+    expect(first.verificationState).toBe("VERIFIED");
+    expect(second.executionState).toBe("FAILED");
+    expect(second.verificationState).toBe("NOT_VERIFIED");
+    // The world reflects exactly the succeeded action.
+    expect(state.resources.wood).toBe(31);
+    expect(state.crops).toHaveLength(0);
+    // The turn event counts what EXECUTED, not what was attempted.
+    const completed = events.all().find((e) => e.type === "TURN_COMPLETED")!;
+    expect((completed.data as { actionsExecuted: number }).actionsExecuted).toBe(1);
   });
 });

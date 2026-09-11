@@ -83,7 +83,7 @@ on every poll (`apply_snapshot` clears and rebuilds `resource_nodes`, `buildings
 | Case | Where | Assessment |
 |---|---|---|
 | `WorldState` field defaults before the first poll (`food = 12`, `biome_health = 1.0`, `resources.wood = 0`) | `WorldState.gd:7-19` | Wrong values (server starts food 40, meadow 0.8) shown for <0.5 s at boot. Cosmetic, but the defaults contradict Core. |
-| `Player3D.inventory` + `add_resource()` | `Player3D.gd:69-73`, called `:89` | A **local player-only inventory** incremented on a successful server gather. Not authoritative state (Core has no per-player inventory) — but it is a locally-maintained number the server never confirms. |
+| `Player3D.inventory` + `add_resource()` | `Player3D.gd` (removed) | ~~A local player-only inventory~~ — **removed** in the trust-boundary hardening pass. `gather_nearest()` dispatches and reports dispatch only; no ledger exists, nothing to reconcile. Pinned by R3 source tests. |
 | Decorative trees/rocks/props not backed by resource nodes | `World3D.gd:1051-1055` `_build_decor()` | Pure set dressing. Acceptable, but means "tree count" on screen ≠ authoritative node count. |
 
 `ResourceNode3D.gathered` (`ResourceNode3D.gd:7`) is set **only** after
@@ -139,11 +139,18 @@ Agent-status feed (separate endpoint, `GET /astrix/agent/status`):
 
 ## 5. Answers to the 14 audit questions
 
+> Drift note: several answers below (notably Q6–Q11, Q13) describe the build at
+> the time of writing and predate villagers, the authoritative day/dusk cycle,
+> the food store, in-world proposal beacons, and the farm/crop builders. Current
+> behavior is pinned by `godot/tools/probe_*.gd`, `tests/astrix-security.test.ts`
+> (R3), and `ASTRIX_VISUAL_BUILD.md` §§7–11, 16 — consult those, not this table,
+> for what the Observatory renders today.
+
 | # | Question | Answer |
 |---|---|---|
 | 1 | How does authoritative state reach Godot? | 0.5 s polling of `/astrix/state` + `/astrix/agent/status`; no SSE. §1 |
 | 2 | Does Godot ever mutate authoritative state? | **No.** All writes go server-side via `/astrix/command` and `/astrix/approval/respond`. §2 |
-| 3 | Any state duplicated or invented locally? | Mirror by design; three presentation-only inventions (boot defaults, player inventory, decor). §3 |
+| 3 | Any state duplicated or invented locally? | Mirror by design; two presentation-only inventions remain (boot defaults, decor) — the player inventory is gone (§3). Client-side cost/bounds/island assumptions are also gone: `GameCommandBus.gd` owns no game values (R3). |
 | 4 | Farms rendered from real state? | **Yes** — one group per authoritative `type=="farm"` building, removed when gone. |
 | 5 | Crops rendered from real state? | **Yes** — bound by `farmPlotId`, height scales with `growthStage`, mature tip at ≥0.8. |
 | 6 | Bridges rendered from real state? | **Yes**, but only the 2 pairs in `SIM_BRIDGE_SPANS`; a `frost↔dusk` bridge would be invisible. |

@@ -164,6 +164,75 @@ describe("ASTrix command bus", () => {
   });
 });
 
+describe("gather invariant: no success without a state transition", () => {
+  it("a gather on a depleted node fails instead of reporting gathered: 0", () => {
+    const { state, bus } = fresh();
+    const node = state.resourceNodes.find((n) => n.id === "tree-meadow-001")!;
+    node.quantity = 0;
+    const before = state.snapshot();
+    const result = bus.execute({ command: "GATHER_RESOURCE", resourceId: "tree-meadow-001" });
+    expect(result.success).toBe(false);
+    expect(result.error).toBe("resource depleted");
+    expect(result).not.toHaveProperty("gathered");
+    // Valid request, impossible transition: the world is byte-identical.
+    expect(state.snapshot()).toEqual(before);
+  });
+
+  it("a type-matched gather skips depleted nodes and still gathers", () => {
+    const { state, bus } = fresh();
+    for (const n of state.resourceNodes) if (n.type === "wood") n.quantity = 0;
+    const result = bus.execute({ command: "GATHER_RESOURCE", resourceType: "wood" });
+    expect(result.success).toBe(false);
+    expect(result.error).toBe("resource node not found");
+  });
+
+  it("a legitimate gather moves exactly one unit and reports it", () => {
+    const { state, bus } = fresh();
+    const result = bus.execute({ command: "GATHER_RESOURCE", resourceId: "tree-meadow-001" });
+    expect(result.success).toBe(true);
+    expect(result.gathered).toBe(1);
+    expect(state.resources.wood).toBe(31);
+  });
+});
+
+describe("entity identity: generated ids never collide with seeded ids", () => {
+  it("the first built house does not reuse the seeded house-001", () => {
+    const { state, bus } = fresh();
+    const result = bus.execute({
+      command: "PLACE_BUILDING",
+      buildingType: "house",
+      position: { x: 5, y: 0, z: 5 },
+      islandId: "meadow",
+    });
+    expect(result.success).toBe(true);
+    const ids = state.buildings.map((b) => b.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).toContain("house-001"); // the seed
+    expect(result.buildingId).not.toBe("house-001");
+  });
+
+  it("ids stay unique across many builds, approvals, and crops", () => {
+    const { state, bus } = fresh();
+    state.resources.wood = 500;
+    state.resources.stone = 500;
+    const farm = bus.execute({ command: "PLACE_BUILDING", buildingType: "farm", position: { x: 5, y: 0, z: 5 }, islandId: "meadow" });
+    expect(farm.success).toBe(true);
+    for (let i = 0; i < 3; i++) {
+      const plant = bus.execute({ command: "PLANT_CROP", farmPlotId: (farm as { buildingId?: string }).buildingId!, cropType: "wheat" });
+      expect(plant.success).toBe(true);
+    }
+    const gate = bus.execute({ command: "BUILD_BRIDGE", islandA: "meadow", islandB: "frost" });
+    expect(gate.pendingApproval).toBeDefined();
+    const all = [
+      ...state.buildings.map((b) => b.id),
+      ...state.crops.map((c) => c.id),
+      ...state.bridges.map((b) => b.id),
+      ...state.pendingApprovals.map((a) => a.id),
+    ];
+    expect(new Set(all).size).toBe(all.length);
+  });
+});
+
 describe("bridge topology and derived position (P0)", () => {
   it("derives the meadow<->frost deck position from the authoritative island pair", () => {
     // The midpoint of the two island anchors -- no invented coordinates, and no
