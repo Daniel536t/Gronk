@@ -32,9 +32,22 @@
 //!   4 - CommitWorld: schedule a commit of the world account back to base via
 //!       MagicIntentBundleBuilder. Anyone may call it (payer signs); it moves
 //!       no semantics, only flushes ER state to Solana. Submit on the ER.
+//!
+//!   5 - CrankAdvance: permissionless day += 1 for crank-scheduled execution.
+//!       Same semantic as AdvanceDay, no authority check: the counter is a
+//!       public metronome (abuse only fast-forwards public time; Core owns
+//!       all meaning). Scheduled instructions run top-level without inherited
+//!       signatures, so gating this on a signer would silently break cranks.
+//!       Accounts: world only.
+//!
+//!   6 - ScheduleHeartbeat { task_id: u64, interval_ms: u64, iterations: u64 }:
+//!       CPI the crank scheduler (ScheduleCrankCpi) to run CrankAdvance on
+//!       this world at the given cadence. Submitted ONCE on base; MagicBlock
+//!       executes autonomously thereafter. Payer funds scheduling.
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use ephemeral_rollups_sdk::cpi::{delegate_account, DelegateAccounts, DelegateConfig};
+use magicblock_magic_program_api::args::ScheduleTaskArgs;
 use ephemeral_rollups_sdk::ephem::{FoldableIntentBuilder, MagicIntentBundleBuilder};
 use solana_program::{
     account_info::{next_account_info, AccountInfo},
@@ -81,6 +94,8 @@ pub fn process_instruction(
         2 => delegate_world(program_id, accounts, rest),
         3 => prepare_delegate(program_id, accounts),
         4 => commit_world(accounts),
+        5 => crank_advance(program_id, accounts),
+        6 => schedule_heartbeat(program_id, accounts, rest),
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }
@@ -257,6 +272,76 @@ fn commit_world(accounts: &[AccountInfo]) -> ProgramResult {
         .build_and_invoke()
         .map_err(|_| ProgramError::Custom(0xA1))?;
     msg!("astrix world commit scheduled");
+    Ok(())
+}
+
+/// Permissionless advance for crank execution (see header).
+/// Accounts: world (writable) only.
+fn crank_advance(program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
+    let iter = &mut accounts.iter();
+    let world = next_account_info(iter)?;
+    let mut state = load_world(world, program_id)?;
+    state.day = state.day.checked_add(1).ok_or(ProgramError::ArithmeticOverflow)?;
+    state.serialize(&mut &mut world.data.borrow_mut()[..])?;
+    msg!("astrix world crank-advanced to day {}", state.day);
+    Ok(())
+}
+
+/// Schedule autonomous heartbeat ticks via the crank scheduler.
+/// Accounts: payer (signer, writable), world (writable), magic_program.
+/// Data: [6, task_id: u64 LE, interval_ms: u64 LE, iterations: u64 LE].
+/// Submitted once on BASE; the validator then executes CrankAdvance on the
+/// ER at the cadence, no further signatures needed.
+fn schedule_heartbeat(program_id: &Pubkey, accounts: &[AccountInfo], rest: &[u8]) -> ProgramResult {
+    let payer = &accounts[0];
+    let world = &accounts[1];
+    let magic_program = &accounts[2];
+    if accounts.len() < 3 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+    if rest.len() < 24 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    if !payer.is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    let (expected_world, _bump) = world_pda(program_id);
+    if world.key != &expected_world {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    let task_id = u64::from_le_bytes(rest[0..8].try_into().unwrap());
+    let interval_ms = u64::from_le_bytes(rest[8..16].try_into().unwrap());
+    let iterations = u64::from_le_bytes(rest[16..24].try_into().unwrap());
+    if iterations == 0 || iterations > 1000 {
+        return Err(ProgramError::InvalidArgument);
+    }
+    let advance_ix = solana_program::instruction::Instruction {
+        program_id: *program_id,
+        accounts: vec![solana_program::instruction::AccountMeta::new(*world.key, false)],
+        data: vec![5u8],
+    };
+    // Same bytes ScheduleCrankCpi would build (checked against its source):
+    // payer + instruction accounts, bincode(ScheduleTask{...}) to magic program.
+    let schedule_ix = solana_program::instruction::Instruction::new_with_bincode(
+        *magic_program.key,
+        &magicblock_magic_program_api::instruction::MagicBlockInstruction::ScheduleTask(
+            magicblock_magic_program_api::args::ScheduleTaskArgs {
+                task_id: task_id as i64,
+                execution_interval_millis: interval_ms as i64,
+                iterations: iterations as i64,
+                instructions: vec![advance_ix],
+            },
+        ),
+        vec![
+            solana_program::instruction::AccountMeta::new(*payer.key, true),
+            solana_program::instruction::AccountMeta::new(*world.key, false),
+        ],
+    );
+    solana_program::program::invoke(
+        &schedule_ix,
+        &[payer.clone(), world.clone(), magic_program.clone()],
+    )?;
+    msg!("astrix heartbeat scheduled: {} ticks every {}ms", iterations, interval_ms);
     Ok(())
 }
 

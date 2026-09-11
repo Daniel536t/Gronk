@@ -52,6 +52,7 @@ version = "0.1.0"
 dependencies = [
  "borsh 1.8.1",
  "ephemeral-rollups-sdk",
+ "magicblock-magic-program-api",
  "solana-program 4.1.0",
  "solana-system-interface 3.3.0",
 ]

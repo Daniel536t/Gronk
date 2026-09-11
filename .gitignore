@@ -9,4 +9,4 @@ qa/
 .tools/
 server/static/uploads/
 godot/.godot/
-solana/target/
+solana/astrix-world/target/

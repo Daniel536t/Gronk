@@ -1,25 +1,25 @@
 {
-  "day": 6,
+  "day": 11,
   "snapshot": {
-    "day": 6,
+    "day": 11,
     "time": "08:00",
-    "elapsedSeconds": 600,
+    "elapsedSeconds": 1200,
     "population": 4,
-    "food": 20,
-    "foodSecurity": 5,
-    "season": "spring",
-    "daysUntilWinter": 19,
+    "food": 0,
+    "foodSecurity": 0,
+    "season": "summer",
+    "daysUntilWinter": 14,
     "foodPerDay": 4,
-    "daysOfFoodRemaining": 5,
-    "harvestableFood": 0,
+    "daysOfFoodRemaining": 0,
+    "harvestableFood": 18,
     "growingFood": 18,
-    "daysUntilNextHarvest": 3,
+    "daysUntilNextHarvest": 0,
     "projectedFoodAtWinter": -38,
-    "foodPressureLevel": "high",
+    "foodPressureLevel": "critical",
     "resources": {
       "wood": 28,
       "stone": 14,
-      "food": 20,
+      "food": 0,
       "water": 0,
       "crystal": 5
     },
@@ -33,25 +33,25 @@
         "id": "crop-002",
         "farmPlotId": "farm-001",
         "cropType": "wheat",
-        "growthStage": 0.625,
+        "growthStage": 1,
         "plantedAtDay": 1,
-        "harvestable": false
+        "harvestable": true
       },
       {
         "id": "crop-003",
         "farmPlotId": "farm-001",
         "cropType": "wheat",
-        "growthStage": 0.625,
+        "growthStage": 1,
         "plantedAtDay": 1,
-        "harvestable": false
+        "harvestable": true
       },
       {
         "id": "crop-004",
         "farmPlotId": "farm-001",
         "cropType": "wheat",
-        "growthStage": 0.625,
+        "growthStage": 1,
         "plantedAtDay": 1,
-        "harvestable": false
+        "harvestable": true
       }
     ],
     "farmland": [

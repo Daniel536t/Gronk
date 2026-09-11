@@ -102,6 +102,23 @@ headline("PROOF C — world time executes through MagicBlock, commits to Solana"
   if (ev.match !== true) process.exit(2);
 }
 
+// ---- PROOF D — heartbeat ----------------------------------------------------
+headline("PROOF D — the pulse: five autonomous heartbeats, no steward");
+{
+  const lines = readFileSync("artifacts/astrix-heartbeat.jsonl", "utf8").trim().split("\n");
+  console.log(`  ${lines.length} heartbeats recorded (steward, observer, Godot all OFF)`);
+  let prev = -1;
+  for (const line of lines) {
+    const b = JSON.parse(line);
+    const okDay = Number(b.baseDay) === Number(b.baseDayBefore) + 1;
+    console.log(`  #${b.heartbeat}: ER ${b.erMs}ms [${String(b.advanceSig).slice(0, 8)}…] → commit [${String(b.commitSig).slice(0, 8)}…] → base day ${b.baseDayBefore}→${b.baseDay}${okDay ? "" : "  DAY MISMATCH!"}`);
+    if (!okDay) process.exit(2);
+    prev = Number(b.baseDay);
+  }
+  void prev;
+  console.log("  every heartbeat advanced exactly one day; every commit landed on base.");
+}
+
 // ---- clock honesty footnote -------------------------------------------------
 headline("NOTE — what the demo does not claim");
 console.log("  Core ticks (days/food/growth) run locally in this demo, exactly as");

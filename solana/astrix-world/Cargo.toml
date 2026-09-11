@@ -12,6 +12,7 @@ solana-program = "4.0.0"
 solana-system-interface = { version = "3.0.0", features = ["bincode"] }
 borsh = "1.6.1"
 ephemeral-rollups-sdk = "0.16.2"
+magicblock-magic-program-api = "0.10"
 
 [features]
 no-entrypoint = []
