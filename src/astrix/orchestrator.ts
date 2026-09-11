@@ -140,6 +140,7 @@ export class AstrixStewardLoop {
   private _actions: AstrixActionRecord[] = [];
   private _pendingApproval: PendingApproval | null = null;
   private _stopped = false;
+  private _stopReason: string | null = null;
   private _startedAt: number | null = null;
   private _lastOutcome?: string;
   private _runError?: string;
@@ -212,6 +213,7 @@ export class AstrixStewardLoop {
     this._actions = [];
     this._pendingApproval = null;
     this._stopped = false;
+    this._stopReason = null;
     this._lastOutcome = undefined;
     this._runError = undefined;
     this._actionSeq = 0;
@@ -223,10 +225,18 @@ export class AstrixStewardLoop {
     return { ok: true };
   }
 
-  /** Request the loop to stop. Takes effect at the next loop boundary. */
-  stop(): LoopStartResult {
+  /** Request the loop to stop. Takes effect at the next loop boundary.
+   *
+   * The optional reason is recorded and surfaced in status() — revocation
+   * ("authority-revoked") is a stop with an explicit governance reason, not a
+   * separate code path: the same boundary checks, gate wake-up, and
+   * no-partial-mutation guarantees apply. A later start() clears the reason
+   * (restarting is itself a fresh, explicit authorization).
+   */
+  stop(reason = "stopped"): LoopStartResult {
     if (!this.isRunning()) return { ok: false, error: "steward loop is not running" };
     this._stopped = true;
+    this._stopReason = reason;
     if (this._state === "AWAITING_APPROVAL") this.wake("stopped");
     return { ok: true };
   }
@@ -270,6 +280,7 @@ export class AstrixStewardLoop {
       turn: this._turn,
       objective: this._objective,
       provider: this.providerId,
+      stopReason: this._stopReason,
       pendingApproval: pending,
       currentAction: this.currentAction ? summarizeAction(this.currentAction) : null,
       actions: this._actions.slice(-10).map(summarizeAction),

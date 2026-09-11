@@ -47,10 +47,17 @@ func _run() -> void:
             client.astrix_state_received.emit(snapshot)
             var with_approval := scenario == "approval"
             var state_name := "AWAITING APPROVAL" if with_approval else "EXECUTING"
-            # Winter gets its own status so the activity feed matches the winter
-            # world state instead of describing the autumn turn.
-            var status := FIX.agent_status_winter() if scenario == "winter" \
-                else FIX.agent_status(state_name, with_approval)
+            # A real-snapshot capture (ASTRIX_SHOT_SNAPSHOT) carries no steward
+            # narrative: report the honest idle truth (no run, no events)
+            # instead of a fixture feed that would describe things which never
+            # happened to this world.
+            var status: Dictionary
+            if not OS.get_environment("ASTRIX_SHOT_SNAPSHOT").is_empty() and not with_approval:
+                status = {"state": "IDLE", "turn": 0, "objective": "",
+                    "currentAction": null, "lastEvents": []}
+            else:
+                status = FIX.agent_status_winter() if scenario == "winter" \
+                    else FIX.agent_status(state_name, with_approval)
             client.astrix_agent_status_received.emit(status)
             if with_approval:
                 client.astrix_approval_requested.emit(FIX.pending_approval())
@@ -66,6 +73,17 @@ func _run() -> void:
     _capture()
 
 func _snapshot_for(scenario: String) -> Dictionary:
+    # ASTRIX_SHOT_SNAPSHOT=<path> feeds a REAL snapshot (e.g. the
+    # chain-catchup output) instead of a fixture: the render then shows an
+    # actual world state, never staged data. The file holds either the raw
+    # snapshot or {"snapshot": snapshot}.
+    var snap_path := OS.get_environment("ASTRIX_SHOT_SNAPSHOT")
+    if not snap_path.is_empty() and FileAccess.file_exists(snap_path):
+        var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(snap_path))
+        if parsed is Dictionary:
+            if (parsed as Dictionary).has("snapshot"):
+                return (parsed as Dictionary)["snapshot"]
+            return parsed
     match scenario:
         "winter": return FIX.snapshot_winter()
         "evening": return FIX.snapshot_evening()

@@ -1,0 +1,17 @@
+[package]
+name = "astrix-world"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "astrix_world"
+
+[dependencies]
+solana-program = "4.0.0"
+solana-system-interface = { version = "3.0.0", features = ["bincode"] }
+borsh = "1.6.1"
+ephemeral-rollups-sdk = "0.16.2"
+
+[features]
+no-entrypoint = []

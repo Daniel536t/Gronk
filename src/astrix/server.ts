@@ -239,7 +239,8 @@ export function createAstrixService(opts: AstrixServiceOptions = {}): AstrixServ
           sendJson(res, auth.status, { success: false, error: auth.error }, req);
           return true;
         }
-        const result = loop.stop();
+        const reason = typeof body.reason === "string" && body.reason.trim() ? body.reason.trim() : undefined;
+        const result = loop.stop(reason);
         sendJson(res, result.ok ? 200 : 409, result);
         return true;
       }

@@ -9,3 +9,4 @@ qa/
 .tools/
 server/static/uploads/
 godot/.godot/
+solana/target/
