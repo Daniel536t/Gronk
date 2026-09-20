@@ -1,0 +1,1645 @@
+{
+ "version": 1,
+ "generator": "ASTX-pipeline",
+ "assets": [
+  {
+   "id": "ASTX_BUILDING_HOUSE",
+   "category": "building",
+   "glb": "assets/glb/ASTX_BUILDING_HOUSE.glb",
+   "dimensions": {
+    "x": 5.0,
+    "y": 4.5,
+    "z": 4.2
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "glass",
+    "roofO",
+    "stone",
+    "timberD",
+    "wall"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": false
+  },
+  {
+   "id": "ASTX_VEG_PALM",
+   "category": "vegetation",
+   "glb": "assets/glb/ASTX_VEG_PALM.glb",
+   "dimensions": {
+    "x": 3.0,
+    "y": 4.6,
+    "z": 3.0
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "leaf",
+    "timber",
+    "trunk"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true
+  },
+  {
+   "id": "ASTX_PROP_CRATE",
+   "category": "prop",
+   "glb": "assets/glb/ASTX_PROP_CRATE.glb",
+   "dimensions": {
+    "x": 0.98,
+    "y": 0.96,
+    "z": 0.98
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_crateTimber",
+    "M_timberD"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true,
+   "source": "assets/blender/props_setA.py"
+  },
+  {
+   "id": "ASTX_INFRA_DOCK",
+   "category": "infrastructure",
+   "glb": "assets/glb/ASTX_INFRA_DOCK.glb",
+   "dimensions": {
+    "x": 6,
+    "y": 2,
+    "z": 2.5
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "timber",
+    "timberD"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": false
+  },
+  {
+   "id": "ASTX_TERRAIN_TILE",
+   "category": "terrain",
+   "glb": "assets/glb/ASTX_TERRAIN_TILE.glb",
+   "dimensions": {
+    "x": 16,
+    "y": 1.35,
+    "z": 16
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "grass",
+    "stone"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true
+  },
+  {
+   "id": "ASTX_BUILDING_TOWNHALL",
+   "category": "building",
+   "glb": "assets/glb/ASTX_BUILDING_TOWNHALL.glb",
+   "dimensions": {
+    "x": 10.73,
+    "y": 8.77,
+    "z": 11.87
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_cream",
+    "M_roofB",
+    "M_stone",
+    "M_timberD",
+    "M_glass",
+    "M_ivory",
+    "M_fabricR",
+    "M_brass"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": false,
+   "source": "assets/blender/build_townhall_v2.py"
+  },
+  {
+   "id": "ASTX_BUILDING_MARKET",
+   "category": "building",
+   "glb": "assets/glb/ASTX_BUILDING_MARKET.glb",
+   "dimensions": {
+    "x": 4.2,
+    "y": 3.12,
+    "z": 3.5
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_timberD",
+    "M_fabricR",
+    "M_cream",
+    "M_fruitO",
+    "M_fruitG",
+    "M_rug"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": false,
+   "source": "assets/blender/build_market_v2.py"
+  },
+  {
+   "id": "ASTX_BUILDING_FARM",
+   "category": "building",
+   "glb": "assets/glb/ASTX_BUILDING_FARM.glb",
+   "dimensions": {
+    "x": 8.14,
+    "y": 4.76,
+    "z": 7.25
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_glass",
+    "M_mud",
+    "M_stone",
+    "M_thatch",
+    "M_thatchD",
+    "M_timberD"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": false,
+   "source": "assets/blender/build_farm_v2.py"
+  },
+  {
+   "id": "ASTX_BUILDING_WINDMILL",
+   "category": "building",
+   "glb": "assets/glb/ASTX_BUILDING_WINDMILL.glb",
+   "dimensions": {
+    "x": 5,
+    "y": 11,
+    "z": 5
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "cream",
+    "timber",
+    "timberD",
+    "wall"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": false
+  },
+  {
+   "id": "ASTX_BUILDING_LIGHTHOUSE",
+   "category": "building",
+   "glb": "assets/glb/ASTX_BUILDING_LIGHTHOUSE.glb",
+   "dimensions": {
+    "x": 4,
+    "y": 12,
+    "z": 4
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "glass",
+    "metal",
+    "red",
+    "stone",
+    "white"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": false
+  },
+  {
+   "id": "ASTX_BUILDING_GREENHOUSE",
+   "category": "building",
+   "glb": "assets/glb/ASTX_BUILDING_GREENHOUSE.glb",
+   "dimensions": {
+    "x": 5.39,
+    "y": 3.51,
+    "z": 7.4
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_cropRow",
+    "M_frameWh",
+    "M_greenGlass",
+    "M_soilBed",
+    "M_stone"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": false,
+   "source": "assets/blender/build_greenhouse_v2.py"
+  },
+  {
+   "id": "ASTX_BUILDING_BARN",
+   "category": "building",
+   "glb": "assets/glb/ASTX_BUILDING_BARN.glb",
+   "dimensions": {
+    "x": 9.93,
+    "y": 5.66,
+    "z": 11.2
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_barnTimber",
+    "M_glass",
+    "M_grain",
+    "M_roofB",
+    "M_stone",
+    "M_timberD"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": false,
+   "source": "assets/blender/build_barn_v2.py"
+  },
+  {
+   "id": "ASTX_INFRA_BRIDGE",
+   "category": "infrastructure",
+   "glb": "assets/glb/ASTX_INFRA_BRIDGE.glb",
+   "dimensions": {
+    "x": 4,
+    "y": 2,
+    "z": 3
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "timber",
+    "timberD"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true
+  },
+  {
+   "id": "ASTX_INFRA_PATH",
+   "category": "infrastructure",
+   "glb": "assets/glb/ASTX_INFRA_PATH.glb",
+   "dimensions": {
+    "x": 2,
+    "y": 0.12,
+    "z": 2
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "sand"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true
+  },
+  {
+   "id": "ASTX_VEG_TROPICAL_TREE",
+   "category": "vegetation",
+   "glb": "assets/glb/ASTX_VEG_TROPICAL_TREE.glb",
+   "dimensions": {
+    "x": 3,
+    "y": 5,
+    "z": 3
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "leaf",
+    "leafD",
+    "trunk"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true
+  },
+  {
+   "id": "ASTX_VEG_BUSH",
+   "category": "vegetation",
+   "glb": "assets/glb/ASTX_VEG_BUSH.glb",
+   "dimensions": {
+    "x": 1.2,
+    "y": 0.9,
+    "z": 1.2
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "leaf"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true
+  },
+  {
+   "id": "ASTX_NPC_VILLAGER",
+   "category": "npc",
+   "glb": "assets/glb/ASTX_NPC_VILLAGER.glb",
+   "dimensions": {
+    "x": 0.6,
+    "y": 1.8,
+    "z": 0.6
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "cream",
+    "timber",
+    "white"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": false
+  },
+  {
+   "id": "ASTX_NPC_FARMER",
+   "category": "npc",
+   "glb": "assets/glb/ASTX_NPC_FARMER.glb",
+   "dimensions": {
+    "x": 0.6,
+    "y": 1.8,
+    "z": 0.6
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "cream",
+    "leaf",
+    "timber"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": false
+  },
+  {
+   "id": "ASTX_NPC_FISHERMAN",
+   "category": "npc",
+   "glb": "assets/glb/ASTX_NPC_FISHERMAN.glb",
+   "dimensions": {
+    "x": 0.6,
+    "y": 1.8,
+    "z": 0.6
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "cream",
+    "roofB",
+    "timber"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": false
+  },
+  {
+   "id": "ASTX_NPC_GUARD",
+   "category": "npc",
+   "glb": "assets/glb/ASTX_NPC_GUARD.glb",
+   "dimensions": {
+    "x": 0.6,
+    "y": 1.8,
+    "z": 0.6
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "cream",
+    "red",
+    "timber"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": false
+  },
+  {
+   "id": "ASTX_BOAT_FISHING",
+   "category": "boat",
+   "glb": "assets/glb/ASTX_BOAT_FISHING.glb",
+   "dimensions": {
+    "x": 5.0,
+    "y": 6,
+    "z": 2
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "timber",
+    "timberD",
+    "trunk"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": false
+  },
+  {
+   "id": "ASTX_BOAT_SAIL",
+   "category": "boat",
+   "glb": "assets/glb/ASTX_BOAT_SAIL.glb",
+   "dimensions": {
+    "x": 6.5,
+    "y": 6,
+    "z": 2
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "timber",
+    "timberD",
+    "trunk"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": false
+  },
+  {
+   "id": "ASTX_BOAT_ROW",
+   "category": "boat",
+   "glb": "assets/glb/ASTX_BOAT_ROW.glb",
+   "dimensions": {
+    "x": 3.5,
+    "y": 6,
+    "z": 2
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "timber",
+    "timberD",
+    "trunk"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": false
+  },
+  {
+   "id": "ASTX_BOAT_CARGO",
+   "category": "boat",
+   "glb": "assets/glb/ASTX_BOAT_CARGO.glb",
+   "dimensions": {
+    "x": 8.0,
+    "y": 6,
+    "z": 2
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "timber",
+    "timberD",
+    "trunk"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": false
+  },
+  {
+   "id": "ASTX_PROP_BARREL",
+   "category": "prop",
+   "glb": "assets/glb/ASTX_PROP_BARREL.glb",
+   "dimensions": {
+    "x": 0.82,
+    "y": 0.93,
+    "z": 0.8
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_crateTimber",
+    "M_ironD",
+    "M_timberD"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true,
+   "source": "assets/blender/props_setA.py"
+  },
+  {
+   "id": "ASTX_PROP_LANTERN",
+   "category": "prop",
+   "glb": "assets/glb/ASTX_PROP_LANTERN.glb",
+   "dimensions": {
+    "x": 0.5,
+    "y": 2.82,
+    "z": 0.5
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_ironD",
+    "M_lampGlow",
+    "M_stoneD"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true,
+   "source": "assets/blender/props_setB.py"
+  },
+  {
+   "id": "ASTX_TERRAIN_CLIFF",
+   "category": "terrain",
+   "glb": "assets/glb/ASTX_TERRAIN_CLIFF.glb",
+   "dimensions": {
+    "x": 8,
+    "y": 6.2,
+    "z": 6
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "grass",
+    "stone"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true
+  },
+  {
+   "id": "ASTX_TERRAIN_BEACH",
+   "category": "terrain",
+   "glb": "assets/glb/ASTX_TERRAIN_BEACH.glb",
+   "dimensions": {
+    "x": 10,
+    "y": 0.6,
+    "z": 5
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "grass",
+    "sand"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true
+  },
+  {
+   "id": "ASTX_TERRAIN_WATERFALL",
+   "category": "terrain",
+   "glb": "assets/glb/ASTX_TERRAIN_WATERFALL.glb",
+   "dimensions": {
+    "x": 6,
+    "y": 10,
+    "z": 6
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "foam",
+    "grass",
+    "stone",
+    "waterfall"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": false
+  },
+  {
+   "id": "ASTX_TERRAIN_REEF",
+   "category": "terrain",
+   "glb": "assets/glb/ASTX_TERRAIN_REEF.glb",
+   "dimensions": {
+    "x": 2.5,
+    "y": 1.5,
+    "z": 2
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "coralB",
+    "coralP",
+    "leaf",
+    "reefgrey"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true
+  },
+  {
+   "id": "ASTX_TERRAIN_BOULDER",
+   "category": "terrain",
+   "glb": "assets/glb/ASTX_TERRAIN_BOULDER.glb",
+   "dimensions": {
+    "x": 1.6,
+    "y": 1.2,
+    "z": 1.4
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "stone"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true
+  },
+  {
+   "id": "ASTX_TERRAIN_ISLET",
+   "category": "terrain",
+   "glb": "assets/glb/ASTX_TERRAIN_ISLET.glb",
+   "dimensions": {
+    "x": 14,
+    "y": 4,
+    "z": 14
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "grass",
+    "sand",
+    "stone"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": false
+  },
+  {
+   "id": "ASTX_FIELD_PLOT",
+   "category": "terrain",
+   "glb": "assets/glb/ASTX_FIELD_PLOT.glb",
+   "dimensions": {
+    "x": 12,
+    "y": 0.65,
+    "z": 8
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "grass",
+    "soil",
+    "soilD",
+    "timberD"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": false,
+   "source": "assets/blender/build_field_v2.py"
+  },
+  {
+   "id": "ASTX_PLAZA_CIVIC",
+   "category": "prop",
+   "glb": "assets/glb/ASTX_PLAZA_CIVIC.glb",
+   "dimensions": {
+    "x": 18,
+    "y": 4.5,
+    "z": 18
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "gold",
+    "stone",
+    "stoneD",
+    "water"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": false,
+   "source": "assets/blender/build_plaza_v1.py"
+  },
+  {
+   "id": "ASTX_TERRAIN_MAIN",
+   "category": "terrain",
+   "glb": "assets/glb/ASTX_TERRAIN_MAIN.glb",
+   "dimensions": {
+    "x": 860,
+    "y": 20,
+    "z": 640
+   },
+   "origin": {
+    "at": "world",
+    "y0": -6
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_terrain"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": false,
+   "source": "assets/blender/build_terrain_v1.py"
+  },
+  {
+   "id": "ASTX_TERRAIN_ISLETS",
+   "category": "terrain",
+   "glb": "assets/glb/ASTX_TERRAIN_ISLETS.glb",
+   "dimensions": {
+    "x": 60,
+    "y": 12,
+    "z": 60
+   },
+   "origin": {
+    "at": "world",
+    "y0": -6
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_terrain"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": false,
+   "source": "assets/blender/build_terrain_v1.py"
+  },
+  {
+   "id": "ASTX_GEO_CLIFFMASS",
+   "category": "terrain",
+   "glb": "assets/glb/ASTX_GEO_CLIFFMASS.glb",
+   "dimensions": {
+    "x": 14,
+    "y": 11.7,
+    "z": 9
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_geoStone",
+    "M_grass"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true,
+   "source": "assets/blender/build_geo12_v1.py"
+  },
+  {
+   "id": "ASTX_GEO_ROCKBIG",
+   "category": "terrain",
+   "glb": "assets/glb/ASTX_GEO_ROCKBIG.glb",
+   "dimensions": {
+    "x": 5,
+    "y": 4,
+    "z": 4.5
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_geoStoneD"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true,
+   "source": "assets/blender/build_geo12_v1.py"
+  },
+  {
+   "id": "ASTX_GEO_TERRACE",
+   "category": "terrain",
+   "glb": "assets/glb/ASTX_GEO_TERRACE.glb",
+   "dimensions": {
+    "x": 22,
+    "y": 5.5,
+    "z": 14
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_geoStone",
+    "M_grass"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true,
+   "source": "assets/blender/build_geo345_v1.py"
+  },
+  {
+   "id": "ASTX_GEO_STACK",
+   "category": "terrain",
+   "glb": "assets/glb/ASTX_GEO_STACK.glb",
+   "dimensions": {
+    "x": 6,
+    "y": 13.6,
+    "z": 6
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": -3
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_geoStoneD",
+    "M_grass"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true,
+   "source": "assets/blender/build_geo345_v1.py"
+  },
+  {
+   "id": "ASTX_GEO_FALLROCK",
+   "category": "terrain",
+   "glb": "assets/glb/ASTX_GEO_FALLROCK.glb",
+   "dimensions": {
+    "x": 10,
+    "y": 12.3,
+    "z": 7
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_geoStone",
+    "M_grass"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true,
+   "source": "assets/blender/build_geo345_v1.py"
+  },
+  {
+   "id": "ASTX_VEG_CANOPY_A",
+   "category": "vegetation",
+   "glb": "assets/glb/ASTX_VEG_CANOPY_A.glb",
+   "dimensions": {
+    "x": 8.12,
+    "y": 7.78,
+    "z": 5.51
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_leaf",
+    "M_leafD",
+    "M_leafL",
+    "M_trunk"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true,
+   "source": "assets/blender/veg_canopyA.py"
+  },
+  {
+   "id": "ASTX_VEG_PALM_A",
+   "category": "vegetation",
+   "glb": "assets/glb/ASTX_VEG_PALM_A.glb",
+   "dimensions": {
+    "x": 4.43,
+    "y": 4.92,
+    "z": 4.07
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_nut",
+    "M_palmLeaf",
+    "M_trunkP"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true,
+   "source": "assets/blender/veg_palmA.py"
+  },
+  {
+   "id": "ASTX_VEG_SHRUB_A",
+   "category": "vegetation",
+   "glb": "assets/glb/ASTX_VEG_SHRUB_A.glb",
+   "dimensions": {
+    "x": 2.08,
+    "y": 1.02,
+    "z": 1.55
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_leaf",
+    "M_leafD",
+    "M_leafL"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true,
+   "source": "assets/blender/veg_shrubA.py"
+  },
+  {
+   "id": "ASTX_VEG_GRASS_A",
+   "category": "vegetation",
+   "glb": "assets/glb/ASTX_VEG_GRASS_A.glb",
+   "dimensions": {
+    "x": 0.27,
+    "y": 0.6,
+    "z": 0.43
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_grassTuft",
+    "M_grassTuftD"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true,
+   "source": "assets/blender/veg_grassA.py"
+  },
+  {
+   "id": "ASTX_VEG_FLOWERS_A",
+   "category": "vegetation",
+   "glb": "assets/glb/ASTX_VEG_FLOWERS_A.glb",
+   "dimensions": {
+    "x": 0.44,
+    "y": 0.49,
+    "z": 0.53
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_flowerPk",
+    "M_flowerWh",
+    "M_flowerYl",
+    "M_stem"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true,
+   "source": "assets/blender/veg_flowerA.py"
+  },
+  {
+   "id": "ASTX_VEG_SCRUB_A",
+   "category": "vegetation",
+   "glb": "assets/glb/ASTX_VEG_SCRUB_A.glb",
+   "dimensions": {
+    "x": 1.84,
+    "y": 1.25,
+    "z": 1.08
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_driftwood",
+    "M_scrubLeaf",
+    "M_scrubPale"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true,
+   "source": "assets/blender/veg_scrubA.py"
+  },
+  {
+   "id": "ASTX_VEG_CLIFFTUFT_A",
+   "category": "vegetation",
+   "glb": "assets/glb/ASTX_VEG_CLIFFTUFT_A.glb",
+   "dimensions": {
+    "x": 1.09,
+    "y": 0.4,
+    "z": 0.93
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_moss",
+    "M_mossD"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true,
+   "source": "assets/blender/veg_clifftuftA.py"
+  },
+  {
+   "id": "ASTX_VEG_CANOPY_B",
+   "category": "vegetation",
+   "glb": "assets/glb/ASTX_VEG_CANOPY_B.glb",
+   "dimensions": {
+    "x": 5.04,
+    "y": 9.6,
+    "z": 4.86
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_leafB",
+    "M_leafBD",
+    "M_trunkB"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true,
+   "source": "assets/blender/veg_canopyB.py"
+  },
+  {
+   "id": "ASTX_VEG_CANOPY_C",
+   "category": "vegetation",
+   "glb": "assets/glb/ASTX_VEG_CANOPY_C.glb",
+   "dimensions": {
+    "x": 7.29,
+    "y": 4.45,
+    "z": 7.18
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_leafC",
+    "M_leafCL",
+    "M_trunkC"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true,
+   "source": "assets/blender/veg_canopyC.py"
+  },
+  {
+   "id": "ASTX_VEG_UNDERSTORY_A",
+   "category": "vegetation",
+   "glb": "assets/glb/ASTX_VEG_UNDERSTORY_A.glb",
+   "dimensions": {
+    "x": 2.72,
+    "y": 4.44,
+    "z": 2.4
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_underLeaf",
+    "M_underLeafL",
+    "M_underTrunk"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true,
+   "source": "assets/blender/veg_understoryA.py"
+  },
+  {
+   "id": "ASTX_VEG_FERN_A",
+   "category": "vegetation",
+   "glb": "assets/glb/ASTX_VEG_FERN_A.glb",
+   "dimensions": {
+    "x": 1.19,
+    "y": 0.39,
+    "z": 1.33
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_fern",
+    "M_fernL"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true,
+   "source": "assets/blender/veg_fernA.py"
+  },
+  {
+   "id": "ASTX_VEG_FLOOR_A",
+   "category": "vegetation",
+   "glb": "assets/glb/ASTX_VEG_FLOOR_A.glb",
+   "dimensions": {
+    "x": 1.39,
+    "y": 0.59,
+    "z": 1.17
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_floorMoss",
+    "M_floorStone",
+    "M_floorWood"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true,
+   "source": "assets/blender/veg_floorA.py"
+  },
+  {
+   "id": "ASTX_VEG_SEAWEED_A",
+   "category": "vegetation",
+   "glb": "assets/glb/ASTX_VEG_SEAWEED_A.glb",
+   "dimensions": {
+    "x": 0.81,
+    "y": 1.54,
+    "z": 0.69
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_seaweed",
+    "M_seaweedL"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true,
+   "source": "assets/blender/veg_seaweedA.py"
+  },
+  {
+   "id": "ASTX_VEG_CORAL_A",
+   "category": "vegetation",
+   "glb": "assets/glb/ASTX_VEG_CORAL_A.glb",
+   "dimensions": {
+    "x": 1.33,
+    "y": 1.17,
+    "z": 0.9
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_coralB",
+    "M_coralP",
+    "M_coralRock"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true,
+   "source": "assets/blender/veg_coralA.py"
+  },
+  {
+   "id": "ASTX_PROP_SACK",
+   "category": "prop",
+   "glb": "assets/glb/ASTX_PROP_SACK.glb",
+   "dimensions": {
+    "x": 0.67,
+    "y": 0.67,
+    "z": 0.68
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_rope",
+    "M_sack"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true,
+   "source": "assets/blender/props_setA.py"
+  },
+  {
+   "id": "ASTX_PROP_BENCH",
+   "category": "prop",
+   "glb": "assets/glb/ASTX_PROP_BENCH.glb",
+   "dimensions": {
+    "x": 1.8,
+    "y": 1.02,
+    "z": 0.5
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_crateTimber",
+    "M_timberD"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true,
+   "source": "assets/blender/props_setB.py"
+  },
+  {
+   "id": "ASTX_PROP_SIGNPOST",
+   "category": "prop",
+   "glb": "assets/glb/ASTX_PROP_SIGNPOST.glb",
+   "dimensions": {
+    "x": 2.8,
+    "y": 2.32,
+    "z": 0.85
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_signBlue",
+    "M_signCream",
+    "M_timberD"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true,
+   "source": "assets/blender/props_setB.py"
+  },
+  {
+   "id": "ASTX_PROP_GRAINSTACK",
+   "category": "prop",
+   "glb": "assets/glb/ASTX_PROP_GRAINSTACK.glb",
+   "dimensions": {
+    "x": 1.67,
+    "y": 2.0,
+    "z": 1.67
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_grain",
+    "M_grainD",
+    "M_timberD"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true,
+   "source": "assets/blender/props_setC.py"
+  },
+  {
+   "id": "ASTX_PROP_WOODPILE",
+   "category": "prop",
+   "glb": "assets/glb/ASTX_PROP_WOODPILE.glb",
+   "dimensions": {
+    "x": 2.7,
+    "y": 0.81,
+    "z": 0.28
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_bark",
+    "M_cutWood",
+    "M_timberD"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true,
+   "source": "assets/blender/props_setC.py"
+  },
+  {
+   "id": "ASTX_PROP_BASKET",
+   "category": "prop",
+   "glb": "assets/glb/ASTX_PROP_BASKET.glb",
+   "dimensions": {
+    "x": 0.77,
+    "y": 0.47,
+    "z": 0.77
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_fruitG",
+    "M_fruitO",
+    "M_timberD",
+    "M_wicker"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true,
+   "source": "assets/blender/props_setC.py"
+  },
+  {
+   "id": "ASTX_PROP_ROPECOIL",
+   "category": "prop",
+   "glb": "assets/glb/ASTX_PROP_ROPECOIL.glb",
+   "dimensions": {
+    "x": 0.87,
+    "y": 0.23,
+    "z": 0.54
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_rope"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true,
+   "source": "assets/blender/props_setD.py"
+  },
+  {
+   "id": "ASTX_PROP_BUOY",
+   "category": "prop",
+   "glb": "assets/glb/ASTX_PROP_BUOY.glb",
+   "dimensions": {
+    "x": 0.56,
+    "y": 1.08,
+    "z": 0.58
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_buoyR",
+    "M_buoyW",
+    "M_ironD",
+    "M_timberD"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true,
+   "source": "assets/blender/props_setD.py"
+  },
+  {
+   "id": "ASTX_PROP_DRYRACK",
+   "category": "prop",
+   "glb": "assets/glb/ASTX_PROP_DRYRACK.glb",
+   "dimensions": {
+    "x": 2.1,
+    "y": 1.72,
+    "z": 0.3
+   },
+   "origin": {
+    "at": "ground_center",
+    "y0": 0
+   },
+   "units": "meters",
+   "up": "+Y",
+   "materials": [
+    "M_fish",
+    "M_rope",
+    "M_timberD"
+   ],
+   "lods": [
+    "LOD0"
+   ],
+   "instanced": true,
+   "source": "assets/blender/props_setD.py"
+  }
+ ]
+}

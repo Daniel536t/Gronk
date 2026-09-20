@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=2400">
+<title>ASTRIX Island Village — 3D Modeling Sheet / Game-Ready Asset Bible</title>
+<style>
+  :root{
+    --bg:#07233f; --bg2:#0a3055; --card:#0d3a64; --card2:#123f6b;
+    --line:#1e5a8a; --text:#eaf4ff; --muted:#a9c6de;
+    --accent:#ffb02e; --accent2:#2dd4bf; --green:#5fbf5a; --sand:#e8cf9a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;width:2400px}
+  .page{padding:36px 36px 80px}
+  .topbar{display:flex;align-items:center;gap:20px;background:linear-gradient(90deg,#0a3a66,#0e4a80);border:2px solid var(--line);border-radius:18px;padding:22px 28px}
+  .logo{width:84px;height:84px;border-radius:50%;border:3px solid #fff;display:flex;align-items:center;justify-content:center;font-size:44px;background:#0a2a4a}
+  h1{margin:0;font-size:64px;letter-spacing:2px}
+  .sub{font-size:26px;color:var(--muted);letter-spacing:1.5px}
+  .tagrow{display:flex;gap:12px;margin-top:12px;flex-wrap:wrap}
+  .tag{background:#0b2d4f;border:1px solid var(--line);padding:8px 16px;border-radius:999px;font-size:20px;color:#cfe8ff}
+  .tag.b{background:var(--accent);color:#1a1200;font-weight:800;border-color:var(--accent)}
+  .priority{background:#fff7e6;color:#3a2600;border:3px solid var(--accent);border-radius:16px;padding:20px 24px;margin:24px 0;font-size:24px;line-height:1.5}
+  .priority b{color:#9a5b00}
+  h2.sec{font-size:44px;margin:48px 0 6px;padding:14px 20px;background:#0b2f55;border-left:12px solid var(--accent);border-radius:10px;letter-spacing:.5px}
+  .secdesc{font-size:23px;color:var(--muted);margin:0 0 18px 4px;line-height:1.5}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px}
+  .grid4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:18px}
+  .card{background:var(--card);border:2px solid var(--line);border-radius:16px;padding:18px;overflow:hidden}
+  .card h3{margin:0 0 8px;font-size:28px}
+  .card h4{margin:14px 0 6px;font-size:22px;color:var(--accent)}
+  .card p,.card li{font-size:21px;line-height:1.5}
+  .card ul{margin:6px 0;padding-left:22px}
+  .mono{font-family:ui-monospace,Menlo,Consolas,monospace;background:#06203a;border:1px solid var(--line);border-radius:8px;padding:2px 8px;font-size:20px}
+  img.full{width:100%;border-radius:14px;border:2px solid var(--line);display:block}
+  .kpi{display:flex;gap:14px;flex-wrap:wrap;margin:12px 0}
+  .kpi div{background:#062845;border:1px solid var(--line);border-radius:10px;padding:10px 14px;font-size:21px}
+  .kpi b{color:var(--accent)}
+  table.spec{width:100%;border-collapse:collapse;font-size:21px;margin:10px 0}
+  table.spec th{background:#0a4a82;text-align:left;padding:10px 12px;border:1px solid var(--line)}
+  table.spec td{padding:10px 12px;border:1px solid var(--line);vertical-align:top;line-height:1.45}
+  table.spec tr:nth-child(even) td{background:#0e3d68}
+  .swatches{display:grid;grid-template-columns:repeat(6,1fr);gap:14px}
+  .sw{border-radius:12px;overflow:hidden;border:2px solid var(--line);background:#062845}
+  .sw .c{height:92px}
+  .sw .l{padding:10px 12px;font-size:20px;line-height:1.35}
+  .sw .l b{display:block;font-size:21px}
+  .code{font-family:ui-monospace,monospace;font-size:20px;color:#ffe1a8}
+  .warn{background:#3a1500;border:2px solid #ff7a1a;border-radius:12px;padding:14px 18px;font-size:22px;margin:14px 0;line-height:1.5}
+  .ok{background:#073a2a;border:2px solid #2dd4bf;border-radius:12px;padding:14px 18px;font-size:22px;margin:14px 0;line-height:1.5}
+  .hero{border:3px solid var(--accent);border-radius:18px;overflow:hidden}
+  .label{display:inline-block;background:var(--accent);color:#1a1200;font-weight:800;font-size:20px;border-radius:8px;padding:4px 12px;margin-bottom:10px}
+  .label.blue{background:#38bdf8;color:#00263a}
+  .label.green{background:#4ade80;color:#052e16}
+  footer{margin-top:60px;background:#062845;border:2px solid var(--line);border-radius:16px;padding:24px;font-size:22px;line-height:1.6}
+  .check{display:grid;grid-template-columns:1fr 1fr;gap:10px 28px;font-size:22px}
+  @media print{body{width:auto}}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="topbar">
+    <div class="logo">✧</div>
+    <div style="flex:1">
+      <h1>ASTRIX — ISLAND VILLAGE</h1>
+      <div class="sub">3D MODELING SHEET / GAME-READY ASSET BIBLE &nbsp;•&nbsp; Blender → glTF/GLB → Three.js &nbsp;•&nbsp; v1.0 Rebuild</div>
+      <div class="tagrow">
+        <span class="tag b">PRIMARY: Image 3 = Final Visual Target</span>
+        <span class="tag">SUPPORT: Image 1 = Dark Tech Sheet</span>
+        <span class="tag">SUPPORT: Image 2 = Light Asset Sheet</span>
+        <span class="tag">Style: Stylized Low/Mid-Poly Tropical</span>
+        <span class="tag">Platform: Web Three.js 60 FPS</span>
+        <span class="tag">Format: GLB (glTF 2.0)</span>
+      </div>
+    </div>
+    <div style="text-align:right;font-size:22px;color:#cfe8ff;line-height:1.5">A LIVING WORLD.<br>BUILT FOR REAL-TIME.<br><span style="color:var(--accent);font-weight:800">Same world. Many stories.</span></div>
+  </div>
+
+  <div class="priority">
+    <b>REFERENCE PRIORITY — READ FIRST.</b> <b>Image 3 (hero isometric)</b> is the PRIMARY visual target for the final Three.js world: dense tropical settlement, town-hall plaza with monument fountain, farms upper-right, windmill on ridge, lighthouse on SE rock, wooden docks/pier, waterfalls, beaches, coral reefs, turquoise water.
+    <b>Images 1 + 2</b> are supporting vocabulary for asset construction: modular buildings, terrain modules, vegetation silhouettes, props, NPCs, boats, materials, ortho views, wireframe/construction language, Blender notes. <b>Do NOT build one giant mesh.</b> Build modular, instanced, game-ready assets and assemble the island from them.
+  </div>
+
+  <!-- 1 MASTER -->
+  <h2 class="sec">1 — MASTER WORLD REFERENCE</h2>
+  <p class="secdesc">Hero view + ortho views + terrain zones. All modeling must match this look while staying within browser budgets. Target: stylized low-poly/mid-poly, painterly, readable silhouettes, warm sun, turquoise water, no photorealism, no primitive-only placeholders.</p>
+  <div class="card">
+    <span class="label">HERO — FINAL SCENE REFERENCE (Image 3 — PRIMARY)</span>
+    <div class="hero"><img class="full" src="ref3-hero.png"></div>
+    <div class="kpi">
+      <div><b>Island Size</b> ~800×600 m (world units scaled to Three.js: 1 unit = 1 m)</div>
+      <div><b>Main Island</b> ~500×350 m</div>
+      <div><b>Water Depth</b> 5–40 m (visual only, no sim)</div>
+      <div><b>Buildings</b> 45+</div><div><b>Trees/Plants</b> 200+</div><div><b>Props</b> 300+</div>
+      <div><b>Camera</b> Isometric / elevated 45° yaw, ~38° pitch, ortho or low-FOV persp</div>
+    </div>
+  </div>
+  <div class="grid2" style="margin-top:20px">
+    <div class="card"><span class="label blue">ORTHO — TOP / FRONT / SIDE (from Images 1+2)</span><img class="full" src="ref2-support-light.png"><p>Use Image 2 top-view for plaza→farm axis, side-view for cliff/waterfall heights, perspective for density. Use Image 1 ortho strip for topology validation.</p></div>
+    <div class="card"><span class="label blue">TECH MODELING SHEET (Image 1 — SUPPORT)</span><img class="full" src="ref1-support-dark.png"><p>Follow its construction language: dimension lines, wireframe cage next to shaded view, tris + meters under each asset, material dots, LOD strip, texture swatches. Reproduce this layout discipline for every new asset.</p></div>
+  </div>
+  <div class="card" style="margin-top:20px">
+    <h3>Key Terrain Zones (label for placement — see §2)</h3>
+    <table class="spec">
+      <tr><th>Zone</th><th>Location on hero</th><th>Modeling note</th></tr>
+      <tr><td><b>Z1</b> Central settlement + plaza</td><td>Middle, around fountain monument</td><td>Flattened pad ~60×50 m, stone plaza disc, radial paths. Keep clear of scatter.</td></tr>
+      <tr><td><b>Z2</b> Residential ring</td><td>Around plaza, W + S</td><td>8–12 houses on 8–12 m lots, varied roof color/rotation, no identical neighbors.</td></tr>
+      <tr><td><b>Z3</b> Market row</td><td>E of plaza</td><td>Stalls + storage barn, crates/barrels, banners, lanterns.</td></tr>
+      <tr><td><b>Z4</b> Farm belt</td><td>NE plateau</td><td>4–6 tilled plots, farmhouses, greenhouse, windmill on ridge behind.</td></tr>
+      <tr><td><b>Z5</b> Cliffs + waterfalls</td><td>N ridge + W arms</td><td>Modular cliff kit, 3 waterfalls (N big, W double, SW small), foam + mist planes.</td></tr>
+      <tr><td><b>Z6</b> Beaches + shallows</td><td>S + SE + E coves</td><td>Sand overlap onto grass, no floating discs; wet-rock band at waterline.</td></tr>
+      <tr><td><b>Z7</b> Harbor: dock/pier + lighthouse rock</td><td>SE</td><td>L-dock + lighthouse islet + bridge; sailboat + rowboat moored.</td></tr>
+      <tr><td><b>Z8</b> Outer islets + reefs</td><td>SW hut islet, S reef, E rocks, N skerries</td><td>Small rocky islands (same kit, scaled), coral + reef rocks + seaweed underwater.</td></tr>
+    </table>
+  </div>
+
+  <!-- 2 LAYOUT -->
+  <h2 class="sec">2 — WORLD LAYOUT (approximate placement map)</h2>
+  <p class="secdesc">Coordinates in meters, origin at plaza fountain (0,0). +X east, +Z south. Keep plaza→farm axis readable from default camera (upper-left key light).</p>
+  <div class="grid2">
+    <div class="card">
+      <h3>Placement Table (tolerance ±10 m — compose, don't grid-snap)</h3>
+      <table class="spec">
+        <tr><th>Element</th><th>Approx. pos</th><th>Footprint</th></tr>
+        <tr><td>Central plaza + monument fountain</td><td>0,0</td><td>Ø 18 m stone disc</td></tr>
+        <tr><td>Town Hall (blue roof)</td><td>0,-28 (N of plaza)</td><td>9×8 m</td></tr>
+        <tr><td>Residential W cluster (4–5 houses)</td><td>-45…-20, -10…+25</td><td>lots 10 m</td></tr>
+        <tr><td>Residential S cluster (3–4 houses)</td><td>-15…+20, +28…+50</td><td>lots 10 m</td></tr>
+        <tr><td>Market row + Storage Barn</td><td>+35,+5</td><td>30×14 m strip</td></tr>
+        <tr><td>Farm belt (4–6 plots) + 2 Farm Houses</td><td>+70…+130, -60…-10</td><td>plots 12×8 m each</td></tr>
+        <tr><td>Greenhouse</td><td>+135,-15</td><td>7×5 m</td></tr>
+        <tr><td>Windmill (on ridge)</td><td>+55,-85</td><td>7×7 m, blades Ø 12 m</td></tr>
+        <tr><td>Water tower / lookout</td><td>+110,-55</td><td>Ø 4 m</td></tr>
+        <tr><td>Main dock + harbor house (SE)</td><td>+75,+95</td><td>dock 30×10 m</td></tr>
+        <tr><td>Lighthouse rock</td><td>+125,+80</td><td>islet Ø 22 m, tower h 12 m</td></tr>
+        <tr><td>Footbridge to lighthouse</td><td>+100,+88</td><td>span ~24 m</td></tr>
+        <tr><td>SW fishing hut islet + pier</td><td>-60,+110</td><td>islet Ø 26 m</td></tr>
+        <tr><td>S reef / coral gardens</td><td>-10…+40,+130</td><td>60×25 m shallow</td></tr>
+        <tr><td>N waterfall cliff</td><td>-10,-110</td><td>cliff 40 w × 25 h m</td></tr>
+        <tr><td>W twin falls + beach cove</td><td>-110,+20</td><td>beach 40 m arc</td></tr>
+        <tr><td>Paths</td><td>plaza radial N/E/S/W + farm lane + harbor descent</td><td>2 m wide, thin-box decals</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h3>Composition Rules</h3>
+      <ul>
+        <li><b>1 landmark per view:</b> plaza spire from S, windmill from N, lighthouse from E. Never cluster all three.</li>
+        <li><b>Foreground corridor:</b> keep S slope (camera side) low — bushes/tufts/rocks only, no tall trees blocking plaza.</li>
+        <li><b>Tall vegetation:</b> interiors + N/W rims. Palms on beaches, broadleaf inland, bamboo near water.</li>
+        <li><b>Water reads as water:</b> boats in frame, foam at shore (shader or geo band), cliffs continue 5 m below waterline, seabed plane at -6 m, wet dark band at waterline.</li>
+        <li><b>Food story forward:</b> farms face default camera; granary/stacks near market, visible gold accent.</li>
+        <li><b>Noxisolation:</b> every building gets path + 1–2 props + 1 lantern + vegetation neighbor.</li>
+      </ul>
+      <h4>Path Network</h4>
+      <p>Path = 2 m wide segments (straight / curve 45° / T / plaza ring). Y-offset +0.06 m thin boxes (never coplanar quads). Sandy <span class="mono">#E8CF9A</span> with stone edging. Stairs where slope &gt; 20°.</p>
+      <div class="ok">MODULAR ASSEMBLY: terrain = tiled base (16–32 m tiles) + cliff kit + beach kit + islet kit. Never one monolithic island mesh — enables frustum culling + LOD + reuse.</div>
+    </div>
+  </div>
+
+  <!-- 3 BUILDINGS -->
+  <h2 class="sec">3 — BUILDING ASSET SHEET (8 modular assets)</h2>
+  <p class="secdesc">Each asset: shaded front + side + ¾ + wireframe cage. Origin at ground center. Units meters. All quads→tris, apply transforms before export. Shared atlas (§12).</p>
+  <div class="grid2">
+    <div class="card"><h3>A. Residential House</h3><div class="kpi"><div><b>Size</b> 5.0×4.2×4.5 m</div><div><b>Tris LOD0</b> 2,842</div><div><b>Tex</b> 1024 atlas</div></div><ul><li><b>Modules:</b> base walls, gable roof (2 slabs + ridge cap + eaves), chimney + smoke anchor, door + 2 windows + shutters, porch posts, foundation skirt.</li><li><b>Materials:</b> plaster wall, roofTile orange/blue/red variants, timber trim, glass.</li><li><b>Variants:</b> 3 roof colors, mirror plan, porch on/off → 6 SKUs from 1 kit.</li><li><b>LOD:</b> LOD1 1,340 (drop shutters/foundation bevel), LOD2 520 (merged box+prism).</li></ul></div>
+    <div class="card"><h3>B. Town Hall — civic landmark</h3><div class="kpi"><div><b>Size</b> 9.0×8.0×7.5 m</div><div><b>Tris LOD0</b> 5,620</div><div><b>Tex</b> 2048 atlas</div></div><ul><li><b>Modules:</b> double-gable main + clock tower (cupola + bell), grand stairs, colonnade porch, banner anchors ×4, clock face (emissive at night).</li><li><b>Materials:</b> cream plaster, blue roof tile, stone base, gold trim.</li><li><b>LOD:</b> LOD1 2,600 / LOD2 900. Tower stays to last LOD (silhouette).</li></ul></div>
+    <div class="card"><h3>C. Market Stall</h3><div class="kpi"><div><b>Size</b> 3.5×2.8×3.0 m</div><div><b>Tris LOD0</b> 1,240</div><div><b>Tex</b> 512</div></div><ul><li><b>Modules:</b> 4 posts, striped canopy (fabric, double-sided), counter, goods crates (instanced), rug ground plane.</li><li><b>Canopy variants:</b> red/white, teal/cream, blue/cream — same mesh, 3 material IDs.</li><li><b>LOD:</b> LOD1 600 / LOD2 220.</li></ul></div>
+    <div class="card"><h3>D. Farm House</h3><div class="kpi"><div><b>Size</b> 6.0×5.0×4.5 m</div><div><b>Tris LOD0</b> 2,310</div><div><b>Tex</b> 1024</div></div><ul><li><b>Modules:</b> thatch roof (thick + ragged edge via alpha or geo fringe), timber frame, open veranda, barn door.</li><li><b>Materials:</b> thatch, rough timber, mud wall.</li><li><b>LOD:</b> LOD1 1,100 / LOD2 480.</li></ul></div>
+    <div class="card"><h3>E. Windmill — kinetic hero</h3><div class="kpi"><div><b>Size</b> 5×5×11 m + blades Ø12 m</div><div><b>Tris LOD0</b> 3,890</div><div><b>Tex</b> 1024</div></div><ul><li><b>Modules:</b> tapered tower (separate <span class="mono">BLADES</span> pivot object at hub), 4 lattice blades, cap roof, door/windows, stone base.</li><li><b>Rig:</b> blades = one object, origin at hub axle, rotate around local Z. Export pivot — Three.js spins it.</li><li><b>LOD:</b> blades stay; tower LOD1 1,800 / LOD2 700.</li></ul></div>
+    <div class="card"><h3>F. Lighthouse — harbor landmark</h3><div class="kpi"><div><b>Size</b> 4×4×12 m tower</div><div><b>Tris LOD0</b> 2,760</div><div><b>Tex</b> 1024</div></div><ul><li><b>Modules:</b> rock plinth (terrain kit), striped tower (white + red bands), gallery rail, lamp room (glass + emissive lamp + PointLight anchor), conical roof.</li><li><b>Light:</b> emissive lamp + rotating beam plane (additive, Three.js) — bake no light into geometry.</li><li><b>LOD:</b> LOD1 1,300 / LOD2 500.</li></ul></div>
+    <div class="card"><h3>G. Greenhouse</h3><div class="kpi"><div><b>Size</b> 7×4.5×3.5 m</div><div><b>Tris LOD0</b> 2,180</div><div><b>Tex</b> 1024</div></div><ul><li><b>Modules:</b> timber/metal frame (instanced mullions), glass panels (single transparent material, <span class="mono">alpha 0.35</span>), interior planter rows (instanced), door.</li><li><b>Perf:</b> one glass draw call for whole building; no per-pane materials.</li><li><b>LOD:</b> LOD1 1,000 (opaque glass) / LOD2 380.</li></ul></div>
+    <div class="card"><h3>H. Storage Barn / Granary</h3><div class="kpi"><div><b>Size</b> 8×5×4.5 m</div><div><b>Tris LOD0</b> 2,400</div><div><b>Tex</b> 1024</div></div><ul><li><b>Modules:</b> arched metal roof, timber gables, big doors, <b>open side platform with grain-stack anchors</b> (food readable from camera — never hide stock inside).</li><li><b>LOD:</b> LOD1 1,150 / LOD2 450.</li></ul></div>
+  </div>
+  <div class="warn">MODELING DISCIPLINE (all buildings): bottom-anchored pivots, manifold geometry, no N-gons on deforming parts, bevel only silhouette edges, separate material IDs per region (wall/roof/timber/glass), keep UV islands on shared atlas, snow-cap child meshes named <span class="mono">SnowCap_*</span> for seasonal toggle.</div>
+
+  <!-- 4 INFRA -->
+  <h2 class="sec">4 — INFRASTRUCTURE (modular repeat kit)</h2>
+  <p class="secdesc">Build once, instance everywhere. All timber = shared wood material. All pivots bottom-center. Snap dimensions to 1 m / 0.5 m grid.</p>
+  <div class="grid4">
+    <div class="card"><h3>Wooden Bridge</h3><p><b>Module 4×3×1 m, 1,120 tris.</b> Deck planks (instanced), 2 stringers, stone abutments, post+rail both sides. Repeat spans + end ramps. Slight arch (0.15 m camber).</p></div>
+    <div class="card"><h3>Dock (T-head)</h3><p><b>6×4×1 m, 1,480 tris.</b> Piles (Ø0.25 m, 2 m into water), deck, cleats, lantern post, flag anchor. Pile tops above deck 0.4 m.</p></div>
+    <div class="card"><h3>Pier (straight)</h3><p><b>4×2.5×1 m, 620 tris.</b> Same kit as dock, shorter. Chain instances for 20–30 m harbor arm.</p></div>
+    <div class="card"><h3>Path Segment</h3><p><b>2×2×0.12 m, 320 tris.</b> Straight / curve45 / T / plaza-ring variants. Sandy top + stone edge. +0.06 m lift, real thickness.</p></div>
+  </div>
+  <div class="grid3" style="margin-top:18px">
+    <div class="card"><h3>Stairs + Platform + Railing</h3><p>Stair: 2 m wide, step 0.3 tread / 0.18 riser, side stringers. Platform: 2×2 m hut decks, stilt legs. Railing: 1 m post + double rail, instanced posts.</p></div>
+    <div class="card"><h3>Shoreline Structures</h3><p>Breakwater rocks (terrain kit), mooring posts, rope coils (torus stack), fish-drying racks. Wet band material on all parts below +0.5 m.</p></div>
+    <div class="card"><h3>Repeat Logic</h3><p>Bridge = [ramp][span]×N[ramp]. Dock = [pier]×N + [T-head]. Paths snap vertex-to-vertex. Name: <span class="mono">ASTX_INFRA_BridgeSpan_4m</span> etc. One material → one draw call per type when instanced.</p></div>
+  </div>
+
+  <!-- 5 TERRAIN -->
+  <h2 class="sec">5 — TERRAIN (modular composition — no monolith)</h2>
+  <div class="grid4">
+    <div class="card"><h3>Main Island Tile</h3><p>16×16 m tiles, ~1,800 tris each. Grass cap + soil band + stone cliff + submerged plinth (to -5 m). Vertex-color blend grass→sand→rock. Skirt edges to hide seams.</p></div>
+    <div class="card"><h3>Rocky Cliff</h3><p>8×8×6 m, 1,320 tris. Angular low-poly faces, top grass lip, ledges for plants. 3 variants rotated/mirrored.</p></div>
+    <div class="card"><h3>Beach Edge</h3><p>10×6×2 m, 640 tris. Sand wedge overlapping grass (never floating disc), pebble strip, foam anchor edge.</p></div>
+    <div class="card"><h3>Small Rocky Islet</h3><p>Ø 20–26 m, ~2,500 tris. Same column (plinth→cliff→cap) scaled. Hut/trees/lighthouse mount point on top.</p></div>
+  </div>
+  <div class="grid4" style="margin-top:18px">
+    <div class="card"><h3>Waterfall Cliff</h3><p>6×8×10 m, 2,140 tris. Notch + lip + plunge pool (disc, foam ring), water ribbon (scrolling UV plane, separate material), mist sprite anchor.</p></div>
+    <div class="card"><h3>Underwater Transition</h3><p>Shallow shelf to -6 m, sand→teal gradient, seabed plane. Cliffs extend below waterline — no gaps.</p></div>
+    <div class="card"><h3>Reef Zone + Coral Reef</h3><p>Reef rocks (icosahedron deformed, 200–400 tris) + coral + seaweed instanced on shelf. Keep inside shallow ring.</p></div>
+    <div class="card"><h3>Rocks / Boulders</h3><p>5 sizes (0.5–3 m), 120–500 tris. Dark wet variant for waterline. Scatter + rim armor + breakwaters.</p></div>
+  </div>
+
+  <!-- 6 VEG -->
+  <h2 class="sec">6 — VEGETATION (silhouette variation, instanced)</h2>
+  <p class="secdesc">Do NOT make every tree identical. 3 palm lean variants, 3 broadleaf crowns, 2 bushes. Wind sway via shader (vertex color green channel = sway weight) or static + Three.js rotation for palms only.</p>
+  <table class="spec">
+    <tr><th>Asset</th><th>Height</th><th>Tris LOD0</th><th>Construction</th></tr>
+    <tr><td>Palm Tree (×3 variants)</td><td>4–6 m</td><td>420</td><td>Curved trunk (5-seg cylinder, lean variants), 8–10 fronds (bent planes, double-sided), coconut cluster (3 spheres). Origin at base.</td></tr>
+    <tr><td>Tropical Broadleaf (×3)</td><td>5–7 m</td><td>680</td><td>Trunk + 3–5 blob crown spheres (displaced icospheres), 2-tone leaf material. Different crown offsets per variant.</td></tr>
+    <tr><td>Small Tree / Bush</td><td>2–3 m / 1–2 m</td><td>300 / 200</td><td>Bush = 2–3 blobs, no trunk. Camera-side filler, plaza exclusion respected.</td></tr>
+    <tr><td>Bamboo / Grass / Flowers</td><td>2–4 m / 0.4 m / 0.4 m</td><td>180 / 120 / 120</td><td>Bamboo = 5 culms + leaf cards. Grass = 3 crossed quads. Flowers = stem + 5-petal + color variants (pink/yellow/white).</td></tr>
+    <tr><td>Seaweed / Blue+Purple Coral / Reef Rock</td><td>0.5–1.5 m</td><td>150–350</td><td>Seaweed = wavy planes (green). Coral = branching cylinders (blue <span class="code">#3AA7C9</span> / purple <span class="code">#9B5DE5</span>). Reef rock = grey-blue displaced rock + sponge dots.</td></tr>
+  </table>
+  <div class="ok">INSTANCING: palms/bushes/grass/reef = <span class="mono">InstancedMesh</span> in Three.js. One geometry + one material per species. LOD1 = billboard cross-plane at &gt;80 m, LOD2 = hide grass/flowers.</div>
+
+  <!-- 7 PROPS -->
+  <h2 class="sec">7 — PROPS & DECOR (storytelling at 40+ px)</h2>
+  <p class="secdesc">Rule from renders: anything that must be identified at diorama zoom must be person-sized (~2 m) or clustered. 8 px props are invisible — scale up or group.</p>
+  <div class="grid4">
+    <div class="card"><h3>Storage</h3><p>Crate 1×1×1 m 120 tris; Barrel Ø0.8×1 m 300 tris; Sack (tapered + tie) 0.7 m; Chest (lid separate object for open anim) 350 tris. Grain-stack = cream tapered stack 2.2 m tall (NOT gold — must differ from wheat).</p></div>
+    <div class="card"><h3>Market & Furniture</h3><p>Table 2×1 m, Bench, Market Table with goods, Stall rug. Timber + fabric mats. Legs as separate instances.</p></div>
+    <div class="card"><h3>Wayfinding</h3><p>Signpost (post + 1–3 arms, painted tips), Lantern (post + glass emissive + light anchor) 60–200 tris, Flag/Banner (pole + cloth plane, wave shader), Hanging banners for Town Hall.</p></div>
+    <div class="card"><h3>Harbor</h3><p>Anchor (1.2 m, 250 tris), Rope coil, Buoy, Fishing rods + nets (nets = alpha plane), Treasure chest, Pots/jars, Umbrella + loungers for beach.</p></div>
+  </div>
+
+  <!-- 8 CHARS -->
+  <h2 class="sec">8 — CHARACTERS (stylized NPCs — readable from above)</h2>
+  <p class="secdesc">No facial detail — silhouette + color role-coding only. Height ~1.7 m (slightly heroic 1.9 with hat). Rig: hip pivot, 2 legs, torso, 2 arms, head. One 1024 atlas for all NPCs. ~1,100–1,300 tris each.</p>
+  <table class="spec">
+    <tr><th>NPC</th><th>Tris</th><th>Read</th><th>Accessory (separate object)</th></tr>
+    <tr><td>Villager Male</td><td>1,120</td><td>straw hat + blue shirt</td><td>basket</td></tr>
+    <tr><td>Villager Female</td><td>1,080</td><td>red top + teal skirt</td><td>pot / child hand variant</td></tr>
+    <tr><td>Farmer</td><td>1,240</td><td>tan hat + green shirt</td><td>hoe</td></tr>
+    <tr><td>Fisherman</td><td>1,180</td><td>blue cap + grey shirt</td><td>rod + creel</td></tr>
+    <tr><td>Guard</td><td>1,320</td><td>red helmet + spear</td><td>spear + shield</td></tr>
+  </table>
+  <p style="font-size:21px">Animation (Three.js): 3 clips — idle (breath), walk (leg/arm swing), work (bend). Share skeleton across all NPCs. Export as separate GLBs per role, same rig names.</p>
+
+  <!-- 9 BOATS -->
+  <h2 class="sec">9 — BOATS</h2>
+  <table class="spec">
+    <tr><th>Boat</th><th>Size</th><th>Tris</th><th>Parts</th></tr>
+    <tr><td>Fishing Boat</td><td>5×2×2.5 m</td><td>1,160</td><td>Hull (carved box/lathe), gunwale rim, benches, outboard/cabin box, nets, lantern. Open hull shows interior.</td></tr>
+    <tr><td>Sailboat</td><td>6.5×3×9 m (mast)</td><td>1,420</td><td>Hull + deck + cabin, mast (separate), boom + sail (cloth, double-sided, furled morph optional), rudder, rigging lines (thin cylinders).</td></tr>
+    <tr><td>Rowboat</td><td>3.5×1.5×0.8 m</td><td>720</td><td>Hull, 2 benches, oars (separate for anim). Beached + moored variants.</td></tr>
+    <tr><td>Cargo Boat</td><td>8×3.5×3 m</td><td>1,900</td><td>Wide hull, canopy frame + fabric top, crate cargo (instanced), lanterns. Moored at dock E side.</td></tr>
+  </table>
+  <div class="ok">WATER SIGNAL: at least 2 boats visible in default frame (1 moored at dock, 1 mid-channel). Scale boats UP 10–15% over true scale — at diorama zoom small boats vanish. Bob anim in Three.js (sine y + roll), not baked.</div>
+
+  <!-- 10+11 MATERIALS -->
+  <h2 class="sec">10 — MATERIAL LIBRARY (match the refs — painterly PBR)</h2>
+  <p class="secdesc">Stylized PBR: high saturation albedo, low-frequency detail, roughness 0.6–0.9 (no mirror), no metalness except true metal. Flat + hand-painted grain via atlas, not procedural noise.</p>
+  <div class="swatches">
+    <div class="sw"><div class="c" style="background:#8A5A33"></div><div class="l"><b>Tropical Wood</b>#8A5A33 · rough .8 · planks + grain streaks</div></div>
+    <div class="sw"><div class="c" style="background:#C96F2E"></div><div class="l"><b>Roof Tile Orange</b>#C96F2E · rough .75 · barrel tiles</div></div>
+    <div class="sw"><div class="c" style="background:#2E7FC9"></div><div class="l"><b>Roof Tile Blue</b>#2E7FC9 · town hall / harbor</div></div>
+    <div class="sw"><div class="c" style="background:#9A9AA0"></div><div class="l"><b>Stone Grey</b>#9A9AA0 · cliffs/plaza · rough .95</div></div>
+    <div class="sw"><div class="c" style="background:#E8CF9A"></div><div class="l"><b>Sand</b>#E8CF9A · rough 1.0 · pebble speckle</div></div>
+    <div class="sw"><div class="c" style="background:#1E9EC0"></div><div class="l"><b>Water Shallow</b>#1E9EC0 · transparent · foam edge</div></div>
+    <div class="sw"><div class="c" style="background:#0A5A8A"></div><div class="l"><b>Water Deep</b>#0A5A8A · opaque · sun glint</div></div>
+    <div class="sw"><div class="c" style="background:#5FBF5A"></div><div class="l"><b>Grass</b>#5FBF5A · 2-tone tufts</div></div>
+    <div class="sw"><div class="c" style="background:#2E7D3A"></div><div class="l"><b>Leaves Dark</b>#2E7D3A · crown shadow</div></div>
+    <div class="sw"><div class="c" style="background:#6B6B70"></div><div class="l"><b>Metal</b>#6B6B70 · metalness .8 · rough .4</div></div>
+    <div class="sw"><div class="c" style="background:#E85D5D"></div><div class="l"><b>Fabric Red</b>#E85D5D · canopies/flags · double-sided</div></div>
+    <div class="sw"><div class="c" style="background:#FF6EC7"></div><div class="l"><b>Coral / Flowers</b>#FF6EC7 · emissive .1 · accent only</div></div>
+  </div>
+
+  <h2 class="sec">11 — COLOR PALETTE (coherent — no random hues)</h2>
+  <div class="card">
+    <div class="kpi">
+      <div><b>Ocean deep</b> <span class="code">#0A5A8A</span></div><div><b>Shallow</b> <span class="code">#1E9EC0</span></div><div><b>Foam</b> <span class="code">#E8FBFF</span></div>
+      <div><b>Sand</b> <span class="code">#E8CF9A</span></div><div><b>Grass</b> <span class="code">#5FBF5A</span></div><div><b>Foliage dark</b> <span class="code">#2E7D3A</span></div>
+      <div><b>Wood</b> <span class="code">#8A5A33</span></div><div><b>Timber dark</b> <span class="code">#5B3418</span></div><div><b>Soil (NOT timber)</b> <span class="code">#5B3418</span> — must differ from wood</div>
+      <div><b>Roof orange</b> <span class="code">#C96F2E</span></div><div><b>Roof blue</b> <span class="code">#2E7FC9</span></div><div><b>Stone</b> <span class="code">#9A9AA0</span></div>
+      <div><b>Flower pink</b> <span class="code">#FF6EC7</span></div><div><b>Harvest gold</b> <span class="code">#FFB02E</span> (only emissive accent)</div><div><b>Coral purple</b> <span class="code">#9B5DE5</span></div>
+    </div>
+    <p style="font-size:21px">Light: warm key sun (upper-left, 48°, #FFF1D6, shadows ON) + sky fill (cool #BFE3FF, no shadow). Taxonomy: terracotta = built, green = alive, gold = harvest-ready, grey = stone, blue = water. Violet reserved for exotic/coral only.</p>
+  </div>
+
+  <h2 class="sec">12 — TEXTURE / UV GUIDANCE (atlas-first)</h2>
+  <div class="grid2">
+    <div class="card"><h3>Atlas Strategy</h3><ul><li>1 shared <b>2048 atlas</b> for buildings (walls/roofs/timber/stone), 1×1024 for vegetation, 1×1024 for props/NPCs, 1×512 for boats. Max 4–5 textures for whole island.</li><li>Texel density: <b>128 px/m</b> (±20%). 1 m wall = 128 px. Small props may drop to 64 px/m.</li><li>UV: 0–1 per atlas, 4 px padding, no overlaps except mirrored/tiled parts. Hard edges → split UVs. Lightmap UV channel 2 if baked AO.</li><li>Maps: Albedo (sRGB) + Normal (tangent, soft — no harsh cracks) + Roughness (packed G) + AO (baked vertex or texture, multiply). No metalness map except metal parts (uniform value).</li></ul></div>
+    <div class="card"><h3>Sizes & Compression</h3><table class="spec"><tr><th>Use</th><th>Size</th></tr><tr><td>Town Hall / hero</td><td>2048</td></tr><tr><td>Houses/farm/windmill/light</td><td>1024 (shared atlas)</td></tr><tr><td>Props/NPC/boats</td><td>512–1024</td></tr><tr><td>Terrain tiles</td><td>1024 + vertex colors</td></tr></table><p>Three.js: KTX2/Basis + mipmaps, anisotropy 4, sRGB albedo. One material per atlas — never per-asset duplicates.</p></div>
+  </div>
+
+  <h2 class="sec">13 — LOD STRATEGY (Three.js + glTF suitable)</h2>
+  <table class="spec">
+    <tr><th>Level</th><th>Screen rule</th><th>Buildings</th><th>Vegetation</th><th>Props</th></tr>
+    <tr><td><b>LOD0</b> full</td><td>&lt; 40 m</td><td>Full (2–6k tris) + interior goods</td><td>Full crown + fronds</td><td>Full + goods</td></tr>
+    <tr><td><b>LOD1</b> mid</td><td>40–100 m (default view)</td><td>~45% tris, drop bevels/shutters, merge small parts</td><td>Simplified crown, ½ fronds</td><td>Merge to 1 mesh, drop contents</td></tr>
+    <tr><td><b>LOD2</b> far</td><td>&gt; 100 m</td><td>~18% tris, box+prism, keep silhouette (tower/mast/roof)</td><td>Cross-plane billboard / blob</td><td>Hide if &lt; 20 px, else box</td></tr>
+  </table>
+  <p style="font-size:21px">Implement as <span class="mono">THREE.LOD</span> or glTF <span class="mono">MSFT_lod</span>. Share LOD1/LOD2 geometries across variants. Frustum culling per tile/asset — never merge island into one draw.</p>
+
+  <h2 class="sec">14 — BLENDER PRODUCTION NOTES (for AI modeling agent)</h2>
+  <div class="grid2">
+    <div class="card"><h3>Naming & Collections</h3><ul><li><span class="mono">ASTX_BUILD_HouseA_LOD0</span>, <span class="mono">ASTX_VEG_Palm01</span>, <span class="mono">ASTX_PROP_Crate</span>, <span class="mono">ASTX_TER_CliffA</span>, <span class="mono">ASTX_BOAT_Sail</span>, <span class="mono">ASTX_NPC_Farmer</span></li><li>Collections: <span class="mono">ASTX_Buildings / Infra / Terrain / Veg / Props / NPC / Boats / Atlas</span></li><li>Materials: <span class="mono">M_Wood, M_RoofOrange, M_RoofBlue, M_Stone, M_Sand, M_Grass, M_Leaf, M_Glass, M_FabricRed, M_Metal</span> — share, don't duplicate.</li><li>Modifiers kept live until export; apply on export copy.</li></ul></div>
+    <div class="card"><h3>Transforms & Cleanup</h3><ul><li>Units meters, +Y up, +Z south (match layout). Origin = ground center (bottom-anchored). Rotation 0, Scale 1 — <b>Apply All Transforms</b> before export.</li><li>Manifold only, no N-gons on curved parts, remove doubles, recalc normals outward, shade smooth on organic / flat on cliffs.</li><li>Glass = separate material, <span class="mono">alphaMode BLEND</span>. Emissive lamp faces separate material <span class="mono">M_Emissive</span>.</li><li>Windmill blades / chest lids / doors = separate objects with clean pivots, named <span class="mono">*_PIVOT</span>.</li></ul></div>
+  </div>
+  <div class="card" style="margin-top:18px"><h3>GLB Export (glTF 2.0)</h3><p style="font-size:22px">File → Export → glTF (.glb): <span class="mono">Apply Modifiers ✓, UVs ✓, Normals ✓, Vertex Colors ✓, Materials Export ✓, Image Format WebP/JPEG (not PNG for large), Draco compression ON (buildings/terrain), LODs as separate files</span> <span class="mono">HouseA_LOD0.glb / _LOD1 / _LOD2</span>. Test import in three.js viewer + check draw calls &lt; 200 total.</p></div>
+
+  <h2 class="sec">15 — THREE.JS REQUIREMENTS (explicit optimization)</h2>
+  <div class="grid2">
+    <div class="card"><h3>Performance Budget</h3><ul><li>Total draw calls <b>&lt; 200</b>, tris on screen <b>&lt; 800k</b>, textures <b>&lt; 30 MB</b> compressed.</li><li><span class="mono">InstancedMesh</span> for palms/bushes/grass/crates/pickets/reef. Share geometry+material.</li><li>Frustum culling per tile; occlusion: no interiors under roofs counted as visible stock.</li><li>Shadows: <b>one</b> directional shadow light only (2048 map, tight frustum on main island).</li><li>KTX2 + mipmaps; LOD switching at 40/100 m; fog + distance haze for far islets.</li></ul></div>
+    <div class="card"><h3>Assembly Order in Code</h3><ul><li>1 seabed + water shader (depth ramp + shore foam from island footprints as uniforms)</li><li>2 terrain tiles → cliffs → beaches → islets → waterfalls (ribbon + mist)</li><li>3 paths/plaza → buildings → infra (bridges/docks) → farms → greenhouse/windmill</li><li>4 vegetation instancing (keep plaza/farm/harbor clear) → props → boats → NPCs → lantern/lighthouse lights</li><li>Validate: screenshot top + persp + side; probe screen-px of key props (must be &gt; 30 px).</li></ul></div>
+  </div>
+  <div class="warn">ANTI-PATTERNS (will fail review): single monolithic island mesh · per-asset materials (draw-call explosion) · coplanar path decals (z-fight) · stock hidden inside roofs · 8 px props claimed visible · violet water · timber-colored soil · floating sand discs · photoreal PBR noise · facial detail on NPCs.</div>
+
+  <footer>
+    <b style="font-size:28px">DELIVERABLE CHECKLIST FOR MODELING AGENT</b>
+    <div class="check" style="margin-top:12px">
+      <div>☐ 8 buildings × (shaded + wireframe + dims + tris + LODs + atlas UVs)</div>
+      <div>☐ Infra kit (bridge/dock/pier/path/stairs/platform/railing) with repeat rules</div>
+      <div>☐ Terrain kit (tile/cliff/beach/islet/falls/reef/rocks) — modular, skirted</div>
+      <div>☐ Veg set (11 spp, ≥2 variants for palms/broadleaf) + sway weights</div>
+      <div>☐ Props (≥16) + grain-stack readable at 40 px</div>
+      <div>☐ 5 NPCs on shared rig + 3 anims</div>
+      <div>☐ 4 boats with pivots (mast/boom/oars/lids)</div>
+      <div>☐ Atlas textures (albedo/normal/rough/AO) + palette adherence</div>
+    </div>
+    <p>Output next: Blender .blend (collections above) + GLB set (LOD0/1/2) + atlas PNGs + this sheet as cover. Assemble in Three.js per §15. Target: Image 3 look, Image 1+2 discipline, 60 FPS in browser.</p>
+    <p style="color:var(--muted)">ASTRIX | ISLAND VILLAGE | 3D ENVIRONMENT ASSET LIBRARY &nbsp;•&nbsp; Modular • Optimized • Game Ready • Three.js &nbsp;•&nbsp; Same world. Many stories.</p>
+  </footer>
+
+</div>
+</body>
+</html>

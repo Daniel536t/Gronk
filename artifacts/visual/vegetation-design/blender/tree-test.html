@@ -1,0 +1,30 @@
+<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%}canvas{display:block}</style>
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
+</head><body><script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a4a6e);
+const camera = new THREE.PerspectiveCamera(35, innerWidth / innerHeight, 0.1, 500);
+camera.position.set(-9, 4.5, 11);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 3, 0); controls.update();
+const sun = new THREE.DirectionalLight(0xffe7c4, 2.6);
+sun.position.set(-30, 40, -15); sun.castShadow = true;
+scene.add(sun, new THREE.HemisphereLight(0xbfe3ff, 0x3a5a34, 0.75));
+const ground = new THREE.Mesh(new THREE.CircleGeometry(9, 40),
+  new THREE.MeshStandardMaterial({ color: 0x5FBF5A, roughness: 1 }));
+ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+const g = await new GLTFLoader().loadAsync('/assets/glb/ASTX_VEG_CANOPY_A.glb?v=treeA');
+g.scene.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+scene.add(g.scene);
+const box = new THREE.Box3().setFromObject(g.scene);
+window.__tree = { min: box.min.toArray(), max: box.max.toArray() };
+window.__treeReady = true;
+renderer.setAnimationLoop(() => renderer.render(scene, camera));
+</script></body></html>

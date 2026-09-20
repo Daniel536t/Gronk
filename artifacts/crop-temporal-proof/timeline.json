@@ -1,0 +1,141 @@
+{
+ "maturationDaysAuthoritative": 8,
+ "matured": true,
+ "harvested": true,
+ "foodDelta": 6,
+ "timeline": [
+  {
+   "event": "planted",
+   "day": 1,
+   "season": "spring",
+   "crops": [
+    {
+     "id": "crop-002",
+     "stage": 0,
+     "harvestable": false
+    }
+   ],
+   "food": 40
+  },
+  {
+   "event": "day-advanced",
+   "day": 2,
+   "season": "spring",
+   "crops": [
+    {
+     "id": "crop-002",
+     "stage": 0.125,
+     "harvestable": false
+    }
+   ],
+   "food": 36
+  },
+  {
+   "event": "day-advanced",
+   "day": 3,
+   "season": "spring",
+   "crops": [
+    {
+     "id": "crop-002",
+     "stage": 0.25,
+     "harvestable": false
+    }
+   ],
+   "food": 32
+  },
+  {
+   "event": "day-advanced",
+   "day": 4,
+   "season": "spring",
+   "crops": [
+    {
+     "id": "crop-002",
+     "stage": 0.375,
+     "harvestable": false
+    }
+   ],
+   "food": 28
+  },
+  {
+   "event": "day-advanced",
+   "day": 5,
+   "season": "spring",
+   "crops": [
+    {
+     "id": "crop-002",
+     "stage": 0.5,
+     "harvestable": false
+    }
+   ],
+   "food": 24
+  },
+  {
+   "event": "day-advanced",
+   "day": 6,
+   "season": "spring",
+   "crops": [
+    {
+     "id": "crop-002",
+     "stage": 0.625,
+     "harvestable": false
+    }
+   ],
+   "food": 20
+  },
+  {
+   "event": "day-advanced",
+   "day": 7,
+   "season": "spring",
+   "crops": [
+    {
+     "id": "crop-002",
+     "stage": 0.75,
+     "harvestable": false
+    }
+   ],
+   "food": 16
+  },
+  {
+   "event": "day-advanced",
+   "day": 8,
+   "season": "spring",
+   "crops": [
+    {
+     "id": "crop-002",
+     "stage": 0.875,
+     "harvestable": false
+    }
+   ],
+   "food": 12
+  },
+  {
+   "event": "day-advanced",
+   "day": 9,
+   "season": "summer",
+   "crops": [
+    {
+     "id": "crop-002",
+     "stage": 1,
+     "harvestable": true
+    }
+   ],
+   "food": 8
+  },
+  {
+   "event": "harvest",
+   "result": {
+    "success": true,
+    "command": "HARVEST_CROP",
+    "irreversible": false,
+    "cropId": "crop-002",
+    "cropType": "wheat",
+    "foodGained": 6,
+    "foodAfter": 14
+   },
+   "day": 9,
+   "season": "summer",
+   "crops": [],
+   "food": 14
+  }
+ ]
+}

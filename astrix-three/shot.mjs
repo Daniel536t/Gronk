@@ -1,0 +1,11 @@
+import { chromium } from 'playwright';
+const browser = await chromium.launch();
+const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
+page.on('console', m => console.log('[pg]', m.type(), m.text().slice(0, 200)));
+await page.goto('http://127.0.0.1:5199/astrix-three/index.html', { waitUntil: 'networkidle' });
+await page.waitForFunction(() => window.__astrixReady === true, null, { timeout: 60000 });
+await page.waitForTimeout(4000);
+await page.screenshot({ path: '/home/ubuntu/ba/artifacts/astrix-three-vertical-slice.png' });
+const info = await page.evaluate(() => ({ ...window.__astrix, calls: undefined }));
+console.log('READY', JSON.stringify(info));
+await browser.close();
