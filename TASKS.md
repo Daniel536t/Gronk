@@ -106,7 +106,7 @@
 - [x] New narrow endpoints (all under `/astrix/*`, auth-gated for start/stop): `POST /astrix/agent/start`, `POST /astrix/agent/stop`, `GET /astrix/agent/status`, `GET /astrix/log`. `/astrix/approval/respond` now routes through the loop (still delegates to the bus; status codes unchanged).
 - [x] Godot minimal integration: `GameClient.gd` polls `/astrix/agent/status` alongside `/astrix/state` and emits `astrix_agent_status_received`; `AgentConsole.gd` renders state/turn/objective/pending approval + last 8 events from the server feed (no SSE parsing, no presentation redesign). Headless boot verified clean.
 - [x] Tests: `tests/astrix-execution-loop.test.ts` (11) covering A–I lifecycle cases + stop-while-paused; `tests/astrix-http.test.ts` (+5) covering agent start/status/log, HTTP approval flow, auth gate. Full suite 96/96 pass, both typechecks pass, `git diff --check` clean.
-- [x] LIVE validation on the real system: restarted pm2 `gronks-hoard` with P0; `POST /astrix/agent/start` ran the real TrueForge steward (5 turns, 39 events). The live agent proposed only read-only `inspect_*` calls and two non-ASTrix tools (`list_tools`, `get_tool_info`), which the loop safely rejected with recorded ACTION_FAILED — no mutations, world unchanged, run bounded at 5 turns.
+- [x] LIVE validation on the real system: restarted pm2 `astrix` with P0; `POST /astrix/agent/start` ran the real TrueForge steward (5 turns, 39 events). The live agent proposed only read-only `inspect_*` calls and two non-ASTrix tools (`list_tools`, `get_tool_info`), which the loop safely rejected with recorded ACTION_FAILED — no mutations, world unchanged, run bounded at 5 turns.
 
 ### P0 blockers / honest gaps
 - The provisioned `astrix-steward` agent's system instructions (from `scripts/provision-astrix-agents.ts`) still say "return decisions as JSON / set approval_required: true" — they predate the execution loop and the agent's conservative behavior (observation-only, and it also has TrueForge-side `require_approval_for_tools: ["@write","@destructive"]`) kept the live run from attempting a mutation, so the LIVE approval-gate trigger was not exercised by the LLM. The mutation + approval + verification path is fully covered by tests B/C/D/E/F against the real command bus.
@@ -205,7 +205,7 @@
 - [x] Wire Godot command requests and authoritative state polling to `/astrix/*`.
 - [x] Validate ASTrix state, command, MCP listing/call, and legacy route preservation on a local server.
 - [x] Add `scripts/provision-astrix-agents.ts` using the existing TrueForge provisioning function.
-- [x] Inspect the live TrueForge MCP-server listing; existing connector is `gronks-hoard-mcp` at `http://localhost:8787/mcp`.
+- [x] Inspect the live TrueForge MCP-server listing; existing connector is `astrix-mcp` at `http://localhost:8787/mcp`.
 - [x] Update provisioning to register/reference a separate `astrix` connector using the existing TrueForge API pattern.
 - [ ] Complete live connector registration: current TrueForge host returns HTTP 409 for the existing connector registration attempt and still rejects ASTrix agent manifests until `astrix` is configured.
 - [ ] Provision ASTrix agents and run a live steward turn after the connector is configured.
@@ -237,7 +237,7 @@
 - [x] DuckDNS: `astrixx.duckdns.org` updated → `A 44.197.181.77` (replaces stale `172.105.83.142` entry).
 - [x] Caddy reverse proxy: `https://astrixx.duckdns.org` → `http://127.0.0.1:8787`.
 - [x] HTTP → HTTPS redirect (308) working; Let's Encrypt cert issued (CN=astrixx.duckdns.org, valid 90 days, auto-renews).
-- [x] App rebind: added `HOST` env in `src/server/index.ts`; pm2 `gronks-hoard` now binds `127.0.0.1:8787` only.
+- [x] App rebind: added `HOST` env in `src/server/index.ts`; pm2 `astrix` now binds `127.0.0.1:8787` only.
 - [x] Public `44.197.181.77:8787` refused (no longer exposed).
 - [x] All API routes, `.wasm`, `.pck` MIME served correctly through the proxy.
 - [x] Browser acceptance: Chromium → `https://astrixx.duckdns.org` → `window.isSecureContext === true` → game boots + renders, zero console errors.
@@ -263,7 +263,7 @@ Caddy config: `/etc/caddy/Caddyfile` (see deployment report). Backup at `/etc/ca
 - Portrait framing leaves sky at the top of the frame (acceptable exploration framing; player stays in the lower 2/3).
 - Collision uses simple boxes (walk-in-space prevention), not bespoke per-mesh hulls.
 - Actual game logic authority remains the ASTrix server; Godot collision is presentation-only.
-- Gronk is not yet a separate chaser in this Godot build — recast as the companion follow placeholder pending the agent/Gronk scope.
+- companion is not yet a separate chaser in this Godot build — recast as the companion follow placeholder pending the agent/companion scope.
 
 ## Milestone — mobile-first gameplay camera + visible touch controls
 

@@ -1,5 +1,0 @@
-{
-  "_comment": "Gronk runs on the cheapest/fastest model (sniffs every 15s). FQN is provider/model where provider = the TrueForge model-provider name ('nvidia'). Verified live against the NVIDIA key: nemotron-3-nano-30b-a3b (fast MoE). Swap from the TrueForge UI or edit this file; read live on startup.",
-  "name": "nvidia/nemotron-3-nano-30b-a3b",
-  "provider": "nvidia"
-}

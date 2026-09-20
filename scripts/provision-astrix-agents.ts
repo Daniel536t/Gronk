@@ -1,9 +1,8 @@
-import { loadConfig } from "../src/server/config";
 import { ASTRIX_TOOL_GUIDE, provisionTrueForgeAgents, runAstrixStewardTurn, type AgentSpecInput } from "../src/server/trueforge";
 
-const cfg = loadConfig().trueforge;
-const model = cfg.botsModel?.name ? cfg.botsModel : cfg.gronkModel;
-const astrixMcp = { name: "gronks-hoard-mcp", url: "http://localhost:8787/mcp" };
+const cfg = { baseUrl: process.env.TRUEFORGE_URL ?? "http://localhost:8790", apiKey: process.env.TRUEFORGE_API_KEY } as any;
+const model = { name: "nvidia/gpt-oss-20b", provider: "nvidia" };
+const astrixMcp = { name: "astrix-mcp", url: "http://localhost:8787/mcp" };
 
 // The steward is the ACTING governor: it returns real ASTrix toolCalls that the
 // execution loop executes through the command bus. It gets NO native MCP tools

@@ -17,20 +17,15 @@ import assert from "node:assert/strict";
 import { describe, it, afterEach, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import type { Server } from "node:http";
-import { LobbyManager } from "../src/server/lobby";
 import { createHttpServer } from "../src/server/http";
-import { createMcpServer } from "../src/server/mcp";
-import { createMcpHttpBridge } from "../src/server/mcpHttp";
 import { createAstrixService, ASTRIX_WRITE_ROUTES } from "../src/astrix/server";
 
 const servers: Server[] = [];
 const TOKEN = "test-operator-key-9f3c";
 
 async function start(opts: { authToken?: string } = {}): Promise<{ base: string; astrix: ReturnType<typeof createAstrixService> }> {
-  const manager = new LobbyManager({ autoTick: false });
   const astrix = createAstrixService({ authToken: opts.authToken, maxTurnsPerRun: 2, maxActionsPerTurn: 3 });
-  const mcpHttp = createMcpHttpBridge(() => createMcpServer(manager, astrix));
-  const server = createHttpServer(manager, 0, { mcp: mcpHttp, astrix });
+  const server = createHttpServer(0, { astrix });
   servers.push(server);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const port = (server.address() as { port: number }).port;
@@ -217,12 +212,6 @@ describe("R1 — consequential operations require authority", () => {
     assert.deepEqual(fingerprint(astrix), before);
   });
 
-  it("10. the ASTrix token does not gate the legacy game API (unchanged surface)", async () => {
-    const { base } = await start({ authToken: TOKEN });
-    const res = await post(base, "/api/create", { mode: "multi" });
-    assert.equal(res.status, 200);
-    assert.ok(String(res.body.roomCode).length > 0);
-  });
 });
 
 describe("R2 — Godot credential path", () => {

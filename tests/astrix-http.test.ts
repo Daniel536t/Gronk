@@ -1,18 +1,9 @@
-// HTTP-level coverage for the ASTrix parallel API: the read-only simulate_plan
-// command route, the fully-open legacy POST /mcp channel (TrueForge is a
-// same-host client and sends no Authorization header), and the auth gate on
-// the public /astrix/* mutation surface (browser client -> server).
-// We use the SDK's real streamable-HTTP client (the same transport TrueForge
-// uses) so the session handshake, Accept headers, and session IDs are exact.
+// HTTP-level coverage for the ASTrix API: simulate_plan and the auth gate on
+// the public /astrix/* mutation surface.
 import assert from "node:assert/strict";
 import { describe, it, afterEach, expect } from "vitest";
 import type { Server } from "node:http";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { LobbyManager } from "../src/server/lobby";
 import { createHttpServer } from "../src/server/http";
-import { createMcpServer } from "../src/server/mcp";
-import { createMcpHttpBridge } from "../src/server/mcpHttp";
 import { createAstrixService } from "../src/astrix/server";
 import type { StewardDecision, StewardDecisionProvider, StewardRunContext } from "../src/astrix/orchestrator";
 
@@ -32,10 +23,8 @@ class FakeStewardProvider implements StewardDecisionProvider {
 async function startTestServer(
   opts: { authToken?: string; stewardProvider?: StewardDecisionProvider } = {},
 ): Promise<{ base: string }> {
-  const manager = new LobbyManager({ autoTick: false });
   const astrix = createAstrixService({ authToken: opts.authToken, stewardProvider: opts.stewardProvider });
-  const mcpHttp = createMcpHttpBridge(() => createMcpServer(manager, astrix));
-  const server = createHttpServer(manager, 0, { mcp: mcpHttp, astrix });
+  const server = createHttpServer(0, { astrix });
   servers.push(server);
   await new Promise<void>((resolve) => server.listen(0, resolve));
   const port = (server.address() as { port: number }).port;
@@ -49,32 +38,6 @@ async function waitFor(predicate: () => Promise<boolean>, timeoutMs = 3000): Pro
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   throw new Error("waitFor timed out");
-}
-
-interface TextResult {
-  content: { type: string; text: string }[];
-}
-
-function jsonOf(result: unknown): any {
-  const text = (result as TextResult).content[0].text;
-  return JSON.parse(text);
-}
-
-async function withClient(
-  base: string,
-  headers: Record<string, string>,
-  run: (client: Client) => Promise<void>,
-): Promise<void> {
-  const transport = new StreamableHTTPClientTransport(new URL(`${base}/mcp`), {
-    requestInit: { headers },
-  });
-  const client = new Client({ name: "astrix-http-test", version: "1.0.0" });
-  try {
-    await client.connect(transport);
-    await run(client);
-  } finally {
-    await client.close();
-  }
 }
 
 describe("ASTrix HTTP API", () => {
@@ -100,43 +63,6 @@ describe("ASTrix HTTP API", () => {
     // No mutation: world resources unchanged by simulation.
     const state = await (await fetch(`${base}/astrix/state`)).json() as any;
     assert.equal(state.resources.wood, 30);
-  });
-
-  // R1: POST /mcp is no longer unconditionally open. With a token configured it
-  // requires the bearer; with no token it is loopback-only. These three tests
-  // pin the new policy (they previously asserted the open behaviour).
-  it("R1: ASTrix mutation tools on /mcp REQUIRE the bearer when a token is configured", async () => {
-    const { base } = await startTestServer({ authToken: "sekret" });
-    await assert.rejects(
-      () => withClient(base, {}, async (client) => {
-        await client.callTool({ name: "gather", arguments: { resource_type: "wood" } });
-      }),
-      /unauthorized/,
-    );
-    // The world was not mutated by the refused call.
-    const state = (await (await fetch(`${base}/astrix/state`)).json()) as any;
-    assert.equal(state.resources.wood, 30);
-  });
-
-  it("R1: ASTrix mutation tools on /mcp succeed WITH the bearer", async () => {
-    const { base } = await startTestServer({ authToken: "sekret" });
-    await withClient(base, { Authorization: "Bearer sekret" }, async (client) => {
-      const result = await client.callTool({ name: "gather", arguments: { resource_type: "wood" } });
-      const parsed = jsonOf(result);
-      assert.equal(parsed.success, true);
-      assert.equal(parsed.gathered, 1);
-    });
-  });
-
-  it("R1: /mcp stays usable on loopback with NO token (local dev + same-host TrueForge)", async () => {
-    const { base } = await startTestServer();
-    await withClient(base, {}, async (client) => {
-      const world = await client.callTool({ name: "inspect_world", arguments: {} });
-      assert.ok(jsonOf(world).day >= 1);
-      // Legacy game tools remain reachable on the same channel.
-      const created = jsonOf(await client.callTool({ name: "create_lobby", arguments: { mode: "multi" } }));
-      assert.match(created.roomCode, /^[A-Z]{4}-\d{2}$/);
-    });
   });
 
   it("reports idle status and an empty event log before any run", async () => {
@@ -287,10 +213,8 @@ describe("GET /astrix/chain — public chain-status observability", () => {
       chainDay: "11", owner: "DELEG", slot: 1, updatedAt: Date.now(), error: null,
       heartbeats: [{ t: "t", heartbeat: 1, advanceSig: "a", erMs: 9, commitSig: "c", baseDayBefore: "10", baseDay: "11" }],
     };
-    const manager = new LobbyManager({ autoTick: false });
     const astrix = createAstrixService({ chainStatus: () => stub as unknown as Record<string, unknown> });
-    const mcpHttp = createMcpHttpBridge(() => createMcpServer(manager, astrix));
-    const server = createHttpServer(manager, 0, { mcp: mcpHttp, astrix });
+    const server = createHttpServer(0, { astrix });
     servers.push(server);
     await new Promise<void>((resolve) => server.listen(0, resolve));
     const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;

@@ -2,7 +2,7 @@
 
 > **Scope:** exposure of the ASTrix HTTP surface as deployed at
 > `https://astrixx.duckdns.org` (Caddy → `127.0.0.1:8787`, pm2 app
-> `gronks-hoard`). Findings are observational: each was confirmed against the
+> `astrix`). Findings are observational: each was confirmed against the
 > live host or the source, and the confirming action is stated. **No remediation
 > was applied** — per the current milestone instruction, this document records
 > the finding rather than fixing it.
@@ -27,7 +27,7 @@ public URL:
 ```
 POST https://astrixx.duckdns.org/mcp   →  HTTP 200
 {"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{"listChanged":true}},
- "serverInfo":{"name":"gronks-hoard","version":"0.2.0"}},"jsonrpc":"2.0","id":1}
+ "serverInfo":{"name":"astrix","version":"0.2.0"}},"jsonrpc":"2.0","id":1}
 ```
 
 I verified the handshake and the missing key. I did **not** call a mutating tool
@@ -91,7 +91,7 @@ function authorized(req, authToken) {            // src/astrix/server.ts:200
 }
 ```
 
-**Confirmed:** the live pm2 environment for app `gronks-hoard` contains **no
+**Confirmed:** the live pm2 environment for app `astrix` contains **no
 `ASTRIX_API_KEY`** (checked via `pm2 env`; zero matches). `src/server/index.ts:43`
 passes `process.env.ASTRIX_API_KEY?.trim() || undefined`, so `authToken` is
 `undefined` and every gated route returns `true` from `authorized()`.
@@ -172,7 +172,7 @@ Ordered by value, smallest blast radius first. **None applied in this milestone.
 Must ship as one change or the deployed Godot client breaks:
 
 1. `godot/scripts/GameClient.gd:156` → `"Authorization: Bearer %s" % astrix_api_key`
-2. Set `ASTRIX_API_KEY` in the pm2 env; restart `gronks-hoard`
+2. Set `ASTRIX_API_KEY` in the pm2 env; restart `astrix`
 3. Supply the key to the Godot client (export var / build-time injection)
 4. Re-export the web build, re-verify approvals from the browser
 

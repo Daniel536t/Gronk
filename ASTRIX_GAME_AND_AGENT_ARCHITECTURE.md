@@ -239,7 +239,7 @@ UNDERSTAND   -> forecast_food / calculate_winter_requirements / calculate_resour
 PLAN         -> simulate_plan (read-only; returns projected state + per-command validation)
 DELEGATE     -> specialist agents return plans/recommendations (agriculture / construction / ecology)
 REQUEST      -> if any planned action is HIGH-risk: approval gate (server-side, blocking)
-ACT          -> execute tool calls through /mcp (gronks-hoard-mcp) or /astrix/mcp/tools/call
+ACT          -> execute tool calls through /mcp (astrix-mcp) or /astrix/mcp/tools/call
 OBSERVE      -> re-inspect; the world may have changed or the action may have failed
 VERIFY       -> verify_action / verify_objective against authoritative state
 ADAPT        -> revise plan; loop
@@ -274,7 +274,7 @@ below is the target; §23 maps what exists vs. what must be built.
 ## 11. Tool System
 
 Ten tools exist today (`src/astrix/mcpTools.ts`, registered in
-`src/server/mcp.ts` under the `gronks-hoard-mcp` connector AND exposed at
+`src/server/mcp.ts` under the `astrix-mcp` connector AND exposed at
 `/astrix/mcp/tools/call`): `inspect_world`, `inspect_island`,
 `inspect_resources`, `inspect_buildings`, `gather`, `build`, `plant`,
 `clear_terrain`, `build_bridge`, `simulate_plan`.
@@ -368,7 +368,7 @@ running on `:8790` (auth-disabled standalone), with agents provisioned via
 | Capability | ASTrix usage | Why TrueForge specifically |
 |---|---|---|
 | **Agent lifecycle** | Steward + 3 specialists are TrueForge agents with manifests (model, instructions, MCP refs, skills, sandbox config) | Session/turn API already proven in this repo |
-| **Tool execution** | Steward calls ASTrix tools through the `gronks-hoard-mcp` connector (`POST /mcp`, streamable HTTP, already registered) | TrueForge discovers `@all` tools from the MCP connector |
+| **Tool execution** | Steward calls ASTrix tools through the `astrix-mcp` connector (`POST /mcp`, streamable HTTP, already registered) | TrueForge discovers `@all` tools from the MCP connector |
 | **Subagent orchestration** | Delegation turns are TrueForge sessions with scoped prompts | Same harness, auditable turns |
 | **Execution tracing** | Every turn's `tool_calls` and outputs are retained per session | Judge-facing "watch the agent think" evidence |
 | **Sandbox** | Steward's numeric planning (winter requirements, food projections) runs in the TrueForge sandbox with generated code | Sponsor's sandbox = code-generation-to-result demo (§25) |
@@ -382,11 +382,10 @@ running on `:8790` (auth-disabled standalone), with agents provisioned via
 - **Turn:** `POST /api/v1/sessions` `{ agent: { name } }` → session id;
   `POST /api/v1/sessions/{id}/turns` `{ input:[{type:"user.message", content}], previous_turn_id:"auto", stream:false }` → turn id; poll
   `GET /api/v1/sessions/{id}/turns/{turnId}` until `state.status === "done"`.
-- **MCP:** connector `gronks-hoard-mcp` → `http://localhost:8787/mcp`
+- **MCP:** connector `astrix-mcp` → `http://localhost:8787/mcp`
   (POST /mcp is deliberately open to TrueForge — same-host network boundary;
   the public `/astrix/*` mutation surface stays keyed by `ASTRIX_API_KEY`).
-- **Models:** NVIDIA NIM via `registerNvidiaProvider`; names in
-  `config/gronk-model.json` / `config/bots-model.json`.
+- **Models:** NVIDIA NIM via `registerNvidiaProvider`; model names in `config/trueforge.json` or agent manifests.
 
 ### Missing today
 

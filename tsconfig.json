@@ -11,6 +11,6 @@
     "forceConsistentCasingInFileNames": true,
     "types": ["node"]
   },
-  "include": ["src/engine", "src/server", "tests"],
-  "exclude": ["src/client", "node_modules", "dist"]
+  "include": ["src/astrix", "src/server", "tests"],
+  "exclude": ["node_modules", "dist"]
 }

@@ -1,6 +1,5 @@
-# Gronk's Hoard — always-on game server (built as a Docker image for
-# Fly.io / Render / any container host). Builds the frontend and serves the
-# whole game (HTML + API + MCP) on ONE port.
+# ASTrix — always-on server (built as a Docker image for
+# Fly.io / Render / any container host). Serves the world (HTML + ASTrix API) on ONE port.
 FROM node:20-slim AS build
 WORKDIR /app
 COPY package*.json ./
@@ -21,4 +20,4 @@ COPY --from=build /app/server/static ./server/static
 COPY src ./src
 COPY .env ./
 # Run under pm2 so it restarts on crashes / restarts.
-CMD ["pm2-runtime", "start", "ecosystem.config.cjs", "--only", "gronks-hoard"]
+CMD ["pm2-runtime", "start", "ecosystem.config.cjs", "--only", "astrix"]

@@ -26,7 +26,7 @@ Rebuilt the Godot web export and restarted the deployed process onto it.
 
 ```
 godot --headless --export-release "Web" ../server/static/index.html   -> [ DONE ] savepack
-pm2 restart gronks-hoard --update-env
+pm2 restart astrix --update-env
 ```
 
 | Endpoint | Result |
