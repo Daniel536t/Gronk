@@ -7,4 +7,6 @@ server.pid
 *.tsbuildinfo
 qa/
 .tools/
+server/static/uploads/
 godot/.godot/
+solana/astrix-world/target/

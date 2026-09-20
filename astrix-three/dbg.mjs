@@ -1,0 +1,12 @@
+import { chromium } from 'playwright';
+const browser = await chromium.launch();
+const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
+page.on('console', m => console.log('[pg]', m.type(), m.text().slice(0, 300)));
+page.on('pageerror', e => console.log('[pageerror]', String(e).slice(0, 500)));
+page.on('requestfailed', r => console.log('[reqfail]', r.url().slice(0, 120), r.failure()?.errorText));
+await page.goto('http://127.0.0.1:5199/astrix-three/index.html', { waitUntil: 'domcontentloaded' });
+await page.waitForTimeout(15000);
+console.log('ready=', await page.evaluate(() => window.__astrixReady));
+console.log('hasThree=', await page.evaluate(() => !!document.querySelector('canvas')));
+await page.screenshot({ path: '/tmp/dbg.png' });
+await browser.close();

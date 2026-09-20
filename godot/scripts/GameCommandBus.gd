@@ -1,7 +1,22 @@
 extends Node
-## ASTrix mutation boundary. Every world-changing request is validated here
-## and forwarded to the authoritative server. No local mutation happens:
+## ASTrix mutation boundary. Every world-changing request is validated for SHAPE
+## here and forwarded to the authoritative server. No local mutation happens:
 ## visuals update only after a server response / snapshot.
+##
+## TRUST RULE (hardened): this layer owns NO game values. An earlier version
+## carried its own BUILD_COSTS table, an affordability gate, world bounds, and
+## a hardcoded island_id — a second cost table and a second topology that could
+## drift from Core (Core COSTS != Godot COSTS). Costs, affordability, bounds,
+## capacity and connectivity are decided EXCLUSIVELY by Core's CommandBus; this
+## client forwards, then surfaces the server's verdict (success AND failure) in
+## the Observatory feed. What remains here are shape checks (is the field
+## present?) which mirror the transport contract and cannot drift with balance.
+##
+## Island hint: Core requires an islandId it owns. A world-space click is not a
+## Core coordinate, so the client derives a HINT from the same ISLANDS
+## geography the renderer stands on (single source, read live via preload —
+## never a copied table) and the server validates it. Outside every island the
+## hint is omitted and the server rejects truthfully.
 
 signal command_completed(command_name: String, result: Dictionary)
 signal command_rejected(command_name: String, reason: String)
@@ -9,18 +24,11 @@ signal approval_requested(request: Dictionary)
 signal command_succeeded(result: Dictionary)
 signal command_failed(error: String)
 
-const RESOURCE_IDS := [&"wood", &"stone", &"food", &"water", &"crystal"]
-const BUILD_COSTS := {
-    "house": {"wood": 4, "stone": 2},
-    "farm": {"wood": 2, "stone": 1},
-    "storage": {"wood": 3, "stone": 2},
-    "bridge_segment": {"wood": 3, "stone": 1},
-}
+const RESOURCE_CONTRACT := "resource_id or resource_type is required"
 
-var world_state: Node
+const World3DGeography = preload("res://scripts/World3D.gd")
 
 func _ready() -> void:
-    world_state = get_node_or_null("/root/WorldState")
     GameClient.astrix_command_succeeded.connect(_on_server_command_succeeded)
     GameClient.astrix_command_failed.connect(_on_server_command_failed)
 
@@ -48,20 +56,23 @@ func send_command(command_name: String, params: Dictionary) -> void:
     GameClient.send_astrix_command({"command": command_name, "params": params})
 
 func place_building(building_type: String, location: Vector3) -> Dictionary:
-    if not BUILD_COSTS.has(building_type):
-        return _reject("PlaceBuilding", "unknown building type")
-    if not _valid_location(location):
-        return _reject("PlaceBuilding", "location is outside the buildable world")
-    if not _can_afford(BUILD_COSTS[building_type]):
-        return _reject("PlaceBuilding", "insufficient resources")
-    return _dispatch("build", {"building_type": building_type, "position": {"x": location.x, "y": location.y, "z": location.z}, "island_id": "meadow"})
+    if building_type.is_empty():
+        return _reject("PlaceBuilding", "building_type is required")
+    var params := {"building_type": building_type,
+        "position": {"x": location.x, "y": location.y, "z": location.z}}
+    # Island is a routing HINT from renderer geography, never a claim: Core
+    # validates capacity, connectivity and cost against its own authority.
+    var hint := island_hint_at(location)
+    if hint != "":
+        params["island_id"] = hint
+    return _dispatch("build", params)
 
 func build_bridge(location: Vector3, island_a: String = "meadow", island_b: String = "frost") -> Dictionary:
     return _dispatch("bridge", {"position": {"x": location.x, "y": location.y, "z": location.z}, "island_a": island_a, "island_b": island_b})
 
 func gather_resource(resource_id: String, _location: Vector3) -> Dictionary:
-    if not RESOURCE_IDS.has(resource_id):
-        return _reject("GatherResource", "invalid resource")
+    if resource_id.is_empty():
+        return _reject("GatherResource", "resource is required")
     return _dispatch("gather", {"resource_id": resource_id})
 
 func plant_crop(plot_id: String, crop: String) -> Dictionary:
@@ -70,8 +81,6 @@ func plant_crop(plot_id: String, crop: String) -> Dictionary:
     return _dispatch("plant", {"farm_plot_id": plot_id, "crop_type": crop})
 
 func clear_terrain(location: Vector3) -> Dictionary:
-    if not _valid_location(location):
-        return _reject("ClearTerrain", "location is outside the world")
     return _dispatch("clear", {"position": {"x": location.x, "y": location.y, "z": location.z}, "radius": 1})
 
 func simulate_plan(plan: Dictionary) -> Dictionary:
@@ -82,16 +91,23 @@ func _dispatch(command_name: String, params: Dictionary) -> Dictionary:
     send_command(command_name, params)
     return {"ok": true, "pending": true}
 
-func _can_afford(cost: Dictionary) -> bool:
-    if not world_state:
-        return false
-    for resource_id in cost:
-        if int(world_state.resources.get(resource_id, 0)) < int(cost[resource_id]):
-            return false
-    return true
-
-func _valid_location(location: Vector3) -> bool:
-    return location.x >= 0.0 and location.x <= 100.0 and location.z >= 0.0 and location.z <= 60.0
+## Which rendered island contains a world-space point, or "" when none does.
+## Read live from the renderer's own ISLANDS constant (preload, not a copy),
+## so there is exactly one island geography and it cannot drift.
+func island_hint_at(location: Vector3) -> String:
+    var best := ""
+    var best_d := 1.05
+    for id in World3DGeography.ISLANDS.keys():
+        var data: Dictionary = World3DGeography.ISLANDS[id]
+        var c: Vector3 = data["center"]
+        var rad: Vector2 = data["radius"]
+        var dx := (location.x - c.x) / maxf(0.0001, rad.x)
+        var dz := (location.z - c.z) / maxf(0.0001, rad.y)
+        var d := sqrt(dx * dx + dz * dz)
+        if d < best_d:
+            best_d = d
+            best = str(id)
+    return best
 
 func _reject(command_name: String, reason: String) -> Dictionary:
     command_rejected.emit(command_name, reason)

@@ -1,6 +1,5 @@
-# Gronk's Hoard — always-on game server (built as a Docker image for
-# Fly.io / Render / any container host). Builds the frontend and serves the
-# whole game (HTML + API + MCP) on ONE port.
+# ASTrix — always-on server (built as a Docker image for
+# Fly.io / Render / any container host). Serves the world (HTML + ASTrix API) on ONE port.
 FROM node:20-slim AS build
 WORKDIR /app
 COPY package*.json ./
@@ -14,7 +13,11 @@ ENV NODE_ENV=production PORT=8787 BOTS=scripted
 COPY package*.json ./
 RUN npm ci --omit=dev && npm i -g pm2 typescript tsx
 COPY --from=build /app/dist ./dist
+# Godot HTML5 export + uploads root: the HTTP server derives its static dir
+# from server/static and writes reference uploads under it, so the image must
+# include the tree it serves (otherwise returned /uploads/* URLs 404).
+COPY --from=build /app/server/static ./server/static
 COPY src ./src
 COPY .env ./
 # Run under pm2 so it restarts on crashes / restarts.
-CMD ["pm2-runtime", "start", "ecosystem.config.cjs", "--only", "gronks-hoard"]
+CMD ["pm2-runtime", "start", "ecosystem.config.cjs", "--only", "astrix"]

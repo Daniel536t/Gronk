@@ -1,9 +1,11 @@
+import { bridgeAnchorFor, CROP_TYPES, FARM_CROP_CAPACITY } from "./state";
 import type { AstrixApproval, AstrixPosition, AstrixResourceNode, AstrixWorldState, BiomeId, ResourceType } from "./state";
 
 export type AstrixCommandName =
   | "PLACE_BUILDING"
   | "GATHER_RESOURCE"
   | "PLANT_CROP"
+  | "HARVEST_CROP"
   | "CLEAR_TERRAIN"
   | "BUILD_BRIDGE";
 
@@ -16,6 +18,7 @@ export interface AstrixCommand {
   islandId?: BiomeId;
   farmPlotId?: string;
   cropType?: string;
+  cropId?: string;
   radius?: number;
   islandA?: BiomeId;
   islandB?: BiomeId;
@@ -98,11 +101,32 @@ export class AstrixGameCommandBus {
       if (!approvalMatchesCommand(approval, command)) return { success: false, command: command.command, irreversible, error: "approval does not match command" };
     }
     if (irreversible && command.approvalId === undefined) {
+      // The impact block is what a HUMAN reads before authorizing an
+      // irreversible mutation, and what resolveApproval later replays. The
+      // match-critical keys (position/radius/islandA/islandB) are recorded
+      // EXACTLY as the command gave them -- a derived position is reported
+      // separately as `bridgePosition` so approval matching keeps its meaning.
+      const bridge = command.command === "BUILD_BRIDGE" && command.islandA && command.islandB;
       const approval: AstrixApproval = {
         id: this.state.nextEntityId("approval"),
         command: command.command,
         reason: command.command === "CLEAR_TERRAIN" ? "Terrain will be permanently cleared" : "Bridge construction changes island connectivity",
-        impact: { position: command.position, radius: command.radius, islandA: command.islandA, islandB: command.islandB },
+        impact: {
+          position: command.position,
+          radius: command.radius,
+          islandA: command.islandA,
+          islandB: command.islandB,
+          cost: { ...(command.command === "BUILD_BRIDGE" ? COSTS.bridge_segment : {}) },
+          irreversible: true,
+          permanent: true,
+          ...(bridge
+            ? {
+                bridgePosition: command.position ?? bridgeAnchorFor(command.islandA!, command.islandB!),
+                resultingTopology: `${command.islandA} <-> ${command.islandB}`,
+                unlocks: `building and gathering on ${command.islandB}`,
+              }
+            : {}),
+        },
         createdAt: Date.now(),
       };
       this.state.pendingApprovals.push(approval);
@@ -115,6 +139,7 @@ export class AstrixGameCommandBus {
       case "PLACE_BUILDING": result = this.placeBuilding(command, irreversible); break;
       case "GATHER_RESOURCE": result = this.gather(command, irreversible); break;
       case "PLANT_CROP": result = this.plant(command, irreversible); break;
+      case "HARVEST_CROP": result = this.harvest(command, irreversible); break;
       case "CLEAR_TERRAIN": result = this.clearTerrain(command, irreversible); break;
       case "BUILD_BRIDGE": result = this.buildBridge(command, irreversible); break;
       default: return { success: false, command: command.command, irreversible, error: "unknown command" };
@@ -130,7 +155,7 @@ export class AstrixGameCommandBus {
   }
 
   simulate(command: AstrixCommand): AstrixCommandResult {
-    const known: AstrixCommandName[] = ["PLACE_BUILDING", "GATHER_RESOURCE", "PLANT_CROP", "CLEAR_TERRAIN", "BUILD_BRIDGE"];
+    const known: AstrixCommandName[] = ["PLACE_BUILDING", "GATHER_RESOURCE", "PLANT_CROP", "HARVEST_CROP", "CLEAR_TERRAIN", "BUILD_BRIDGE"];
     if (!known.includes(command.command)) return { success: false, command: command.command, irreversible: false, error: "unsupported command for simulation" };
     const validation = this.validate(command);
     return { ...validation, irreversible: command.command === "CLEAR_TERRAIN" || command.command === "BUILD_BRIDGE" };
@@ -142,12 +167,30 @@ export class AstrixGameCommandBus {
     if (command.command === "PLACE_BUILDING") {
       if (!command.buildingType || !COSTS[command.buildingType]) return { success: false, command: command.command, irreversible, error: "unknown building type" };
       if (!command.islandId) return { success: false, command: command.command, irreversible, error: "islandId is required" };
+      // Connectivity (design spec chain #3/#4): the settlement lives on Meadow;
+      // building on another island without a bridge strands production there,
+      // so BUILD obeys the same connectivity rule as GATHER. Building a bridge
+      // itself is always allowed (that is how connectivity is established).
+      if (command.islandId !== "meadow" && !this.islandReachableFromMeadow(command.islandId)) {
+        return { success: false, command: command.command, irreversible, error: `no bridge to ${command.islandId}: build a bridge to reach it` };
+      }
       const cost = COSTS[command.buildingType];
       for (const [resource, amount] of Object.entries(cost)) if (this.state.resources[resource as ResourceType] < amount) return { success: false, command: command.command, irreversible, error: `insufficient ${resource}` };
+      if (command.buildingType === "farm") {
+        const capacity = this.state.farmlandCapacity[command.islandId] ?? 0;
+        const used = this.state.buildings.filter((building) => building.type === "farm" && building.islandId === command.islandId).length;
+        if (used >= capacity) return { success: false, command: command.command, irreversible, error: `no available farmland on ${command.islandId} (${used}/${capacity}): clear terrain to expand farmland` };
+      }
     }
     if (command.command === "GATHER_RESOURCE" && !command.resourceId && !command.resourceType) return { success: false, command: command.command, irreversible, error: "resourceId or resourceType is required" };
     if (command.command === "PLANT_CROP" && (!command.farmPlotId || !command.cropType)) return { success: false, command: command.command, irreversible, error: "farmPlotId and cropType are required" };
     if (command.command === "PLANT_CROP" && !this.state.buildings.some((building) => building.type === "farm" && building.id === command.farmPlotId)) return { success: false, command: command.command, irreversible, error: "farm plot not found" };
+    if (command.command === "PLANT_CROP") {
+      const plotCrops = this.state.crops.filter((crop) => crop.farmPlotId === command.farmPlotId).length;
+      if (plotCrops >= FARM_CROP_CAPACITY) return { success: false, command: command.command, irreversible, error: `farm plot is full (${plotCrops}/${FARM_CROP_CAPACITY})` };
+    }
+    if (command.command === "HARVEST_CROP" && !command.cropId) return { success: false, command: command.command, irreversible, error: "cropId is required" };
+    if (command.command === "HARVEST_CROP" && !this.state.crops.some((crop) => crop.id === command.cropId)) return { success: false, command: command.command, irreversible, error: "crop not found" };
     if (command.command === "CLEAR_TERRAIN" && (!command.position || !Number.isFinite(command.radius) || command.radius! <= 0 || command.radius! > 20)) return { success: false, command: command.command, irreversible, error: "position and radius between 0 and 20 are required" };
     if (command.command === "BUILD_BRIDGE" && (!command.islandA || !command.islandB || command.islandA === command.islandB)) return { success: false, command: command.command, irreversible, error: "two distinct islands are required" };
     return { success: true, command: command.command, irreversible };
@@ -165,6 +208,18 @@ export class AstrixGameCommandBus {
   private gather(command: AstrixCommand, irreversible: boolean): AstrixCommandResult {
     const node = this.state.resourceNodes.find((candidate: AstrixResourceNode) => candidate.id === command.resourceId || candidate.type === command.resourceType && candidate.quantity > 0);
     if (!node) return { success: false, command: command.command, irreversible, error: "resource node not found" };
+    // INVARIANT (trust-boundary hardening): a gather that moves nothing is a
+    // FAILURE, never a success. An exact-ID match can select a depleted node
+    // (the quantity guard above only filters type-matched candidates), and
+    // reporting `gathered: 0` as success would emit a false-success event that
+    // verification then passes vacuously. Depleted means the request is valid
+    // but the transition is impossible — FAILED, NOT_VERIFIED, world untouched.
+    if (node.quantity <= 0) return { success: false, command: command.command, irreversible, error: "resource depleted" };
+    // Connectivity (design spec chain #3): the settlement lives on Meadow; other
+    // islands' resources are unreachable until a bridge connects them.
+    if (!this.islandReachableFromMeadow(node.islandId)) {
+      return { success: false, command: command.command, irreversible, error: `no bridge to ${node.islandId}: build a bridge to reach it` };
+    }
     const gathered = Math.min(1, node.quantity);
     node.quantity -= gathered;
     this.state.resources[node.type] += gathered;
@@ -172,17 +227,42 @@ export class AstrixGameCommandBus {
   }
 
   private plant(command: AstrixCommand, irreversible: boolean): AstrixCommandResult {
-    const crop = { id: this.state.nextEntityId("crop"), farmPlotId: command.farmPlotId!, cropType: command.cropType!, growthStage: 0 };
+    const crop = { id: this.state.nextEntityId("crop"), farmPlotId: command.farmPlotId!, cropType: command.cropType!, growthStage: 0, plantedAtDay: this.state.day };
     this.state.crops.push(crop);
-    return { success: true, command: command.command, irreversible, farmPlotId: crop.farmPlotId, cropType: crop.cropType, growthStage: crop.growthStage, cropId: crop.id };
+    return { success: true, command: command.command, irreversible, farmPlotId: crop.farmPlotId, cropType: crop.cropType, growthStage: crop.growthStage, cropId: crop.id, plantedAtDay: crop.plantedAtDay };
+  }
+
+  private harvest(command: AstrixCommand, irreversible: boolean): AstrixCommandResult {
+    const crop = this.state.crops.find((candidate) => candidate.id === command.cropId);
+    if (!crop) return { success: false, command: command.command, irreversible, error: "crop not found" };
+    if (crop.growthStage < 1) return { success: false, command: command.command, irreversible, error: `crop not harvestable yet (growth ${Math.round(crop.growthStage * 100)}%)` };
+    const config = (CROP_TYPES as Record<string, { daysToMature: number; yield: number }>)[crop.cropType];
+    const foodGained = config?.yield ?? 1;
+    this.state.crops.splice(this.state.crops.indexOf(crop), 1);
+    this.state.food += foodGained;
+    this.state.resources.food = this.state.food;
+    return { success: true, command: command.command, irreversible, cropId: crop.id, cropType: crop.cropType, foodGained, foodAfter: this.state.food };
   }
 
   private clearTerrain(command: AstrixCommand, irreversible: boolean): AstrixCommandResult {
     const radius = command.radius ?? 1;
     const before = this.state.resourceNodes.length;
     const remaining = this.state.resourceNodes.filter((node) => !command.position || distance(node.position, command.position) > radius);
+    const removed = this.state.resourceNodes.filter((node) => command.position && distance(node.position, command.position) <= radius);
     this.state.resourceNodes.splice(0, this.state.resourceNodes.length, ...remaining);
-    return { success: true, command: command.command, irreversible, treesCleared: before - remaining.length, woodGained: 0, permanent: true };
+    // Clearing forest yields wood (design spec: clear_terrain -> wood_gained).
+    // Irreversible: nodes are gone; biome health drops on the cleared island.
+    const woodGained = before - remaining.length;
+    if (woodGained > 0) this.state.resources.wood += woodGained;
+    const clearedIsland = removed[0]?.islandId ?? command.islandId;
+    if (clearedIsland && woodGained > 0) {
+      const health = this.state.biomeHealth[clearedIsland];
+      this.state.biomeHealth[clearedIsland] = Math.max(0, health - 0.05 * radius);
+      // Each cleared tree frees one farmland plot on that island — this is the
+      // economic reason clearing exists (expansion is approval-gated above).
+      this.state.farmlandCapacity[clearedIsland] += woodGained;
+    }
+    return { success: true, command: command.command, irreversible, treesCleared: woodGained, woodGained, permanent: true, farmlandAfter: { ...this.state.farmlandCapacity } };
   }
 
   private buildBridge(command: AstrixCommand, irreversible: boolean): AstrixCommandResult {
@@ -191,10 +271,24 @@ export class AstrixGameCommandBus {
       if (this.state.resources[resource as ResourceType] < amount) return { success: false, command: command.command, irreversible, error: `insufficient ${resource}` };
     }
     for (const [resource, amount] of Object.entries(cost)) this.state.resources[resource as ResourceType] -= amount;
-    const building = { id: this.state.nextEntityId("bridge"), type: "bridge_segment" as const, position: command.position ?? { x: 0, y: 0, z: 0 }, health: 1, islandId: command.islandA! };
+    // A bridge is named by its island PAIR, so its position is DERIVED from the
+    // authoritative anchors of those islands rather than defaulted to the world
+    // origin. { 0, 0, 0 } put a real structure nowhere near the water it was
+    // supposed to cross, so Core's own geometry contradicted its own topology.
+    const position = command.position ?? bridgeAnchorFor(command.islandA!, command.islandB!);
+    const building = { id: this.state.nextEntityId("bridge"), type: "bridge_segment" as const, position, health: 1, islandId: command.islandA! };
     this.state.buildings.push(building);
     this.state.bridges.push({ id: building.id, islandA: command.islandA!, islandB: command.islandB! });
-    return { success: true, command: command.command, irreversible, bridgeId: building.id, costDeducted: cost, length: 8, permanent: true };
+    return { success: true, command: command.command, irreversible, bridgeId: building.id, position: { ...position }, costDeducted: cost, length: 8, permanent: true };
+  }
+
+  private islandReachableFromMeadow(island: BiomeId): boolean {
+    if (island === "meadow") return true;
+    return this.state.bridges.some(
+      (bridge) =>
+        (bridge.islandA === "meadow" && bridge.islandB === island) ||
+        (bridge.islandA === island && bridge.islandB === "meadow"),
+    );
   }
 
   private validPosition(position: AstrixPosition): boolean {

@@ -1,0 +1,16 @@
+# Reconnect / world-continuity proof (2026-09-17)
+
+Claim: THE WORLD DOES NOT NEED THE RENDERER TO CONTINUE EXISTING.
+
+Procedure:
+1. Loaded Observatory (session 1): snapshot showed 3 buildings, 1 crop.
+2. Closed the page (renderer disconnected).
+3. Mutated the world via the real control surface while no renderer existed:
+   POST /astrix/command {build storage meadow} -> storage-007.
+4. Reopened the Observatory (session 2): snapshot shows 4 buildings
+   [house-001, bridge-003, farm-004, storage-007], dyn reconciled 3.
+5. CONVERGED: true (building count +1, dynamic meshes present).
+
+Mechanism: snapshot hydration on load (GET /astrix/state), live deltas via
+2s re-poll. No event replay is claimed: honest status is snapshot-hydration,
+not historical replay. No fake historical events are synthesized.

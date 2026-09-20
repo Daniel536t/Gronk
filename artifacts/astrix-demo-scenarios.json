@@ -1,0 +1,738 @@
+{
+  "generated": "2026-09-09T08:41:14.430Z",
+  "cases": [
+    {
+      "case": "A-low-risk-success",
+      "claim": "A safe steward action executes and verifies with no human involved.",
+      "before": {
+        "day": 1,
+        "season": "spring",
+        "population": 4,
+        "food": 40,
+        "wood": 30,
+        "stone": 15,
+        "farms": [
+          {
+            "islandId": "meadow",
+            "capacity": 2,
+            "used": 0,
+            "available": 2
+          },
+          {
+            "islandId": "frost",
+            "capacity": 2,
+            "used": 0,
+            "available": 2
+          },
+          {
+            "islandId": "dusk",
+            "capacity": 1,
+            "used": 0,
+            "available": 1
+          }
+        ],
+        "crops": 0,
+        "bridges": [],
+        "connectivity": [
+          {
+            "id": "meadow",
+            "connectivity": []
+          },
+          {
+            "id": "frost",
+            "connectivity": []
+          },
+          {
+            "id": "dusk",
+            "connectivity": []
+          }
+        ],
+        "pendingApprovals": 0,
+        "pressure": "high"
+      },
+      "events": [
+        {
+          "type": "TURN_STARTED",
+          "turn": 1,
+          "at": 1788943274334
+        },
+        {
+          "type": "WORLD_OBSERVED",
+          "turn": 1,
+          "at": 1788943274335
+        },
+        {
+          "type": "DECISION_STARTED",
+          "turn": 1,
+          "at": 1788943274335
+        },
+        {
+          "type": "DECISION_COMPLETED",
+          "turn": 1,
+          "at": 1788943274339
+        },
+        {
+          "type": "PLAN_CREATED",
+          "turn": 1,
+          "at": 1788943274339
+        },
+        {
+          "type": "ACTION_PROPOSED",
+          "turn": 1,
+          "at": 1788943274339
+        },
+        {
+          "type": "ACTION_EXECUTING",
+          "turn": 1,
+          "at": 1788943274339
+        },
+        {
+          "type": "ACTION_SUCCEEDED",
+          "turn": 1,
+          "at": 1788943274344
+        },
+        {
+          "type": "VERIFICATION_STARTED",
+          "turn": 1,
+          "at": 1788943274345
+        },
+        {
+          "type": "VERIFICATION_SUCCEEDED",
+          "turn": 1,
+          "at": 1788943274347
+        },
+        {
+          "type": "TURN_COMPLETED",
+          "turn": 1,
+          "at": 1788943274348
+        },
+        {
+          "type": "TURN_STARTED",
+          "turn": 2,
+          "at": 1788943274348
+        },
+        {
+          "type": "WORLD_OBSERVED",
+          "turn": 2,
+          "at": 1788943274348
+        },
+        {
+          "type": "DECISION_STARTED",
+          "turn": 2,
+          "at": 1788943274348
+        },
+        {
+          "type": "DECISION_COMPLETED",
+          "turn": 2,
+          "at": 1788943274348
+        },
+        {
+          "type": "PLAN_CREATED",
+          "turn": 2,
+          "at": 1788943274348
+        },
+        {
+          "type": "TURN_COMPLETED",
+          "turn": 2,
+          "at": 1788943274348
+        }
+      ],
+      "after": {
+        "day": 1,
+        "season": "spring",
+        "population": 4,
+        "food": 40,
+        "wood": 31,
+        "stone": 15,
+        "farms": [
+          {
+            "islandId": "meadow",
+            "capacity": 2,
+            "used": 0,
+            "available": 2
+          },
+          {
+            "islandId": "frost",
+            "capacity": 2,
+            "used": 0,
+            "available": 2
+          },
+          {
+            "islandId": "dusk",
+            "capacity": 1,
+            "used": 0,
+            "available": 1
+          }
+        ],
+        "crops": 0,
+        "bridges": [],
+        "connectivity": [
+          {
+            "id": "meadow",
+            "connectivity": []
+          },
+          {
+            "id": "frost",
+            "connectivity": []
+          },
+          {
+            "id": "dusk",
+            "connectivity": []
+          }
+        ],
+        "pendingApprovals": 0,
+        "pressure": "high"
+      },
+      "outcome": {
+        "loopState": "COMPLETED",
+        "woodDelta": 1
+      }
+    },
+    {
+      "case": "B-high-risk-rejection",
+      "claim": "A proposal is not an authorization: rejection mutates nothing.",
+      "before": {
+        "day": 1,
+        "season": "spring",
+        "population": 4,
+        "food": 40,
+        "wood": 30,
+        "stone": 15,
+        "farms": [
+          {
+            "islandId": "meadow",
+            "capacity": 2,
+            "used": 0,
+            "available": 2
+          },
+          {
+            "islandId": "frost",
+            "capacity": 2,
+            "used": 0,
+            "available": 2
+          },
+          {
+            "islandId": "dusk",
+            "capacity": 1,
+            "used": 0,
+            "available": 1
+          }
+        ],
+        "crops": 0,
+        "bridges": [],
+        "connectivity": [
+          {
+            "id": "meadow",
+            "connectivity": []
+          },
+          {
+            "id": "frost",
+            "connectivity": []
+          },
+          {
+            "id": "dusk",
+            "connectivity": []
+          }
+        ],
+        "pendingApprovals": 0,
+        "pressure": "high"
+      },
+      "events": [
+        {
+          "type": "TURN_STARTED",
+          "turn": 1,
+          "at": 1788943274350
+        },
+        {
+          "type": "WORLD_OBSERVED",
+          "turn": 1,
+          "at": 1788943274351
+        },
+        {
+          "type": "DECISION_STARTED",
+          "turn": 1,
+          "at": 1788943274351
+        },
+        {
+          "type": "DECISION_COMPLETED",
+          "turn": 1,
+          "at": 1788943274351
+        },
+        {
+          "type": "PLAN_CREATED",
+          "turn": 1,
+          "at": 1788943274351
+        },
+        {
+          "type": "ACTION_PROPOSED",
+          "turn": 1,
+          "at": 1788943274351
+        },
+        {
+          "type": "ACTION_EXECUTING",
+          "turn": 1,
+          "at": 1788943274353
+        },
+        {
+          "type": "APPROVAL_REQUIRED",
+          "turn": 1,
+          "at": 1788943274353
+        },
+        {
+          "type": "APPROVAL_REJECTED",
+          "turn": 1,
+          "at": 1788943274357
+        },
+        {
+          "type": "TURN_COMPLETED",
+          "turn": 1,
+          "at": 1788943274357
+        },
+        {
+          "type": "TURN_STARTED",
+          "turn": 2,
+          "at": 1788943274358
+        },
+        {
+          "type": "WORLD_OBSERVED",
+          "turn": 2,
+          "at": 1788943274358
+        },
+        {
+          "type": "DECISION_STARTED",
+          "turn": 2,
+          "at": 1788943274358
+        },
+        {
+          "type": "DECISION_COMPLETED",
+          "turn": 2,
+          "at": 1788943274358
+        },
+        {
+          "type": "PLAN_CREATED",
+          "turn": 2,
+          "at": 1788943274358
+        },
+        {
+          "type": "TURN_COMPLETED",
+          "turn": 2,
+          "at": 1788943274358
+        }
+      ],
+      "after": {
+        "day": 1,
+        "season": "spring",
+        "population": 4,
+        "food": 40,
+        "wood": 30,
+        "stone": 15,
+        "farms": [
+          {
+            "islandId": "meadow",
+            "capacity": 2,
+            "used": 0,
+            "available": 2
+          },
+          {
+            "islandId": "frost",
+            "capacity": 2,
+            "used": 0,
+            "available": 2
+          },
+          {
+            "islandId": "dusk",
+            "capacity": 1,
+            "used": 0,
+            "available": 1
+          }
+        ],
+        "crops": 0,
+        "bridges": [],
+        "connectivity": [
+          {
+            "id": "meadow",
+            "connectivity": []
+          },
+          {
+            "id": "frost",
+            "connectivity": []
+          },
+          {
+            "id": "dusk",
+            "connectivity": []
+          }
+        ],
+        "pendingApprovals": 0,
+        "pressure": "high"
+      },
+      "outcome": {
+        "heldAtGate": true,
+        "rejectResponse": {
+          "success": false,
+          "command": "BUILD_BRIDGE",
+          "irreversible": true,
+          "error": "approval rejected"
+        },
+        "bridgesAfter": 0
+      }
+    },
+    {
+      "case": "C-high-risk-approval",
+      "claim": "Human approval permits exactly one governed execution, then verifies.",
+      "before": {
+        "day": 1,
+        "season": "spring",
+        "population": 4,
+        "food": 40,
+        "wood": 30,
+        "stone": 15,
+        "farms": [
+          {
+            "islandId": "meadow",
+            "capacity": 2,
+            "used": 0,
+            "available": 2
+          },
+          {
+            "islandId": "frost",
+            "capacity": 2,
+            "used": 0,
+            "available": 2
+          },
+          {
+            "islandId": "dusk",
+            "capacity": 1,
+            "used": 0,
+            "available": 1
+          }
+        ],
+        "crops": 0,
+        "bridges": [],
+        "connectivity": [
+          {
+            "id": "meadow",
+            "connectivity": []
+          },
+          {
+            "id": "frost",
+            "connectivity": []
+          },
+          {
+            "id": "dusk",
+            "connectivity": []
+          }
+        ],
+        "pendingApprovals": 0,
+        "pressure": "high"
+      },
+      "events": [
+        {
+          "type": "TURN_STARTED",
+          "turn": 1,
+          "at": 1788943274359
+        },
+        {
+          "type": "WORLD_OBSERVED",
+          "turn": 1,
+          "at": 1788943274359
+        },
+        {
+          "type": "DECISION_STARTED",
+          "turn": 1,
+          "at": 1788943274359
+        },
+        {
+          "type": "DECISION_COMPLETED",
+          "turn": 1,
+          "at": 1788943274360
+        },
+        {
+          "type": "PLAN_CREATED",
+          "turn": 1,
+          "at": 1788943274360
+        },
+        {
+          "type": "ACTION_PROPOSED",
+          "turn": 1,
+          "at": 1788943274360
+        },
+        {
+          "type": "ACTION_EXECUTING",
+          "turn": 1,
+          "at": 1788943274360
+        },
+        {
+          "type": "APPROVAL_REQUIRED",
+          "turn": 1,
+          "at": 1788943274360
+        },
+        {
+          "type": "APPROVAL_GRANTED",
+          "turn": 1,
+          "at": 1788943274366
+        },
+        {
+          "type": "ACTION_SUCCEEDED",
+          "turn": 1,
+          "at": 1788943274366
+        },
+        {
+          "type": "VERIFICATION_STARTED",
+          "turn": 1,
+          "at": 1788943274366
+        },
+        {
+          "type": "VERIFICATION_SUCCEEDED",
+          "turn": 1,
+          "at": 1788943274366
+        },
+        {
+          "type": "TURN_COMPLETED",
+          "turn": 1,
+          "at": 1788943274366
+        },
+        {
+          "type": "TURN_STARTED",
+          "turn": 2,
+          "at": 1788943274366
+        },
+        {
+          "type": "WORLD_OBSERVED",
+          "turn": 2,
+          "at": 1788943274366
+        },
+        {
+          "type": "DECISION_STARTED",
+          "turn": 2,
+          "at": 1788943274366
+        },
+        {
+          "type": "DECISION_COMPLETED",
+          "turn": 2,
+          "at": 1788943274367
+        },
+        {
+          "type": "PLAN_CREATED",
+          "turn": 2,
+          "at": 1788943274367
+        },
+        {
+          "type": "TURN_COMPLETED",
+          "turn": 2,
+          "at": 1788943274367
+        }
+      ],
+      "after": {
+        "day": 1,
+        "season": "spring",
+        "population": 4,
+        "food": 40,
+        "wood": 27,
+        "stone": 14,
+        "farms": [
+          {
+            "islandId": "meadow",
+            "capacity": 2,
+            "used": 0,
+            "available": 2
+          },
+          {
+            "islandId": "frost",
+            "capacity": 2,
+            "used": 0,
+            "available": 2
+          },
+          {
+            "islandId": "dusk",
+            "capacity": 1,
+            "used": 0,
+            "available": 1
+          }
+        ],
+        "crops": 0,
+        "bridges": [
+          {
+            "id": "bridge-002",
+            "islandA": "meadow",
+            "islandB": "frost"
+          }
+        ],
+        "connectivity": [
+          {
+            "id": "meadow",
+            "connectivity": [
+              "frost"
+            ]
+          },
+          {
+            "id": "frost",
+            "connectivity": [
+              "meadow"
+            ]
+          },
+          {
+            "id": "dusk",
+            "connectivity": []
+          }
+        ],
+        "pendingApprovals": 0,
+        "pressure": "high"
+      },
+      "outcome": {
+        "grantResponse": {
+          "success": true,
+          "command": "BUILD_BRIDGE",
+          "irreversible": true,
+          "bridgeId": "bridge-002",
+          "position": {
+            "x": 32.5,
+            "y": 4,
+            "z": 16
+          },
+          "costDeducted": {
+            "wood": 3,
+            "stone": 1
+          },
+          "length": 8,
+          "permanent": true
+        },
+        "replayResponse": {
+          "success": false,
+          "command": "CLEAR_TERRAIN",
+          "irreversible": true,
+          "error": "approval not found"
+        },
+        "bridgesAfter": 1,
+        "woodAfter": 27,
+        "stoneAfter": 14
+      }
+    },
+    {
+      "case": "D-failure",
+      "claim": "Decision timeout fails the turn observably: no retry, no mutation.",
+      "before": {
+        "day": 1,
+        "season": "spring",
+        "population": 4,
+        "food": 40,
+        "wood": 30,
+        "stone": 15,
+        "farms": [
+          {
+            "islandId": "meadow",
+            "capacity": 2,
+            "used": 0,
+            "available": 2
+          },
+          {
+            "islandId": "frost",
+            "capacity": 2,
+            "used": 0,
+            "available": 2
+          },
+          {
+            "islandId": "dusk",
+            "capacity": 1,
+            "used": 0,
+            "available": 1
+          }
+        ],
+        "crops": 0,
+        "bridges": [],
+        "connectivity": [
+          {
+            "id": "meadow",
+            "connectivity": []
+          },
+          {
+            "id": "frost",
+            "connectivity": []
+          },
+          {
+            "id": "dusk",
+            "connectivity": []
+          }
+        ],
+        "pendingApprovals": 0,
+        "pressure": "high"
+      },
+      "events": [
+        {
+          "type": "TURN_STARTED",
+          "turn": 1,
+          "at": 1788943274368
+        },
+        {
+          "type": "WORLD_OBSERVED",
+          "turn": 1,
+          "at": 1788943274368
+        },
+        {
+          "type": "DECISION_STARTED",
+          "turn": 1,
+          "at": 1788943274368
+        },
+        {
+          "type": "DECISION_COMPLETED",
+          "turn": 1,
+          "at": 1788943274429
+        },
+        {
+          "type": "TURN_FAILED",
+          "turn": 1,
+          "at": 1788943274429
+        }
+      ],
+      "after": {
+        "day": 1,
+        "season": "spring",
+        "population": 4,
+        "food": 40,
+        "wood": 30,
+        "stone": 15,
+        "farms": [
+          {
+            "islandId": "meadow",
+            "capacity": 2,
+            "used": 0,
+            "available": 2
+          },
+          {
+            "islandId": "frost",
+            "capacity": 2,
+            "used": 0,
+            "available": 2
+          },
+          {
+            "islandId": "dusk",
+            "capacity": 1,
+            "used": 0,
+            "available": 1
+          }
+        ],
+        "crops": 0,
+        "bridges": [],
+        "connectivity": [
+          {
+            "id": "meadow",
+            "connectivity": []
+          },
+          {
+            "id": "frost",
+            "connectivity": []
+          },
+          {
+            "id": "dusk",
+            "connectivity": []
+          }
+        ],
+        "pendingApprovals": 0,
+        "pressure": "high"
+      },
+      "outcome": {
+        "loopState": "FAILED",
+        "actionsAttempted": 0
+      }
+    }
+  ]
+}

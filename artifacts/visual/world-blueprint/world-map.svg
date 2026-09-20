@@ -1,0 +1,118 @@
+<!-- ASTRIX world map v1 — derived from ref3 hero (Image 3 PRIMARY).
+     North up. Units meters. Hand-placed art-directed shapes (NOT noise output):
+     these polygons are the design authority; terrain production traces them.
+     Frame: main island ~480x340 centered near origin; world 800x600. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1200" viewBox="-420 -320 840 640">
+<defs>
+  <radialGradient id="deep" cx="50%" cy="50%" r="75%">
+    <stop offset="0%" stop-color="#1E9EC0"/><stop offset="100%" stop-color="#0A4A6E"/>
+  </radialGradient>
+</defs>
+<rect x="-420" y="-320" width="840" height="640" fill="url(#deep)"/>
+<!-- N arrow + scale -->
+<g font-family="sans-serif" fill="#EAF4FF">
+  <text x="-395" y="-290" font-size="26" font-weight="bold">N ↑</text>
+  <text x="-395" y="295" font-size="16">0 ———— 100 ———— 200 m</text>
+</g>
+<!-- shallow shelf + reef gardens (S offshore) -->
+<ellipse cx="30" cy="205" rx="150" ry="55" fill="#2FC4D8" opacity="0.35"/>
+<g fill="#9B5DE5" opacity="0.8">
+  <ellipse cx="-20" cy="210" rx="26" ry="12"/><ellipse cx="45" cy="220" rx="32" ry="14"/>
+  <ellipse cx="110" cy="205" rx="22" ry="10"/>
+</g>
+<g fill="#3AA7C9" opacity="0.8">
+  <ellipse cx="10" cy="200" rx="20" ry="9"/><ellipse cx="80" cy="215" rx="24" ry="11"/>
+</g>
+<!-- MAIN ISLAND mass: sand rim, grass interior, rock ridge N -->
+<path id="coast" fill="#E8CF9A" d="M -210,60 L -190,-30 L -150,-110 L -90,-160 L -10,-178 L 80,-170 L 150,-130 L 195,-70 L 210,10 L 195,90 L 150,150 L 80,175 L 0,182 L -80,170 L -150,140 L -195,110 Z"/>
+<path id="grass" fill="#5FBF5A" d="M -185,55 L -170,-25 L -135,-95 L -80,-140 L -5,-155 L 70,-148 L 130,-112 L 168,-60 L 182,8 L 170,80 L 130,130 L 70,152 L 0,158 L -70,148 L -130,122 L -168,95 Z"/>
+<!-- northern highlands rock mass -->
+<path id="ridge" fill="#9A9AA0" d="M -120,-80 L -70,-135 L 0,-155 L 70,-148 L 120,-108 L 90,-70 L 20,-60 L -60,-55 Z"/>
+<path fill="#7A7A80" d="M -60,-95 L 0,-130 L 60,-120 L 40,-85 L -20,-80 Z"/>
+<!-- farm belt soil plots (NE) -->
+<g fill="#5B3418">
+  <rect x="108" y="-60" width="48" height="26" rx="4" transform="rotate(-8 132 -47)"/>
+  <rect x="108" y="-28" width="48" height="26" rx="4" transform="rotate(-8 132 -15)"/>
+  <rect x="162" y="-58" width="42" height="26" rx="4" transform="rotate(-8 183 -45)"/>
+  <rect x="162" y="-26" width="42" height="26" rx="4" transform="rotate(-8 183 -13)"/>
+</g>
+<!-- streams from ridge to civic lake -->
+<g stroke="#7FD4E8" stroke-width="5" fill="none" opacity="0.9">
+  <path d="M -30,-70 C -20,-40 -12,-20 -5,-2"/>
+  <path d="M 45,-75 C 40,-45 30,-20 18,-2"/>
+</g>
+<!-- civic lake + plaza -->
+<ellipse cx="8" cy="6" rx="26" ry="20" fill="#1E9EC0"/>
+<circle cx="8" cy="6" r="10" fill="#E8CF9A"/>
+<circle cx="8" cy="6" r="4" fill="#2E7FC9"/>
+<!-- harbor bay SE: dock + lighthouse islet -->
+<path d="M 150,150 L 195,90 L 215,110 L 175,165 Z" fill="#1E9EC0"/>
+<g stroke="#8A5A33" stroke-width="7" fill="none">
+  <path d="M 150,130 L 185,125 L 185,150"/>
+</g>
+<ellipse cx="228" cy="105" rx="26" ry="22" fill="#E8CF9A"/>
+<ellipse cx="228" cy="103" rx="18" ry="15" fill="#5FBF5A"/>
+<rect x="222" y="88" width="12" height="22" fill="#F4F1E8"/>
+<rect x="222" y="84" width="12" height="6" fill="#C93030"/>
+<g stroke="#8A5A33" stroke-width="5" fill="none"><path d="M 200,108 L 216,106"/></g>
+<!-- outer islets -->
+<ellipse cx="-195" cy="45" rx="30" ry="24" fill="#E8CF9A"/>
+<ellipse cx="-195" cy="43" rx="22" ry="17" fill="#5FBF5A"/>
+<path d="M -205,30 L -195,55 L -185,30 Z" fill="#9A9AA0"/>
+<ellipse cx="-95" cy="175" rx="34" ry="24" fill="#E8CF9A"/>
+<ellipse cx="-95" cy="173" rx="25" ry="17" fill="#5FBF5A"/>
+<rect x="-105" y="162" width="20" height="12" fill="#8A5A33"/>
+<g stroke="#8A5A33" stroke-width="4" fill="none"><path d="M -95,190 L -95,205"/></g>
+<ellipse cx="-15" cy="-195" rx="20" ry="14" fill="#9A9AA0"/>
+<ellipse cx="245" cy="20" rx="16" ry="20" fill="#9A9AA0"/>
+<!-- waterfalls -->
+<g stroke="#E8FBFF" stroke-width="7" fill="none">
+  <path d="M -30,-70 L -28,-45"/>
+  <path d="M -195,30 L -193,55"/>
+  <path d="M -70,140 L -68,158"/>
+</g>
+<!-- paths -->
+<g stroke="#E8CF9A" stroke-width="4" fill="none" opacity="0.9">
+  <path d="M 8,-20 L 8,-60"/>
+  <path d="M 30,6 L 120,-10"/>
+  <path d="M 8,30 L 20,120 L 80,150"/>
+  <path d="M -20,6 L -110,40"/>
+</g>
+<!-- ZONE MARKERS -->
+<g font-family="sans-serif" font-weight="bold" text-anchor="middle">
+  <g><circle cx="0" cy="-115" r="15" fill="#FFB02E"/><text x="0" y="-107" font-size="20" fill="#1a1200">1</text></g>
+  <g><circle cx="-30" cy="-58" r="15" fill="#FFB02E"/><text x="-30" y="-50" font-size="20" fill="#1a1200">2</text></g>
+  <g><circle cx="8" cy="6" r="15" fill="#FFB02E"/><text x="8" y="14" font-size="20" fill="#1a1200">3</text></g>
+  <g><circle cx="-75" cy="30" r="15" fill="#FFB02E"/><text x="-75" y="38" font-size="20" fill="#1a1200">4</text></g>
+  <g><circle cx="132" cy="-40" r="15" fill="#FFB02E"/><text x="132" y="-32" font-size="20" fill="#1a1200">5</text></g>
+  <g><circle cx="60" cy="-125" r="15" fill="#FFB02E"/><text x="60" y="-117" font-size="20" fill="#1a1200">6</text></g>
+  <g><circle cx="228" cy="140" r="15" fill="#FFB02E"/><text x="228" y="148" font-size="20" fill="#1a1200">7</text></g>
+  <g><circle cx="170" cy="140" r="15" fill="#FFB02E"/><text x="170" y="148" font-size="20" fill="#1a1200">8</text></g>
+  <g><circle cx="-195" cy="80" r="15" fill="#FFB02E"/><text x="-195" y="88" font-size="20" fill="#1a1200">9</text></g>
+  <g><circle cx="-95" cy="215" r="15" fill="#FFB02E"/><text x="-95" y="223" font-size="20" fill="#1a1200">10</text></g>
+  <g><circle cx="30" cy="238" r="15" fill="#FFB02E"/><text x="30" y="246" font-size="20" fill="#1a1200">11</text></g>
+  <g><circle cx="0" cy="165" r="15" fill="#FFB02E"/><text x="0" y="173" font-size="20" fill="#1a1200">12</text></g>
+  <g><circle cx="-150" cy="120" r="15" fill="#FFB02E"/><text x="-150" y="128" font-size="20" fill="#1a1200">13</text></g>
+  <g><circle cx="-15" cy="-225" r="15" fill="#FFB02E"/><text x="-15" y="-217" font-size="20" fill="#1a1200">14</text></g>
+</g>
+<!-- LEGEND -->
+<g font-family="sans-serif" font-size="17" fill="#EAF4FF">
+  <rect x="-410" y="-260" width="150" height="0" fill="none"/>
+  <text x="235" y="-260" font-weight="bold" font-size="20">ZONES</text>
+  <text x="235" y="-236">1 N highlands ridge</text>
+  <text x="235" y="-214">2 Waterfall + stream</text>
+  <text x="235" y="-192">3 Civic plaza + lake</text>
+  <text x="235" y="-170">4 Residential W</text>
+  <text x="235" y="-148">5 Farm belt NE</text>
+  <text x="235" y="-126">6 Windmill knoll</text>
+  <text x="235" y="-104">7 Lighthouse rock</text>
+  <text x="235" y="-82">8 Harbor bay + dock</text>
+  <text x="235" y="-60">9 W falls islet</text>
+  <text x="235" y="-38">10 SW fishing islet</text>
+  <text x="235" y="-16">11 Reef gardens S</text>
+  <text x="235" y="6">12 South beach cove</text>
+  <text x="235" y="28">13 West beach cove</text>
+  <text x="235" y="50">14 N skerry</text>
+</g>
+<text x="-400" y="-160" font-family="sans-serif" font-size="18" fill="#EAF4FF" transform="rotate(-90 -400 -160)" opacity="0">.</text>
+</svg>

@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { AstrixCommand, AstrixGameCommandBus } from "./commandBus";
 import type { AstrixWorldState, BiomeId, ResourceType } from "./state";
 
-export const ASTRIX_TOOL_NAMES = ["inspect_world", "inspect_island", "inspect_resources", "inspect_buildings", "gather", "build", "plant", "clear_terrain", "build_bridge", "simulate_plan"] as const;
+export const ASTRIX_TOOL_NAMES = ["inspect_world", "inspect_island", "inspect_resources", "inspect_buildings", "gather", "build", "plant", "harvest", "clear_terrain", "build_bridge", "simulate_plan"] as const;
 export type AstrixToolName = typeof ASTRIX_TOOL_NAMES[number];
 
 export interface AstrixToolDefinition { name: AstrixToolName; description: string; inputSchema: Record<string, unknown>; }
@@ -11,10 +11,35 @@ export function listAstrixTools(): AstrixToolDefinition[] {
   return ASTRIX_TOOL_NAMES.map((name) => ({ name, description: `ASTrix ${name.replaceAll("_", " ")} tool`, inputSchema: {} }));
 }
 
+export type AstrixToolRegistry = ReturnType<typeof createAstrixToolRegistry>;
+
+// snake_case is the MCP contract; accept the common camelCase aliases a model
+// may emit so a tool call is never rejected purely for key naming.
+export const ARG_ALIASES: Record<string, string> = {
+  buildingType: "building_type",
+  islandId: "island_id",
+  resourceId: "resource_id",
+  resourceType: "resource_type",
+  farmPlotId: "farm_plot_id",
+  cropType: "crop_type",
+  cropId: "crop_id",
+  islandA: "island_a",
+  islandB: "island_b",
+};
+
+function normalizeArgs(args: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...args };
+  for (const [from, to] of Object.entries(ARG_ALIASES)) {
+    if (from in args && !(to in args)) out[to] = args[from];
+  }
+  return out;
+}
+
 export function createAstrixToolRegistry(state: AstrixWorldState, bus: AstrixGameCommandBus) {
   return {
     listTools: listAstrixTools,
-    async callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
+    async callTool(name: string, rawArgs: Record<string, unknown>): Promise<unknown> {
+      const args = normalizeArgs(rawArgs);
       switch (name) {
         case "inspect_world": return state.snapshot();
         case "inspect_island": return inspectIsland(state, String(args.island_id ?? ""));
@@ -23,6 +48,7 @@ export function createAstrixToolRegistry(state: AstrixWorldState, bus: AstrixGam
         case "gather": return bus.execute({ command: "GATHER_RESOURCE", resourceId: stringOrUndefined(args.resource_id), resourceType: resourceTypeOrUndefined(args.resource_type) });
         case "build": return bus.execute({ command: "PLACE_BUILDING", buildingType: args.building_type as AstrixCommand["buildingType"], position: positionOf(args.position), islandId: args.island_id as BiomeId });
         case "plant": return bus.execute({ command: "PLANT_CROP", farmPlotId: stringOrUndefined(args.farm_plot_id), cropType: stringOrUndefined(args.crop_type) });
+        case "harvest": return bus.execute({ command: "HARVEST_CROP", cropId: stringOrUndefined(args.crop_id) });
         case "clear_terrain": return bus.execute({ command: "CLEAR_TERRAIN", position: positionOf(args.position), radius: Number(args.radius ?? 1), approvalId: stringOrUndefined(args.approval_id) });
         case "build_bridge": return bus.execute({ command: "BUILD_BRIDGE", position: positionOf(args.position), islandA: args.island_a as BiomeId, islandB: args.island_b as BiomeId, approvalId: stringOrUndefined(args.approval_id) });
         case "simulate_plan": return simulatePlan(state, bus, args.plan);
@@ -50,10 +76,10 @@ function simulatePlan(state: AstrixWorldState, bus: AstrixGameCommandBus, value:
     if (!item || typeof item !== "object") return { success: false, error: "plan command must be an object" };
     const command = item as Record<string, unknown>;
     const name = String(command.command ?? "").toLowerCase();
-    const map: Record<string, AstrixCommand["command"]> = { build: "PLACE_BUILDING", place_building: "PLACE_BUILDING", gather: "GATHER_RESOURCE", gather_resource: "GATHER_RESOURCE", plant: "PLANT_CROP", plant_crop: "PLANT_CROP", clear: "CLEAR_TERRAIN", clear_terrain: "CLEAR_TERRAIN", bridge: "BUILD_BRIDGE", build_bridge: "BUILD_BRIDGE" };
+    const map: Record<string, AstrixCommand["command"]> = { build: "PLACE_BUILDING", place_building: "PLACE_BUILDING", gather: "GATHER_RESOURCE", gather_resource: "GATHER_RESOURCE", plant: "PLANT_CROP", plant_crop: "PLANT_CROP", harvest: "HARVEST_CROP", harvest_crop: "HARVEST_CROP", clear: "CLEAR_TERRAIN", clear_terrain: "CLEAR_TERRAIN", bridge: "BUILD_BRIDGE", build_bridge: "BUILD_BRIDGE" };
     const normalized = map[name];
     if (!normalized) return { success: false, error: "unknown plan command" };
-    return bus.simulate({ command: normalized, position: positionOf(command.position), resourceId: stringOrUndefined(command.resource_id), resourceType: resourceTypeOrUndefined(command.resource_type), buildingType: command.building_type as AstrixCommand["buildingType"], islandId: command.island_id as BiomeId | undefined, farmPlotId: stringOrUndefined(command.farm_plot_id), cropType: stringOrUndefined(command.crop_type), radius: typeof command.radius === "number" ? command.radius : undefined, islandA: command.island_a as BiomeId | undefined, islandB: command.island_b as BiomeId | undefined });
+    return bus.simulate({ command: normalized, position: positionOf(command.position), resourceId: stringOrUndefined(command.resource_id), resourceType: resourceTypeOrUndefined(command.resource_type), buildingType: command.building_type as AstrixCommand["buildingType"], islandId: command.island_id as BiomeId | undefined, farmPlotId: stringOrUndefined(command.farm_plot_id), cropType: stringOrUndefined(command.crop_type), cropId: stringOrUndefined(command.crop_id), radius: typeof command.radius === "number" ? command.radius : undefined, islandA: command.island_a as BiomeId | undefined, islandB: command.island_b as BiomeId | undefined });
   });
   return { success: results.every((result) => result.success), readOnly: true, projected: state.snapshot(), results };
 }
@@ -71,4 +97,5 @@ export const astrixToolSchemas = {
   inspect_island: z.object({ island_id: z.enum(["meadow", "frost", "dusk"]) }),
   gather: z.object({ resource_id: z.string().optional(), resource_type: z.enum(["wood", "stone", "food", "water", "crystal"]).optional() }),
   build: z.object({ building_type: z.enum(["house", "farm", "storage", "bridge_segment"]), position: z.object({ x: z.number(), y: z.number(), z: z.number() }), island_id: z.enum(["meadow", "frost", "dusk"]) }),
+  harvest: z.object({ crop_id: z.string() }),
 };

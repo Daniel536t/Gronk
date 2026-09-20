@@ -1,0 +1,223 @@
+{
+ "day": 5,
+ "time": "19:12",
+ "elapsedSeconds": 536,
+ "population": 4,
+ "food": 24,
+ "foodSecurity": 6,
+ "season": "spring",
+ "daysUntilWinter": 20,
+ "foodPerDay": 4,
+ "daysOfFoodRemaining": 6,
+ "harvestableFood": 0,
+ "growingFood": 36,
+ "projectedFoodAtWinter": -20,
+ "foodPressureLevel": "high",
+ "resources": {
+  "wood": 26,
+  "stone": 13,
+  "food": 24,
+  "water": 0,
+  "crystal": 5
+ },
+ "biomeHealth": {
+  "meadow": 0.8,
+  "frost": 0.6,
+  "dusk": 0.4
+ },
+ "crops": [
+  {
+   "id": "crop-003",
+   "farmPlotId": "farm-001",
+   "cropType": "wheat",
+   "growthStage": 0.125,
+   "plantedAtDay": 4,
+   "harvestable": false
+  },
+  {
+   "id": "crop-004",
+   "farmPlotId": "farm-001",
+   "cropType": "wheat",
+   "growthStage": 0.125,
+   "plantedAtDay": 4,
+   "harvestable": false
+  },
+  {
+   "id": "crop-005",
+   "farmPlotId": "farm-001",
+   "cropType": "wheat",
+   "growthStage": 0.125,
+   "plantedAtDay": 4,
+   "harvestable": false
+  },
+  {
+   "id": "crop-006",
+   "farmPlotId": "farm-002",
+   "cropType": "wheat",
+   "growthStage": 0.125,
+   "plantedAtDay": 4,
+   "harvestable": false
+  },
+  {
+   "id": "crop-007",
+   "farmPlotId": "farm-002",
+   "cropType": "wheat",
+   "growthStage": 0.125,
+   "plantedAtDay": 4,
+   "harvestable": false
+  },
+  {
+   "id": "crop-008",
+   "farmPlotId": "farm-002",
+   "cropType": "wheat",
+   "growthStage": 0.125,
+   "plantedAtDay": 4,
+   "harvestable": false
+  }
+ ],
+ "farmland": [
+  {
+   "islandId": "meadow",
+   "capacity": 2,
+   "used": 2,
+   "available": 0
+  },
+  {
+   "islandId": "frost",
+   "capacity": 2,
+   "used": 0,
+   "available": 2
+  },
+  {
+   "islandId": "dusk",
+   "capacity": 1,
+   "used": 0,
+   "available": 1
+  }
+ ],
+ "bridges": [],
+ "buildings": [
+  {
+   "id": "house-001",
+   "type": "house",
+   "position": {
+    "x": 20,
+    "y": 3.6,
+    "z": 30
+   },
+   "health": 1,
+   "islandId": "meadow"
+  },
+  {
+   "id": "farm-001",
+   "type": "farm",
+   "position": {
+    "x": 10,
+    "y": 3.5,
+    "z": 24
+   },
+   "health": 1,
+   "islandId": "meadow"
+  },
+  {
+   "id": "farm-002",
+   "type": "farm",
+   "position": {
+    "x": 20,
+    "y": 3.5,
+    "z": 30
+   },
+   "health": 1,
+   "islandId": "meadow"
+  }
+ ],
+ "resourceNodes": [
+  {
+   "id": "tree-meadow-001",
+   "type": "wood",
+   "position": {
+    "x": 12,
+    "y": 3.5,
+    "z": 24
+   },
+   "quantity": 5,
+   "islandId": "meadow"
+  },
+  {
+   "id": "tree-meadow-002",
+   "type": "wood",
+   "position": {
+    "x": 30,
+    "y": 3.5,
+    "z": 36
+   },
+   "quantity": 5,
+   "islandId": "meadow"
+  },
+  {
+   "id": "rock-frost-001",
+   "type": "stone",
+   "position": {
+    "x": 44,
+    "y": 4.5,
+    "z": 14
+   },
+   "quantity": 4,
+   "islandId": "frost"
+  },
+  {
+   "id": "crystal-dusk-001",
+   "type": "crystal",
+   "position": {
+    "x": 72,
+    "y": 3.2,
+    "z": 36
+   },
+   "quantity": 3,
+   "islandId": "dusk"
+  },
+  {
+   "id": "water-source-001",
+   "type": "water",
+   "position": {
+    "x": 50,
+    "y": 0,
+    "z": 30
+   },
+   "quantity": 999,
+   "islandId": "meadow"
+  }
+ ],
+ "islands": [
+  {
+   "id": "meadow",
+   "biome": "meadow",
+   "health": 0.8,
+   "connectivity": []
+  },
+  {
+   "id": "frost",
+   "biome": "frost",
+   "health": 0.6,
+   "connectivity": []
+  },
+  {
+   "id": "dusk",
+   "biome": "dusk",
+   "health": 0.4,
+   "connectivity": []
+  }
+ ],
+ "pendingApprovals": [
+  {
+   "id": "approval-009",
+   "command": "BUILD_BRIDGE",
+   "reason": "Bridge construction changes island connectivity",
+   "impact": {
+    "islandA": "meadow",
+    "islandB": "frost"
+   },
+   "createdAt": 1788633028642
+  }
+ ]
+}

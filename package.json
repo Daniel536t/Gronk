@@ -1,5 +1,5 @@
 {
-  "name": "gronks-hoard",
+  "name": "astrix",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,22 +9,25 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.client.json",
+    "typecheck": "tsc --noEmit",
     "server": "tsx src/server/index.ts",
-    "dev": "vite",
-    "build": "vite build",
-    "prod": "npm run build && node --import tsx src/server/index.ts",
-    "dev:all": "sh -c 'npm run server & npm run dev & wait'",
-    "start": "npm run build && node --import tsx src/server/index.ts",
+    "prod": "node --import tsx src/server/index.ts",
+    "start": "node --import tsx src/server/index.ts",
     "start:nohup": "bash start-server.sh",
-    "provision": "tsx scripts/provision.ts",
     "provision:astrix": "tsx scripts/provision-astrix-agents.ts",
+    "astrix:demo": "tsx scripts/astrix-demo.ts",
+    "astrix:eval": "tsx scripts/astrix-demo.ts",
+    "astrix:canonical": "tsx scripts/astrix-canonical-run.ts",
+    "astrix:demo-scenarios": "tsx scripts/astrix-demo-scenarios.ts",
+    "astrix:absence-drill": "tsx scripts/astrix-absence-drill.ts",
+    "astrix:revocation-drill": "tsx scripts/astrix-revocation-drill.ts",
+    "astrix:demo3": "tsx scripts/astrix-demo3.ts",
+    "observatory:build": "tsx scripts/build-observatory.ts",
+    "observatory:replay": "tsx scripts/build-observatory-replay.ts",
+    "observatory": "npm run observatory:replay && npm run observatory:build",
+    "observatory:verify": "npx tsc -p observatory/tsconfig.json && npm run observatory && npx tsx scripts/verify-observatory.ts",
     "astrix:steward-turn": "tsx scripts/astrix-steward-turn.ts",
-    "verify:mode-a": "tsx scripts/verify-mode-a.ts",
-    "tf:smoke": "tsx scripts/tf-smoke.ts",
-    "live:demo": "tsx scripts/live-demo.ts",
-    "mock:trueforge": "tsx scripts/mock-trueforge.ts",
-    "qa:visual": "tsx scripts/visual-qa.ts"
+    "visual:hero": "node astrix-three/hero.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.3.0",
@@ -36,6 +39,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "three": "^0.160.0",
     "zod": "^4.4.3"
   }
 }

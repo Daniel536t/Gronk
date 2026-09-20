@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start the Gronk's Hoard game server indefinitely under nohup (no pm2 needed).
+# Start the ASTrix server indefinitely under nohup (no pm2 needed).
 # Builds the frontend if dist/ is missing, then runs the single-port server.
 #
 #   ./start-server.sh            # start (or restart) on :8787

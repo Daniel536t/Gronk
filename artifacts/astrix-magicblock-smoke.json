@@ -1,0 +1,33 @@
+{
+  "cluster": "solana-devnet",
+  "rpcBase": "https://api.devnet.solana.com",
+  "rpcER": "https://devnet-eu.magicblock.app",
+  "programId": "qWpJE9ePjD8YnzW2AA6UdpFodF7LS7w5Y5CUmHArWK3",
+  "worldPDA": "GBFT6mQew5g1BBpWjHSYfe9tNN1a3KykjuDun862S29P",
+  "worldSeeds": [
+    "astrix-world"
+  ],
+  "delegationProgram": "DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh",
+  "erValidator": "MEUGGrYPxKk17hCr7wpT6s8dtNokZj5U2L57vjYMS8e",
+  "before": {
+    "day": "5",
+    "owner": "DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh",
+    "bytes": 42,
+    "slot": 496739550
+  },
+  "erAdvance": {
+    "sig": "65zU9f4kAiS8tnryXgMoEYSCTUtJLZdHBNmwX43752LvzsNnywtq4GP8Wa5xa46gn6kkd2ZLDboFfhr3q3J8QiPR",
+    "ms": 994,
+    "erDayAfter": "6"
+  },
+  "commit": {
+    "sig": "3QxnwUm1657wUgSUEWRbyjasYEHFq92NrMZR472ZdmMTcELfwsJcVDTiuWquYNV6YkkftpWyrJPsoi4KjQ2SS3TB"
+  },
+  "after": {
+    "day": "6",
+    "owner": "DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh",
+    "bytes": 42,
+    "slot": 496739589
+  },
+  "match": true
+}

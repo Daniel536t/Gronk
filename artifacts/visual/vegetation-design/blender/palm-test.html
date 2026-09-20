@@ -1,0 +1,31 @@
+<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%}canvas{display:block}</style>
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
+</head><body><script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a4a6e);
+const camera = new THREE.PerspectiveCamera(35, innerWidth / innerHeight, 0.1, 500);
+const q = new URLSearchParams(location.search);
+const az = parseFloat(q.get('az') || '-35'), el = parseFloat(q.get('el') || '14');
+const R = parseFloat(q.get('dist') || '11');
+camera.position.set(R * Math.sin(az * Math.PI / 180) * Math.cos(el * Math.PI / 180), 2.5 + R * Math.sin(el * Math.PI / 180), R * Math.cos(az * Math.PI / 180) * Math.cos(el * Math.PI / 180));
+camera.lookAt(0, 1.2, 0);
+const sun = new THREE.DirectionalLight(0xffe7c4, 2.6);
+sun.position.set(-30, 40, -15); sun.castShadow = true;
+scene.add(sun, new THREE.HemisphereLight(0xbfe3ff, 0x3a5a34, 0.75));
+const ground = new THREE.Mesh(new THREE.CircleGeometry(9, 40),
+  new THREE.MeshStandardMaterial({ color: 0xE8CF9A, roughness: 1 }));
+ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+const g = await new GLTFLoader().loadAsync('/assets/glb/' + (q.get('glb') || 'ASTX_VEG_PALM_A') + '.glb?v=staged');
+g.scene.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+scene.add(g.scene);
+const box = new THREE.Box3().setFromObject(g.scene);
+window.__tree = { min: box.min.toArray().map(v => +v.toFixed(2)), max: box.max.toArray().map(v => +v.toFixed(2)) };
+window.__treeReady = true;
+renderer.setAnimationLoop(() => renderer.render(scene, camera));
+</script></body></html>

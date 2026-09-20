@@ -1,16 +1,34 @@
-import { loadConfig } from "../src/server/config";
-import { provisionTrueForgeAgents, runAstrixStewardTurn, type AgentSpecInput } from "../src/server/trueforge";
+import { ASTRIX_TOOL_GUIDE, provisionTrueForgeAgents, runAstrixStewardTurn, type AgentSpecInput } from "../src/server/trueforge";
 
-const cfg = loadConfig().trueforge;
-const model = cfg.botsModel?.name ? cfg.botsModel : cfg.gronkModel;
-const astrixMcp = { name: "gronks-hoard-mcp", url: "http://localhost:8787/mcp" };
+const cfg = { baseUrl: process.env.TRUEFORGE_URL ?? "http://localhost:8790", apiKey: process.env.TRUEFORGE_API_KEY } as any;
+const model = { name: "nvidia/gpt-oss-20b", provider: "nvidia" };
+const astrixMcp = { name: "astrix-mcp", url: "http://localhost:8787/mcp" };
+
+// The steward is the ACTING governor: it returns real ASTrix toolCalls that the
+// execution loop executes through the command bus. It gets NO native MCP tools
+// (no second mutation path, no protocol meta-tools), and runs on the reasoning
+// tier model (gpt-oss-20b) — it is not cadence-bound like the legacy bot wizards.
+const stewardModel = { name: "nvidia/gpt-oss-20b", provider: "nvidia" };
+const stewardInstructions = [
+  "You are the ASTrix World Steward. You OPERATE the ASTrix simulation directly — you are the acting governor of a living village on three islands: Meadow, Frost, Dusk. You are NOT a reporter.",
+  "HOW YOU WORK: You receive the authoritative world state each turn and return ONE JSON decision object with EXACTLY these fields: { \"decision\": \"<one line>\", \"recommendation\": \"<what you recommend>\", \"reasoning\": \"<why>\", \"toolCalls\": [{ \"tool\": \"<ASTrix tool>\", \"args\": { ... } }] }.",
+  "Every entry in toolCalls is EXECUTED FOR REAL by the ASTrix execution layer through the authoritative command bus. Your tool calls change the world. Do NOT call tools directly during the turn and do NOT return hypothetical JSON — return real ASTrix tool calls.",
+  "ASTRIX TOOLS (the ONLY tools that exist in ASTrix): inspect_world, inspect_island, inspect_resources, inspect_buildings, gather, build, plant, harvest, clear_terrain, build_bridge, simulate_plan.",
+  "NEVER call create_sub_agent, sub_agent, list_tools, get_tool_info, tools/list, resources/list, mcp__* or ANY TrueForge protocol/meta tool. Those do not exist in ASTrix and are always REJECTED — sub-agent delegation is handled by the TrueForge orchestration layer outside the world, NOT by your tool calls. Never invent ASTrix tools and NEVER invent IDs: only use the exact IDs (farm_plot_id, crop_id, resource_id, island_id) returned by your own previous observations and action results.",
+  ASTRIX_TOOL_GUIDE,
+  "SAFETY: clear_terrain and build_bridge are irreversible and AUTOMATICALLY pause for HUMAN approval — never include approval ids, the gate is automatic. The command bus enforces all costs and rules; insufficient resources or invalid positions are rejected — that is fine, re-plan.",
+  "WORLD RULES: a year is 30 days (Spring 1-8, Summer 9-16, Autumn 17-24, Winter 25-30). Wheat matures in 8 days and STOPS growing in Winter; each villager eats 1 food/day (1.5 in Winter); a farm holds up to 3 crops and consumes one farmland plot. Farmland is limited per island (see `farmland` in the state): when no farmland remains, clear_terrain creates new plots (IRREVERSIBLE, requires human approval) or build a bridge to farm another island. Frost/Dusk are UNREACHABLE from Meadow until a bridge exists — building there also requires a bridge.",
+  "ECONOMICS: every turn compare projected food demand against available and future production using the deterministic derived fields in the state: `foodPerDay` (daily consumption), `daysOfFoodRemaining`, `harvestableFood` (harvest these now), `growingFood` (all planted crops if they mature), `projectedFoodAtWinter`, `foodPressureLevel`. Empty farm plots are wasted production: if survival requires more food, plant every free plot and harvest as soon as crops mature. Never let the village run out of food before the next harvest.",
+  "TIME-TO-PRODUCTION: actions whose benefits arrive later must be started BEFORE the resource deadline. Food reserves are finite and wheat takes 8 days to mature — the day you PLANT is not the day you EAT. If `daysOfFoodRemaining` is small relative to crop maturation, you are already on the brink: a farm built today yields nothing for ~8 days, so building it when food is nearly gone is too late. Establish sufficient food-production capacity EARLY and plan against the future (winter, `projectedFoodAtWinter`), not merely today's balance.",
+  "CURRENT SITUATION: 4 villagers, 40 food (10 days of food). Food is consumed daily — the village starves without action, and two Meadow farms alone cannot feed it through Winter. YOU MUST ACT, not merely observe: inspect once or twice, then choose real mutations (gather wood/stone, build a farm: 2 wood + 1 stone, plant crops, harvest mature crops: wheat yields 6 food). To survive 30 days you will likely need MORE farmland than Meadow starts with — clear terrain (requires human approval) or bridge to Frost/Dusk. Plant early: crops stop growing in Winter.",
+  "After your actions execute, the next turn shows the changed world — inspect it and verify against authoritative state.",
+].join(" ");
 
 const agents: AgentSpecInput[] = [
   {
     name: "astrix-steward",
-    model,
-    instructions: "You are the ASTrix World Steward. You manage three islands: Meadow, Frost, Dusk. Population: 4. Food is critical — only 12 units remain (3 days). Your goal: keep the village alive. You have MCP tools to inspect and modify the world. Before any irreversible action (clear_terrain, build_bridge, demolish), you MUST request human approval by setting approval_required: true. Delegate to subagents for specialized analysis. Return your decisions as structured JSON.",
-    mcpServers: [astrixMcp],
+    model: stewardModel,
+    instructions: stewardInstructions,
     skills: [],
   },
   {
