@@ -39,6 +39,7 @@ signal astrix_command_succeeded(result: Dictionary)
 signal astrix_command_failed(error: String)
 signal astrix_approval_requested(request: Dictionary)
 signal astrix_agent_status_received(status: Dictionary)
+signal astrix_chain_received(chain: Dictionary)
 
 @export var api_origin: String = ""  # empty -> auto (web: same origin as the page; native: localhost)
 @export var poll_interval_seconds: float = 0.5
@@ -52,6 +53,9 @@ var session: Dictionary = {}
 var latest_state: Dictionary = {}
 var astrix_state: Dictionary = {}
 var astrix_agent_status: Dictionary = {}
+var astrix_chain: Dictionary = {}
+var _astrix_chain_in_flight := false
+var _astrix_chain_attempt_at := 0
 var _poll_timer: Timer
 var _requests: Array[HTTPRequest] = []
 var _last_event_fingerprint := ""
@@ -177,6 +181,26 @@ func get_astrix_status_once() -> void:
         astrix_agent_status_received.emit(astrix_agent_status)
     , func() -> void:
         _astrix_status_in_flight = false
+    )
+
+## Poll the chain-status feed (world day, delegation owner, heartbeat record).
+## SLOW cadence by design: this data changes on devnet-heartbeat timescales,
+## not frame timescales. Unknown until the first successful poll — never guessed.
+func get_astrix_chain_once() -> void:
+    # Orphan guard: if a previous attempt never called back (freed request,
+    # silent transport failure), its flag must not wedge polling forever.
+    # Chain data is slow-moving, so at most one retry per minute either way.
+    if _astrix_chain_in_flight \
+            and Time.get_ticks_msec() - _astrix_chain_attempt_at < 60000:
+        return
+    _astrix_chain_in_flight = true
+    _astrix_chain_attempt_at = Time.get_ticks_msec()
+    _get_json("/astrix/chain", func(data: Dictionary) -> void:
+        _astrix_chain_in_flight = false
+        astrix_chain = data
+        astrix_chain_received.emit(astrix_chain)
+    , func() -> void:
+        _astrix_chain_in_flight = false
     )
 
 func _start_astrix_polling() -> void:

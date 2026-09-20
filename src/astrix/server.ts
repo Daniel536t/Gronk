@@ -114,6 +114,14 @@ export interface AstrixServiceOptions {
   maxTurnsPerRun?: number;
   maxActionsPerTurn?: number;
   decideTimeoutMs?: number;
+  /**
+   * Chain-status reader for GET /astrix/chain. OPTIONAL: when omitted the
+   * route reports `{configured:false}`. Injected (never imported) so Core's
+   * dependency rule holds — Core must not import src/server/*; the wiring
+   * layer (src/server/index.ts) supplies the real reader. Same shape as the
+   * stewardProvider seam: adapter, never requirement.
+   */
+  chainStatus?: () => Record<string, unknown>;
 }
 
 export function createAstrixService(opts: AstrixServiceOptions = {}): AstrixService {
@@ -126,6 +134,8 @@ export function createAstrixService(opts: AstrixServiceOptions = {}): AstrixServ
   // the local runtime. This is the "ASTrix does not require TrueForge" property
   // expressed structurally rather than as a config flag.
   const provider: StewardDecisionProvider = opts.stewardProvider ?? new LocalStewardProvider();
+  const chainStatus: () => Record<string, unknown> =
+    opts.chainStatus ?? (() => ({ configured: false }));
   const loop = new AstrixStewardLoop({
     state,
     bus,
@@ -250,6 +260,10 @@ export function createAstrixService(opts: AstrixServiceOptions = {}): AstrixServ
       }
       if (pathname === "/astrix/log" && req.method === "GET") {
         sendJson(res, 200, { events: events.all() });
+        return true;
+      }
+      if (pathname === "/astrix/chain" && req.method === "GET") {
+        sendJson(res, 200, chainStatus(), req);
         return true;
       }
       if (pathname === "/astrix/mcp" && (req.method === "GET" || req.method === "POST")) {

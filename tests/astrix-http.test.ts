@@ -279,3 +279,34 @@ describe("ASTrix HTTP API", () => {
     assert.ok(typeof parsed.buildingId === "string" || parsed.buildingId === undefined, "build resolves through the command bus");
   });
 });
+
+describe("GET /astrix/chain — public chain-status observability", () => {
+  it("serves the injected reader without auth and defaults to unconfigured", async () => {
+    const stub = {
+      configured: true, programId: "P", worldPDA: "W", rpc: "https://example.invalid",
+      chainDay: "11", owner: "DELEG", slot: 1, updatedAt: Date.now(), error: null,
+      heartbeats: [{ t: "t", heartbeat: 1, advanceSig: "a", erMs: 9, commitSig: "c", baseDayBefore: "10", baseDay: "11" }],
+    };
+    const manager = new LobbyManager({ autoTick: false });
+    const astrix = createAstrixService({ chainStatus: () => stub as unknown as Record<string, unknown> });
+    const mcpHttp = createMcpHttpBridge(() => createMcpServer(manager, astrix));
+    const server = createHttpServer(manager, 0, { mcp: mcpHttp, astrix });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    // Public by design (same surface class as /astrix/state): no token needed.
+    const res = await fetch(`${base}/astrix/chain`);
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as typeof stub;
+    assert.equal(body.chainDay, "11");
+    assert.equal(body.heartbeats.length, 1);
+    assert.equal(body.heartbeats[0].commitSig, "c");
+  });
+
+  it("reports unconfigured when no reader is injected (Core untouched)", async () => {
+    const { base } = await startTestServer();
+    const res = await fetch(`${base}/astrix/chain`);
+    assert.equal(res.status, 200);
+    assert.equal(((await res.json()) as any).configured, false);
+  });
+});

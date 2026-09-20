@@ -56,6 +56,12 @@ const STATE_COLORS := {
 
 var _world_row: RichTextLabel
 var _pressure_row: RichTextLabel
+var _chain_row: RichTextLabel
+var _chain: Dictionary = {}
+var _chain_timer: Timer
+## Client-side receipt time (ticks): compared against ticks, never against the
+## server's wall clock — the two clocks share no epoch and must never meet.
+var _chain_rx_at := -1
 var _agent_panel: PanelContainer
 var _agent_state: RichTextLabel
 var _agent_action: RichTextLabel
@@ -114,6 +120,13 @@ func _ready() -> void:
         GameClient.astrix_agent_status_received.connect(_on_agent_status)
         GameClient.astrix_approval_requested.connect(_on_approval_requested)
         GameClient.write_authority_changed.connect(_on_write_authority)
+        GameClient.astrix_chain_received.connect(_on_chain)
+        _chain_timer = Timer.new()
+        _chain_timer.wait_time = 20.0
+        _chain_timer.timeout.connect(_poll_chain)
+        add_child(_chain_timer)
+        _chain_timer.start()
+        _poll_chain()
     var bus := get_node_or_null("/root/GameCommandBus")
     if bus:
         bus.command_completed.connect(_on_command_completed)
@@ -189,6 +202,8 @@ func _build_world_strip() -> void:
     body.add_child(_world_row)
     _pressure_row = _label(12)
     body.add_child(_pressure_row)
+    _chain_row = _label(12)
+    body.add_child(_chain_row)
 
 func _build_agent_badge() -> void:
     _agent_panel = PanelContainer.new()
@@ -433,6 +448,60 @@ func _render_world(world: Dictionary) -> void:
         days_color = pressure_color
     _pressure_row.text = "[color=#8a97ad]%s/day ·[/color] [color=%s]%s days of food[/color] [color=#8a97ad]·[/color] [color=%s]PRESSURE %s[/color]" % [
         per_day, days_color, days_label, pressure_color, pressure_text,
+    ]
+    _render_chain_row()
+
+## Chain row: the Solana side of the world clock. Every value comes from
+## GET /astrix/chain; before the first successful poll (or when the chain is
+## unreachable) the row says so explicitly instead of guessing. Fresh =
+## updated within the last two minutes; anything older, or any error, reads
+## as stale/unreachable in grey. The row asserts nothing about what the chain
+## *means* — Core owns semantics; this is the independently readable fact.
+func _poll_chain() -> void:
+    var client := get_node_or_null("/root/GameClient")
+    if client and client.has_method("get_astrix_chain_once"):
+        client.get_astrix_chain_once()
+
+func _on_chain(chain: Dictionary) -> void:
+    _chain = chain
+    _chain_rx_at = Time.get_ticks_msec()
+    _render_chain_row()
+
+func _render_chain_row() -> void:
+    if not is_instance_valid(_chain_row):
+        return
+    if _chain.is_empty() or not bool(_chain.get("configured", false)):
+        _chain_row.text = "[color=#5f6d84]⛓ CHAIN — awaiting first read[/color]"
+        return
+    # JSON null arrives as GDScript null, NOT as "" — str(null) is the four
+    # characters "null", which would read as a permanent error. Coerce first:
+    # only a real non-empty string counts as an error. (Caught by an honest
+    # end-to-end render: every success payload carries "error": null.)
+    var err_raw: Variant = _chain.get("error", "")
+    var err := "" if err_raw == null else str(err_raw)
+    # Fresh means "read successfully within the last 5 minutes": chain data
+    # moves on heartbeat timescales, so the window is generous by design. A
+    # tighter window turned ordinary devnet hiccups into a flickering row.
+    var fresh := err.is_empty() and _chain_rx_at > 0 and (Time.get_ticks_msec() - _chain_rx_at) < 300000
+    if not fresh:
+        if not err.is_empty():
+            # Sanitized: server error text must never inject BBCode into HUD.
+            var clean := err.replace("[", "(").replace("]", ")").left(48)
+            _chain_row.text = "[color=#5f6d84]⛓ CHAIN STALE — %s[/color]" % clean
+        else:
+            _chain_row.text = "[color=#5f6d84]⛓ CHAIN STALE — last read failed or aged out[/color]"
+        return
+    var day := str(_chain.get("chainDay", "—"))
+    var beats := (_chain.get("heartbeats", []) as Array).size()
+    var owner := str(_chain.get("owner", ""))
+    var custody := "DELEGATED" if owner == "DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh" else "BASE"
+    var last_sig := ""
+    var hb: Array = _chain.get("heartbeats", [])
+    if not hb.is_empty():
+        last_sig = str((hb[hb.size() - 1] as Dictionary).get("commitSig", "")).left(8)
+    var tail := " · COMMIT %s" % last_sig if last_sig != "" else ""
+    _chain_row.text = "[color=#8fd3c7]⛓ CHAIN DAY %s[/color] [color=#8a97ad]·[/color] [color=#e8ecf4]%d HEARTBEATS[/color] [color=#8a97ad]·[/color] [color=#e8ecf4]%s[/color]%s" % [
+        day, beats, custody, (" [color=#8a97ad]%s[/color]" % tail) if tail != "" else "",
     ]
 
 ## Authoritative value or the unknown marker — never a fabricated default.

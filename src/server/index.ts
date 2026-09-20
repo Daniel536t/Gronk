@@ -14,6 +14,7 @@ import { trueforgeBackendFactory } from "./trueforgeFactory";
 import { TrueForgeStewardProvider } from "./trueforge";
 import { loadConfig } from "./config";
 import { clockShouldTick, worldClockMode } from "./worldClock";
+import { getChainStatus } from "./chainStatus";
 import { createAstrixService } from "../astrix/server";
 import type { StewardDecisionProvider } from "../astrix/orchestrator";
 
@@ -49,6 +50,10 @@ const manager = new LobbyManager({
 const astrix = createAstrixService({
   authToken: process.env.ASTRIX_API_KEY?.trim() || undefined,
   stewardProvider: selectStewardProvider(),
+  // Chain-status reader for GET /astrix/chain (public observability of the
+  // Solana side: world day, delegation owner, heartbeat history). Injected,
+  // never imported by Core — same adapter shape as the steward provider.
+  chainStatus: () => getChainStatus() as unknown as Record<string, unknown>,
   // Demo/reproducibility knobs: bounds are still enforced, the env only widens
   // or tightens them for a given run.
   maxTurnsPerRun: numEnv("ASTRIX_MAX_TURNS_PER_RUN"),
